@@ -1,6 +1,6 @@
 [app]
 # The name of your app as displayed in the menu
-name = "BadgeBot App"
+name = "BadgeBot"
 
 # The submenu where your app should appear.
 # One of: "Badge", "Music", "Media", "Apps", "Games"
