@@ -2,6 +2,7 @@ import app
 
 from app_components.tokens import label_font_size
 from events.input import Buttons, BUTTON_TYPES
+from tildagonos import tildagonos
 
 # Motor Driver
 PWM_FREQ = 5000
@@ -110,6 +111,7 @@ class BadgeBotApp(app.App):
                 self.button_states.clear()
 
         elif self.current_state == RECEIVE_INSTR:
+            self.clear_leds()
             # Enable/disable scrolling and check for long press
             if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
 
@@ -135,17 +137,26 @@ class BadgeBotApp(app.App):
 
                 # Instruction button presses
                 elif self.button_states.get(BUTTON_TYPES["RIGHT"]):
+                    tildagonos.leds[2] = (255, 0, 0)
+                    tildagonos.leds[3] = (255, 0, 0)
                     self._handle_instruction_press(BUTTON_TYPES["RIGHT"])
                     self.button_states.clear()
                 elif self.button_states.get(BUTTON_TYPES["LEFT"]):
+                    tildagonos.leds[8] = (0, 255, 0)
+                    tildagonos.leds[9] = (0, 255, 0)
                     self._handle_instruction_press(BUTTON_TYPES["LEFT"])
                     self.button_states.clear()
                 elif self.button_states.get(BUTTON_TYPES["UP"]):
+                    tildagonos.leds[12] = (0, 0, 255)
+                    tildagonos.leds[1] = (0, 0, 255)
                     self._handle_instruction_press(BUTTON_TYPES["UP"])
                     self.button_states.clear()
                 elif self.button_states.get(BUTTON_TYPES["DOWN"]):
+                    tildagonos.leds[6] = (255, 255, 0)
+                    tildagonos.leds[7] = (255, 255, 0)
                     self._handle_instruction_press(BUTTON_TYPES["DOWN"])
                     self.button_states.clear()
+            tildagonos.leds.write()
 
         elif self.current_state == COUNTDOWN:
             self.run_countdown_ms += delta
@@ -258,6 +269,10 @@ class BadgeBotApp(app.App):
             if len(self.instructions) >= 5:
                 self.scroll_offset -= 1
             self.current_instruction = None
+
+    def clear_leds(self):
+        for i in range(0,12):
+            tildagonos.leds[i+1] = (0, 0, 0)
 
 def chain(*iterables):
     for iterable in iterables:
