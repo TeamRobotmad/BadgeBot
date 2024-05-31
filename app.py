@@ -8,7 +8,8 @@ from app_components.tokens import label_font_size
 from events.input import Buttons, BUTTON_TYPES
 
 VERTICAL_OFFSET = label_font_size
-HORIZONTAL_START = -80
+H_START = -78
+V_START = -58
 
 class BadgeBotAppState(Enum):
     MENU = 1
@@ -29,7 +30,7 @@ class Instruction:
     def inc(self):
         self._duration += 1
 
-    def __repr__(self):
+    def __str__(self):
         return f"{self.press_type.name} {self._duration}"
 
 class BadgeBotApp(app.App):
@@ -41,7 +42,7 @@ class BadgeBotApp(app.App):
         self.is_scroll = False
         self.scroll_offset = 0
 
-        self.run_countdown_target_ms = 5000
+        self.run_countdown_target_ms = 3000
         self.run_countdown_ms = 0
 
         self.instructions = []
@@ -74,6 +75,7 @@ class BadgeBotApp(app.App):
                 else:
                     self.long_press_delta += delta
                     if self.long_press_delta >= 1000:
+                        self.finalize_instruction()
                         self.current_state = BadgeBotAppState.COUNTDOWN
                 return None
             self.long_press_delta = 0
@@ -127,22 +129,19 @@ class BadgeBotApp(app.App):
             ctx.rgb(0,0,0.1).rectangle(-120,-120,240,240).fill()
 
         if self.current_state == BadgeBotAppState.MENU:
-            ctx.rgb(1,1,1).move_to(-80,-60).text("To Program:")
-            ctx.rgb(1,1,0).move_to(-80,-30).text("Press C")
-            ctx.rgb(1,1,1).move_to(-80, 10).text("When finished:")
-            ctx.rgb(1,1,0).move_to(-80, 40).text("Long press C")
+            ctx.rgb(1,1,1).move_to(H_START, V_START).text("To Program:")
+            ctx.rgb(1,1,0).move_to(H_START, V_START + VERTICAL_OFFSET).text("Press C")
+            ctx.rgb(1,1,1).move_to(H_START, V_START + 2*VERTICAL_OFFSET + 10).text("When finished:")
+            ctx.rgb(1,1,0).move_to(H_START, V_START + 3*VERTICAL_OFFSET + 10).text("Long press C")
         elif self.current_state == BadgeBotAppState.RECEIVE_INSTR:
-            ctx.rgb(1,1,0).move_to(-60,-60 + VERTICAL_OFFSET * (self.scroll_offset)).text("START")
-            i_num = -1
-            for i_num, instr in enumerate(self.instructions):
-                ctx.rgb(1,1,0).move_to(-60,-60 + VERTICAL_OFFSET * (self.scroll_offset + i_num + 1)).text(repr(instr))
-            ctx.rgb(1,1,0).move_to(-60,-60 + VERTICAL_OFFSET * (self.scroll_offset + i_num + 2)).text(repr(self.current_instruction))
-            ctx.rgb(1,1,0).move_to(-60,-60 + VERTICAL_OFFSET * (self.scroll_offset + i_num + 3)).text("END")
+            for i_num, instr in enumerate(["START"] + self.instructions + [self.current_instruction, "END"]):
+                ctx.rgb(1,1,0).move_to(H_START, V_START + VERTICAL_OFFSET * (self.scroll_offset + i_num)).text(str(instr))
         elif self.current_state == BadgeBotAppState.COUNTDOWN:
-            ctx.rgb(1,1,1).move_to(-80,-60).text("Running in:")
-            ctx.rgb(1,1,0).move_to(-80,-30).text((self.run_countdown_target_ms - self.run_countdown_ms) / 1000)
+            ctx.rgb(1,1,1).move_to(H_START, V_START).text("Running in:")
+            countdown_val = (self.run_countdown_target_ms - self.run_countdown_ms) / 1000
+            ctx.rgb(1,1,0).move_to(H_START, V_START+VERTICAL_OFFSET).text(countdown_val)
         elif self.current_state == BadgeBotAppState.RUN:
-            ctx.rgb(1,0,0).move_to(-80,-60).text("Running")
+            ctx.rgb(1,0,0).move_to(H_START, V_START).text("Running")
         ctx.restore()
 
 
