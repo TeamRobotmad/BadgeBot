@@ -1,6 +1,6 @@
 import asyncio
-from tkinter import HORIZONTAL, Menu
 from typing import Optional
+
 import app
 from enum import Enum
 
@@ -13,6 +13,8 @@ HORIZONTAL_START = -80
 class BadgeBotAppState(Enum):
     MENU = 1
     RECEIVE_INSTR = 2
+    COUNTDOWN = 3
+    RUN = 4
 
 class Instruction:
 
@@ -34,12 +36,18 @@ class BadgeBotApp(app.App):
     def __init__(self):
         self.button_states = Buttons(self)
         self.last_press: BUTTON_TYPES = BUTTON_TYPES["CANCEL"]
+        self.long_press_delta = 0
 
-        self.scroll_offset = 0
         self.is_scroll = False
-        self.instructions = []
+        self.scroll_offset = 0
 
+        self.run_countdown_target_ms = 5000
+        self.run_countdown_ms = 0
+
+        self.instructions = []
         self.current_instruction = None
+
+        # Overall app state
         self.current_state = BadgeBotAppState.MENU
 
     def update(self, delta):
@@ -60,8 +68,18 @@ class BadgeBotApp(app.App):
         elif self.current_state == BadgeBotAppState.RECEIVE_INSTR:
             # Enable/disable scrolling
             if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
-                self.is_scroll = not self.is_scroll
-                self.button_states.clear()
+                if self.last_press != BUTTON_TYPES["CONFIRM"]:
+                    self.is_scroll = not self.is_scroll
+                    self.last_press = BUTTON_TYPES["CONFIRM"]
+                else:
+                    self.long_press_delta += delta
+                    if self.long_press_delta >= 1000:
+                        self.current_state = BadgeBotAppState.COUNTDOWN
+                return None
+            self.long_press_delta = 0
+
+            if self.is_scroll:
+                self.last_press = BUTTON_TYPES["CANCEL"]
 
             # Manage scrolling
             if self.is_scroll:
@@ -84,6 +102,12 @@ class BadgeBotApp(app.App):
             elif self.button_states.get(BUTTON_TYPES["DOWN"]):
                 self._handle_instruction_press(BUTTON_TYPES["DOWN"])
                 self.button_states.clear()
+
+        elif self.current_state == BadgeBotAppState.COUNTDOWN:
+            self.run_countdown_ms += delta
+            if self.run_countdown_ms >= self.run_countdown_target_ms:
+                self.current_state = BadgeBotAppState.RUN
+
 
     def _handle_instruction_press(self, press_type: BUTTON_TYPES):
         if self.last_press == press_type:
@@ -114,7 +138,13 @@ class BadgeBotApp(app.App):
                 ctx.rgb(1,1,0).move_to(-60,-60 + VERTICAL_OFFSET * (self.scroll_offset + i_num + 1)).text(repr(instr))
             ctx.rgb(1,1,0).move_to(-60,-60 + VERTICAL_OFFSET * (self.scroll_offset + i_num + 2)).text(repr(self.current_instruction))
             ctx.rgb(1,1,0).move_to(-60,-60 + VERTICAL_OFFSET * (self.scroll_offset + i_num + 3)).text("END")
+        elif self.current_state == BadgeBotAppState.COUNTDOWN:
+            ctx.rgb(1,1,1).move_to(-80,-60).text("Running in:")
+            ctx.rgb(1,1,0).move_to(-80,-30).text((self.run_countdown_target_ms - self.run_countdown_ms) / 1000)
+        elif self.current_state == BadgeBotAppState.RUN:
+            ctx.rgb(1,0,0).move_to(-80,-60).text("Running")
         ctx.restore()
+
 
     def finalize_instruction(self):
         if self.current_instruction is not None:
