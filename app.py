@@ -150,7 +150,7 @@ class BadgeBotApp(app.App):
         elif self.current_state == COUNTDOWN:
             self.run_countdown_ms += delta
             if self.run_countdown_ms >= self.run_countdown_target_ms:
-                self.power_plan_iter = self.instructions[0].power_plan_iterator # TODO chain all instr
+                self.power_plan_iter = chain(*(instr.power_plan_iterator for instr in self.instructions))
                 self.current_state = RUN
 
         elif self.current_state == RUN:
@@ -220,7 +220,7 @@ class BadgeBotApp(app.App):
             ctx.rgb(1,1,0).move_to(H_START, V_START+VERTICAL_OFFSET).text(str(countdown_val))
         elif self.current_state == RUN:
             ctx.rgb(1,1,1).move_to(H_START, V_START).text("Running power")
-            ctx.rgb(1,0,0).move_to(H_START, V_START + 2*VERTICAL_OFFSET).text(str(self.current_power_duration))
+            ctx.rgb(1,0,0).move_to(H_START-30, V_START + 2*VERTICAL_OFFSET).text(str(self.current_power_duration))
         elif self.current_state == DONE:
             ctx.rgb(1,1,1).move_to(H_START, V_START).text(f"Complete!")
             ctx.rgb(1,1,1).move_to(H_START, V_START + VERTICAL_OFFSET).text("To restart:")
@@ -258,5 +258,9 @@ class BadgeBotApp(app.App):
             if len(self.instructions) >= 5:
                 self.scroll_offset -= 1
             self.current_instruction = None
+
+def chain(*iterables):
+    for iterable in iterables:
+        yield from iterable
 
 __app_export__ = BadgeBotApp
