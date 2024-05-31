@@ -1,5 +1,6 @@
 import asyncio
-from typing import List, Optional, Tuple
+from typing import Iterator, List, Optional, Tuple
+from itertools import chain
 
 import app
 from enum import Enum
@@ -18,6 +19,7 @@ class BadgeBotAppState(Enum):
     RECEIVE_INSTR = 2
     COUNTDOWN = 3
     RUN = 4
+    DONE = 5
 
 class Instruction:
 
@@ -43,28 +45,6 @@ class Instruction:
 
     def __str__(self):
         return f"{self.press_type.name} {self._duration}"
-
-    def get_current_power_level(self, delta) -> Optional[int]:
-        # takes in delta as ms since last call
-        # if delta was > 20... what to do
-        if delta >= TICK_MS:
-            delta = TICK_MS-1
-
-        current_power, current_duration = self.current_power_duration
-
-        updated_duration = current_duration - delta
-        if updated_duration <= 0:
-            try:
-                next_power, next_duration = next(self.power_plan_iterator)
-            except StopIteration:
-                # returns None when complete
-                return None
-            next_duration += updated_duration
-            self.current_power_duration = next_power, next_duration
-            return next_power
-        else:
-            self.current_power_duration = current_power, updated_duration
-            return current_power
 
 
     def make_power_plan(self) -> List[Tuple[int, int]]:
@@ -105,8 +85,8 @@ class BadgeBotApp(app.App):
         self.instructions = []
         self.current_instruction = None
 
-        self.running_instruction = None
-        self.running_instruction_provider = iter([])
+        self.current_power_duration = (0, 0)
+        self.power_plan_iter = iter([])
 
         # Overall app state
         self.current_state = BadgeBotAppState.MENU
@@ -167,16 +147,19 @@ class BadgeBotApp(app.App):
         elif self.current_state == BadgeBotAppState.COUNTDOWN:
             self.run_countdown_ms += delta
             if self.run_countdown_ms >= self.run_countdown_target_ms:
-                self.running_instruction_provider = iter(self.instructions)
+                self.power_plan_iter = chain(*(instr.power_plan_iterator for instr in self.instructions))
+                print(list(self.power_plan_iter))
                 self.current_state = BadgeBotAppState.RUN
 
         elif self.current_state == BadgeBotAppState.RUN:
-            if self.running_instruction is None:
-                self.running_instruction = next(self.running_instruction_provider)
-            # TODO change this, make it a flat iterator over the power levels
-            if (power := self.running_instruction.get_current_power_level(delta)) is None:
-                self.running_instruction = None
-            self.power = power
+            self.power = self.get_current_power_level(delta)
+            print(self.power)
+            if self.power is None:
+                self.current_state = BadgeBotAppState.DONE
+
+        elif self.current_state == BadgeBotAppState.DONE:
+            if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
+                self.reset()
 
     def _handle_instruction_press(self, press_type: BUTTON_TYPES):
         if self.last_press == press_type:
@@ -185,6 +168,27 @@ class BadgeBotApp(app.App):
             self.finalize_instruction()
             self.current_instruction = Instruction(press_type)
         self.last_press = press_type
+
+    def reset(self):
+        self.current_state = BadgeBotAppState.MENU
+        self.button_states.clear()
+        self.last_press: BUTTON_TYPES = BUTTON_TYPES["CANCEL"]
+        self.long_press_delta = 0
+
+        self.power = 0
+
+        self.is_scroll = False
+        self.scroll_offset = 0
+
+        self.run_countdown_target_ms = 3000
+        self.run_countdown_ms = 0
+
+        self.instructions = []
+        self.current_instruction = None
+
+        self.current_power_duration = (0, 0)
+        self.power_plan_iter = iter([])
+
 
     def draw(self, ctx):
         ctx.save()
@@ -209,7 +213,34 @@ class BadgeBotApp(app.App):
             ctx.rgb(1,1,0).move_to(H_START, V_START+VERTICAL_OFFSET).text(countdown_val)
         elif self.current_state == BadgeBotAppState.RUN:
             ctx.rgb(1,0,0).move_to(H_START, V_START).text(f"Running {self.power}")
+        elif self.current_state == BadgeBotAppState.DONE:
+            ctx.rgb(1,1,1).move_to(H_START, V_START).text(f"Complete!")
+            ctx.rgb(1,1,1).move_to(H_START, V_START+ VERTICAL_OFFSET).text("To restart:")
+            ctx.rgb(1,1,0).move_to(H_START, V_START+ VERTICAL_OFFSET).text("Press C")
         ctx.restore()
+
+
+    def get_current_power_level(self, delta) -> Optional[int]:
+        # takes in delta as ms since last call
+        # if delta was > 20... what to do
+        if delta >= TICK_MS:
+            delta = TICK_MS-1
+
+        current_power, current_duration = self.current_power_duration
+
+        updated_duration = current_duration - delta
+        if updated_duration <= 0:
+            try:
+                next_power, next_duration = next(self.power_plan_iter)
+            except StopIteration:
+                # returns None when complete
+                return None
+            next_duration += updated_duration
+            self.current_power_duration = next_power, next_duration
+            return next_power
+        else:
+            self.current_power_duration = current_power, updated_duration
+            return current_power
 
 
     def finalize_instruction(self):
