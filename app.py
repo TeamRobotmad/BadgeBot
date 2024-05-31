@@ -215,8 +215,8 @@ class BadgeBotApp(app.App):
             ctx.rgb(1,0,0).move_to(H_START, V_START).text(f"Running {self.power}")
         elif self.current_state == BadgeBotAppState.DONE:
             ctx.rgb(1,1,1).move_to(H_START, V_START).text(f"Complete!")
-            ctx.rgb(1,1,1).move_to(H_START, V_START+ VERTICAL_OFFSET).text("To restart:")
-            ctx.rgb(1,1,0).move_to(H_START, V_START+ VERTICAL_OFFSET).text("Press C")
+            ctx.rgb(1,1,1).move_to(H_START, V_START + VERTICAL_OFFSET).text("To restart:")
+            ctx.rgb(1,1,0).move_to(H_START, V_START + 2*VERTICAL_OFFSET).text("Press C")
         ctx.restore()
 
 
