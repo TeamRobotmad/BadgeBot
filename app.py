@@ -13,6 +13,12 @@ H_START = -78
 V_START = -58
 
 TICK_MS = 20
+POWER_STEP_PER_TICK = 20
+LONG_PRESS_MS = 750
+
+USER_TICK_MULTIPLIER = 4
+
+MAX_POWER = 100
 
 class BadgeBotAppState(Enum):
     MENU = 1
@@ -47,25 +53,16 @@ class Instruction:
         return f"{self.press_type.name} {self._duration}"
 
 
-    def make_power_plan(self) -> List[Tuple[int, int]]:
-        # return tuple of durations at each power
-        # assume starts at 0
-        # Each duration is 200 ms
-        max_power = 100
-        power_step_per_20_ms = 10
-        ramp_up = [(i, TICK_MS) for i in range(0, max_power, power_step_per_20_ms)]
+    def make_power_plan(self) -> Iterator[Tuple[int, int]]:
+        # return collection of tuples of durations at each power
+        ramp_up = [(i, TICK_MS) for i in range(0, MAX_POWER, POWER_STEP_PER_TICK)]
         power_durations = ramp_up.copy()
-        power_durations.append((max_power, TICK_MS * 10 * (self._duration-1)))
+        user_power_duration = TICK_MS * USER_TICK_MULTIPLIER * (self._duration-1)
+        power_durations.append((MAX_POWER, user_power_duration))
         ramp_down = ramp_up.copy()
         ramp_down.reverse()
         power_durations.extend(ramp_down)
         self.power_plan_iterator = iter(power_durations)
-        # return ms to return
-        # tick of 10ms
-        # gradient over 20 ticks
-        # then end of 20 ticks
-
-        # look at hexdrive test
 
 
 class BadgeBotApp(app.App):
@@ -114,7 +111,7 @@ class BadgeBotApp(app.App):
                     self.is_scroll = not self.is_scroll
 
                 self.long_press_delta += delta
-                if self.long_press_delta >= 1000:
+                if self.long_press_delta >= LONG_PRESS_MS:
                     self.finalize_instruction()
                     self.current_state = BadgeBotAppState.COUNTDOWN
 
@@ -148,12 +145,11 @@ class BadgeBotApp(app.App):
             self.run_countdown_ms += delta
             if self.run_countdown_ms >= self.run_countdown_target_ms:
                 self.power_plan_iter = chain(*(instr.power_plan_iterator for instr in self.instructions))
-                print(list(self.power_plan_iter))
                 self.current_state = BadgeBotAppState.RUN
 
         elif self.current_state == BadgeBotAppState.RUN:
             self.power = self.get_current_power_level(delta)
-            print(self.power)
+            print(f"Using power: {self.power}")
             if self.power is None:
                 self.current_state = BadgeBotAppState.DONE
 
@@ -212,7 +208,8 @@ class BadgeBotApp(app.App):
             countdown_val = (self.run_countdown_target_ms - self.run_countdown_ms) / 1000
             ctx.rgb(1,1,0).move_to(H_START, V_START+VERTICAL_OFFSET).text(countdown_val)
         elif self.current_state == BadgeBotAppState.RUN:
-            ctx.rgb(1,0,0).move_to(H_START, V_START).text(f"Running {self.power}")
+            ctx.rgb(1,0,0).move_to(H_START, V_START).text("Running power")
+            ctx.rgb(0,0,1).move_to(H_START, V_START + VERTICAL_OFFSET).text(str(self.power))
         elif self.current_state == BadgeBotAppState.DONE:
             ctx.rgb(1,1,1).move_to(H_START, V_START).text(f"Complete!")
             ctx.rgb(1,1,1).move_to(H_START, V_START + VERTICAL_OFFSET).text("To restart:")
