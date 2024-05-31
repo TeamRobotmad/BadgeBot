@@ -1,3 +1,4 @@
+from logging import WARN, WARNING
 import app
 
 from app_components.tokens import label_font_size
@@ -20,6 +21,7 @@ USER_TICK_MULTIPLIER = 4
 MAX_POWER = 100
 
 # App states
+WARNING = 0
 MENU = 1
 RECEIVE_INSTR = 2
 COUNTDOWN = 3
@@ -86,7 +88,7 @@ class BadgeBotApp(app.App):
         self.power_plan_iter = iter([])
 
         # Overall app state
-        self.current_state = MENU
+        self.current_state = WARNING
 
     def update(self, delta):
         if self.button_states.get(BUTTON_TYPES["CANCEL"]):
@@ -102,6 +104,11 @@ class BadgeBotApp(app.App):
                 self.current_state = RECEIVE_INSTR
                 self.button_states.clear()
 
+        elif self.current_state == WARNING:
+            # Exit warning screen
+            if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
+                self.current_state = MENU
+                self.button_states.clear()
 
         elif self.current_state == RECEIVE_INSTR:
             # Enable/disable scrolling and check for long press
@@ -194,7 +201,13 @@ class BadgeBotApp(app.App):
         else:
             ctx.rgb(0,0,0.1).rectangle(-120,-120,240,240).fill()
 
-        if self.current_state == MENU:
+        if self.current_state == WARNING:
+            ctx.rgb(1,1,1).move_to(H_START, V_START + 0*VERTICAL_OFFSET + 20).text("Please buy")
+            ctx.rgb(1,1,1).move_to(H_START, V_START + 1*VERTICAL_OFFSET + 20).text("BadgeBot")
+            ctx.rgb(1,1,0).move_to(H_START, V_START + 2*VERTICAL_OFFSET + 20).text("Hexpansion")
+            ctx.rgb(1,1,0).move_to(H_START, V_START + 3*VERTICAL_OFFSET + 20).text("from")
+            ctx.rgb(1,1,0).move_to(H_START, V_START + 4*VERTICAL_OFFSET + 20).text("RobotMad")
+        elif self.current_state == MENU:
             ctx.rgb(1,1,1).move_to(H_START, V_START).text("To Program:")
             ctx.rgb(1,1,0).move_to(H_START, V_START + VERTICAL_OFFSET).text("Press C")
             ctx.rgb(1,1,1).move_to(H_START, V_START + 2*VERTICAL_OFFSET + 10).text("When finished:")
