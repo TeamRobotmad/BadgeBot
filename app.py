@@ -1,4 +1,3 @@
-from logging import WARN, WARNING
 import app
 
 from app_components.tokens import label_font_size
