@@ -202,9 +202,9 @@ class BadgeBotApp(app.App):
 
         if self.current_state == WARNING:
             ctx.rgb(1,1,1).move_to(H_START, V_START + 0*VERTICAL_OFFSET + 20).text("Please buy")
-            ctx.rgb(1,1,1).move_to(H_START, V_START + 1*VERTICAL_OFFSET + 20).text("BadgeBot")
-            ctx.rgb(1,1,0).move_to(H_START, V_START + 2*VERTICAL_OFFSET + 20).text("Hexpansion")
-            ctx.rgb(1,1,0).move_to(H_START, V_START + 3*VERTICAL_OFFSET + 20).text("from")
+            ctx.rgb(1,1,0).move_to(H_START, V_START + 1*VERTICAL_OFFSET + 20).text("HexDrive")
+            ctx.rgb(1,1,1).move_to(H_START, V_START + 2*VERTICAL_OFFSET + 20).text("Hexpansion")
+            ctx.rgb(1,1,1).move_to(H_START, V_START + 3*VERTICAL_OFFSET + 20).text("from")
             ctx.rgb(1,1,0).move_to(H_START, V_START + 4*VERTICAL_OFFSET + 20).text("RobotMad")
         elif self.current_state == MENU:
             ctx.rgb(1,1,1).move_to(H_START, V_START).text("To Program:")
@@ -217,7 +217,7 @@ class BadgeBotApp(app.App):
         elif self.current_state == COUNTDOWN:
             ctx.rgb(1,1,1).move_to(H_START, V_START).text("Running in:")
             countdown_val = (self.run_countdown_target_ms - self.run_countdown_ms) / 1000
-            ctx.rgb(1,1,0).move_to(H_START, V_START+VERTICAL_OFFSET).text(countdown_val)
+            ctx.rgb(1,1,0).move_to(H_START, V_START+VERTICAL_OFFSET).text(str(countdown_val))
         elif self.current_state == RUN:
             ctx.rgb(1,1,1).move_to(H_START, V_START).text("Running power")
             ctx.rgb(1,0,0).move_to(H_START, V_START + 2*VERTICAL_OFFSET).text(str(self.current_power_duration))
