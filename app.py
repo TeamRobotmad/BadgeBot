@@ -67,43 +67,42 @@ class BadgeBotApp(app.App):
 
 
         elif self.current_state == BadgeBotAppState.RECEIVE_INSTR:
-            # Enable/disable scrolling
+            # Enable/disable scrolling and check for long press
             if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
-                if self.last_press != BUTTON_TYPES["CONFIRM"]:
+
+                if self.long_press_delta == 0:
                     self.is_scroll = not self.is_scroll
-                    self.last_press = BUTTON_TYPES["CONFIRM"]
-                else:
-                    self.long_press_delta += delta
-                    if self.long_press_delta >= 1000:
-                        self.finalize_instruction()
-                        self.current_state = BadgeBotAppState.COUNTDOWN
-                return None
-            self.long_press_delta = 0
 
-            if self.is_scroll:
-                self.last_press = BUTTON_TYPES["CANCEL"]
+                self.long_press_delta += delta
+                if self.long_press_delta >= 1000:
+                    self.finalize_instruction()
+                    self.current_state = BadgeBotAppState.COUNTDOWN
 
-            # Manage scrolling
-            if self.is_scroll:
-                if self.button_states.get(BUTTON_TYPES["DOWN"]):
-                    self.scroll_offset -= 1
+            else:
+                # Confirm is not pressed. Reset long_press state
+                self.long_press_delta = 0
+
+                # Manage scrolling
+                if self.is_scroll:
+                    if self.button_states.get(BUTTON_TYPES["DOWN"]):
+                        self.scroll_offset -= 1
+                    elif self.button_states.get(BUTTON_TYPES["UP"]):
+                        self.scroll_offset += 1
+                    self.button_states.clear()
+
+                # Instruction button presses
+                elif self.button_states.get(BUTTON_TYPES["RIGHT"]):
+                    self._handle_instruction_press(BUTTON_TYPES["RIGHT"])
+                    self.button_states.clear()
+                elif self.button_states.get(BUTTON_TYPES["LEFT"]):
+                    self._handle_instruction_press(BUTTON_TYPES["LEFT"])
+                    self.button_states.clear()
                 elif self.button_states.get(BUTTON_TYPES["UP"]):
-                    self.scroll_offset += 1
-                self.button_states.clear()
-
-            # Instruction button presses
-            elif self.button_states.get(BUTTON_TYPES["RIGHT"]):
-                self._handle_instruction_press(BUTTON_TYPES["RIGHT"])
-                self.button_states.clear()
-            elif self.button_states.get(BUTTON_TYPES["LEFT"]):
-                self._handle_instruction_press(BUTTON_TYPES["LEFT"])
-                self.button_states.clear()
-            elif self.button_states.get(BUTTON_TYPES["UP"]):
-                self._handle_instruction_press(BUTTON_TYPES["UP"])
-                self.button_states.clear()
-            elif self.button_states.get(BUTTON_TYPES["DOWN"]):
-                self._handle_instruction_press(BUTTON_TYPES["DOWN"])
-                self.button_states.clear()
+                    self._handle_instruction_press(BUTTON_TYPES["UP"])
+                    self.button_states.clear()
+                elif self.button_states.get(BUTTON_TYPES["DOWN"]):
+                    self._handle_instruction_press(BUTTON_TYPES["DOWN"])
+                    self.button_states.clear()
 
         elif self.current_state == BadgeBotAppState.COUNTDOWN:
             self.run_countdown_ms += delta
