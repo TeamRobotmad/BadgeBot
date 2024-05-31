@@ -3,10 +3,15 @@ from typing import Iterator, List, Optional, Tuple
 from itertools import chain
 
 import app
+import machine
 from enum import Enum
 
 from app_components.tokens import label_font_size
 from events.input import Buttons, BUTTON_TYPES
+
+# Motor Driver
+PWM_FREQ = 5000
+MAX_DUTY = 1023
 
 VERTICAL_OFFSET = label_font_size
 H_START = -78
@@ -29,17 +34,10 @@ class BadgeBotAppState(Enum):
 
 class Instruction:
 
-    # tick
-    # Each tick update pwm
-    # target speed
-    # current speed
-    # Trapezium, estimate 200ms
-
     def __init__(self, press_type: BUTTON_TYPES) -> None:
         self._press_type = press_type
         self._duration = 1
 
-        self.current_power_duration = (0, 0)
         self.power_plan_iterator = iter([])
 
     @property
@@ -52,13 +50,23 @@ class Instruction:
     def __str__(self):
         return f"{self.press_type.name} {self._duration}"
 
+    def directional_power_tuple(self, power) -> Tuple[int, int, int, int]:
+        if self._press_type == BUTTON_TYPES["UP"]:
+            return (power, 0, power, 0)
+        elif self._press_type == BUTTON_TYPES["DOWN"]:
+            return (0, power, 0, power)
+        elif self._press_type == BUTTON_TYPES["LEFT"]:
+            return (power, 0, 0, power)
+        elif self._press_type == BUTTON_TYPES["RIGHT"]:
+            return (0, power, power, 0)
 
     def make_power_plan(self) -> Iterator[Tuple[int, int]]:
-        # return collection of tuples of durations at each power
-        ramp_up = [(i, TICK_MS) for i in range(0, MAX_POWER, POWER_STEP_PER_TICK)]
+        # return collection of tuples of power and their duration
+        ramp_up = [(self.directional_power_tuple(p), TICK_MS)
+                   for p in range(0, MAX_POWER, POWER_STEP_PER_TICK)]
         power_durations = ramp_up.copy()
         user_power_duration = TICK_MS * USER_TICK_MULTIPLIER * (self._duration-1)
-        power_durations.append((MAX_POWER, user_power_duration))
+        power_durations.append((self.directional_power_tuple(MAX_POWER), user_power_duration))
         ramp_down = ramp_up.copy()
         ramp_down.reverse()
         power_durations.extend(ramp_down)
@@ -71,8 +79,6 @@ class BadgeBotApp(app.App):
         self.last_press: BUTTON_TYPES = BUTTON_TYPES["CANCEL"]
         self.long_press_delta = 0
 
-        self.power = 0
-
         self.is_scroll = False
         self.scroll_offset = 0
 
@@ -82,7 +88,7 @@ class BadgeBotApp(app.App):
         self.instructions = []
         self.current_instruction = None
 
-        self.current_power_duration = (0, 0)
+        self.current_power_duration = ((0,0,0,0), 0)
         self.power_plan_iter = iter([])
 
         # Overall app state
@@ -148,10 +154,11 @@ class BadgeBotApp(app.App):
                 self.current_state = BadgeBotAppState.RUN
 
         elif self.current_state == BadgeBotAppState.RUN:
-            self.power = self.get_current_power_level(delta)
-            print(f"Using power: {self.power}")
-            if self.power is None:
+            print(delta)
+            power = self.get_current_power_level(delta)
+            if power is None:
                 self.current_state = BadgeBotAppState.DONE
+            print(f"Using power: {power}")
 
         elif self.current_state == BadgeBotAppState.DONE:
             if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
@@ -171,8 +178,6 @@ class BadgeBotApp(app.App):
         self.last_press: BUTTON_TYPES = BUTTON_TYPES["CANCEL"]
         self.long_press_delta = 0
 
-        self.power = 0
-
         self.is_scroll = False
         self.scroll_offset = 0
 
@@ -182,7 +187,7 @@ class BadgeBotApp(app.App):
         self.instructions = []
         self.current_instruction = None
 
-        self.current_power_duration = (0, 0)
+        self.current_power_duration = ((0,0,0,0), 0)
         self.power_plan_iter = iter([])
 
 
@@ -208,8 +213,8 @@ class BadgeBotApp(app.App):
             countdown_val = (self.run_countdown_target_ms - self.run_countdown_ms) / 1000
             ctx.rgb(1,1,0).move_to(H_START, V_START+VERTICAL_OFFSET).text(countdown_val)
         elif self.current_state == BadgeBotAppState.RUN:
-            ctx.rgb(1,0,0).move_to(H_START, V_START).text("Running power")
-            ctx.rgb(0,0,1).move_to(H_START, V_START + VERTICAL_OFFSET).text(str(self.power))
+            ctx.rgb(1,1,1).move_to(H_START, V_START).text("Running power")
+            ctx.rgb(1,0,0).move_to(H_START, V_START + VERTICAL_OFFSET).text(str(self.current_power_duration))
         elif self.current_state == BadgeBotAppState.DONE:
             ctx.rgb(1,1,1).move_to(H_START, V_START).text(f"Complete!")
             ctx.rgb(1,1,1).move_to(H_START, V_START + VERTICAL_OFFSET).text("To restart:")
