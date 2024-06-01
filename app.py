@@ -5,6 +5,9 @@ from app_components.notification import Notification
 from events.input import Buttons, BUTTON_TYPES
 from tildagonos import tildagonos
 
+from system.eventbus import eventbus
+from system.patterndisplay.events import PatternDisable, PatternEnable
+
 # Motor Driver
 PWM_FREQ = 5000
 MAX_DUTY = 1023
@@ -92,6 +95,7 @@ class BadgeBotApp(app.App):
 
         self.notification = None
 
+
         # Overall app state
         self.current_state = WARNING
 
@@ -101,6 +105,7 @@ class BadgeBotApp(app.App):
 
         if self.button_states.get(BUTTON_TYPES["CANCEL"]) and self.current_state in MINIMISE_VALID_STATES:
             self.button_states.clear()
+            eventbus.emit(PatternEnable()) # TODO replace with on lose focus on gain focus
             self.minimise()
 
         elif self.current_state == MENU:
@@ -116,6 +121,7 @@ class BadgeBotApp(app.App):
                 self.button_states.clear()
 
         elif self.current_state == RECEIVE_INSTR:
+            eventbus.emit(PatternDisable())
             self.clear_leds()
             # Enable/disable scrolling and check for long press
             if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
@@ -186,6 +192,7 @@ class BadgeBotApp(app.App):
             print(f"Using power: {power}")
 
         elif self.current_state == DONE:
+            eventbus.emit(PatternEnable())
             if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
                 self.reset()
 
