@@ -121,6 +121,7 @@ class BadgeBotApp(app.App):
             if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
 
                 if self.long_press_delta == 0:
+                    # TODO Move to button up event
                     self.is_scroll = not self.is_scroll
                     self.notification = Notification(f"Scroll {self.is_scroll}")
 
