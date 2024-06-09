@@ -6,7 +6,7 @@ import vfs
 from app_components.notification import Notification
 from app_components.tokens import label_font_size
 from events.input import BUTTON_TYPES, Buttons
-from machine import I2C, Pin, PWM
+from machine import I2C, Pin
 from system.eventbus import eventbus
 from system.hexpansion.config import _pin_mapping
 from system.hexpansion.events import (HexpansionInsertionEvent,
@@ -25,7 +25,7 @@ from tildagon import Pin as ePin
 CURRENT_APP_VERSION = 2 # Integer Version Number - checked against the EEPROM app.py version to determine if it needs updating
 
 # Motor Driver
-PWM_FREQ = 5000
+PWM_FREQ = 20000
 MAX_POWER = 65535
 POWER_STEP_PER_TICK = 5000
 
@@ -132,10 +132,6 @@ class BadgeBotApp(app.App):
         self.hexdrive_enable_state = [False] * 6
         eventbus.on_async(HexpansionInsertionEvent, self.handle_hexpansion_insertion, self)
         eventbus.on_async(HexpansionRemovalEvent,   self.handle_hexpansion_removal,   self)
-        self.A = PWM(Pin(33), freq = PWM_FREQ, duty_u16 = 0)
-        self.B = PWM(Pin(34), freq = PWM_FREQ, duty_u16 = 0)
-        self.C = PWM(Pin(47), freq = PWM_FREQ, duty_u16 = 0)
-        self.D = PWM(Pin(48), freq = PWM_FREQ, duty_u16 = 0)
 
         self.hexdrive_app = None
     
@@ -539,11 +535,8 @@ class BadgeBotApp(app.App):
                 self.current_state = STATE_DONE
             else:
                 print(f"Using power: {power}")
-                A,B,C,D = power
-                self.A.duty_u16(A)
-                self.B.duty_u16(B)
-                self.C.duty_u16(C)
-                self.D.duty_u16(D)
+                self.hexdrive_app.set_pwm(power)
+
                 
         elif self.current_state == STATE_DONE:
             if self.button_states.get(BUTTON_TYPES["CONFIRM"]):

@@ -5,7 +5,7 @@
 import asyncio
 
 import app
-from machine import I2C, Pin
+from machine import I2C, Pin, PWM
 
 from tildagon import Pin as ePin
 
@@ -15,6 +15,7 @@ APP_VERSION = 2
 POWER_ENABLE_PIN_INDEX = 0	# First LS pin used to enable the SMPSU
 POWER_DETECT_PIN_INDEX = 1  # Second LS pin used to sense if the SMPSU has a source of power
 
+PWM_FREQ = 20000    
 class HexDriveApp(app.App):
 
     def __init__(self, config=None):
@@ -31,6 +32,18 @@ class HexDriveApp(app.App):
         for hs_pin in self.config.pin:
             hs_pin.value(0)
     
+        # Allocate PWM generation to pins
+        self.setup_failed = False
+        self.PWMOutput = [None] * len(self.config.pin)
+        for i_num, hs_pin in enumerate(self.config.pin):
+            print(f"H:{self.config.port}:{i_num} PWM on pin {self.config.pin[i_num]}")
+            try:
+                self.PWMOutput[i_num] = PWM(hs_pin, freq = PWM_FREQ, duty_u16 = 0)
+                print(self.PWMOutput[i_num])
+            except:
+                print(f"H:{self.config.port}:{i_num} PWM allocation failed")
+                self.setup_failed = True
+
     async def background_task(self):
         while 1:
             # we will do something here probably
@@ -70,5 +83,12 @@ class HexDriveApp(app.App):
             i2c.writeto_mem(pin[0], 0x04+pin[1], bytes([config_reg]))
         except:
             print(f"access to I2C(7) blocked")
+
+    def set_pwm(self, pwms):
+        if self.setup_failed:
+            return
+        for i, pwm in enumerate(pwms):
+            print(f"Set PWM {i} to {pwm}")
+            self.PWMOutput[i].duty_u16(pwm)
 
 __app_export__ = HexDriveApp
