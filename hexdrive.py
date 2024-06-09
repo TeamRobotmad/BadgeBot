@@ -12,7 +12,7 @@ APP_VERSION = 1
 
 POWER_ENABLE_PIN_INDEX = 0	# First LS pin
 
-class HexDrive(app.App):
+class HexDriveApp(app.App):
 
     def __init__(self, config=None):
         self.config = config
@@ -56,4 +56,4 @@ class HexDrive(app.App):
         except:
             print("access to I2C(7) blocked")
 
-__app_export__ = HexDrive
+__app_export__ = HexDriveApp
