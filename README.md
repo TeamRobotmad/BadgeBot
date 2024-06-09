@@ -13,7 +13,13 @@ Companion app for HexDrive expansion, assuming BadgeBot configuration with 2 mot
 git clone https://github.com/TeamRobotmad/badge-2024-software.git
 cd badge-2024-software.git
 git submodule sync BadgeBot
+pip install --upgrade pip
 pip install -r ./sim/requirements.txt
+
+testing
+
+pip install pytest
+pytest tests
 
 ### Developers setup
 
