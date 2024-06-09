@@ -10,20 +10,22 @@ from machine import I2C, Pin
 from tildagon import Pin as ePin
 
 # HexDrive.py App Version - parsed by app.py to check if upgrade is required
-APP_VERSION = 1 
+APP_VERSION = 2 
 
-POWER_ENABLE_PIN_INDEX = 0	# First LS pin
+POWER_ENABLE_PIN_INDEX = 0	# First LS pin used to enable the SMPSU
+POWER_DETECT_PIN_INDEX = 1  # Second LS pin used to sense if the SMPSU has a source of power
 
 class HexDriveApp(app.App):
 
     def __init__(self, config=None):
         self.config = config
-        self.power_state = False
+        self.power_state = None
         # report app starting and which port it is running on
-        print("HexDrive App Init on port ", self.config.port)
+        print(f"HexDrive App Init on port {self.config.port}")
         # Set Power Enable Pin to Output
-        HexDrivePowerEnable = self.config.ls_pin[POWER_ENABLE_PIN_INDEX]
-        self.set_pin_out(HexDrivePowerEnable.pin)   # Work around as Tildagon(s) (version 1.6) is missing code to set the eGPIO direction to output
+        self.power_control = self.config.ls_pin[POWER_ENABLE_PIN_INDEX]
+        self.power_detect = self.config.ls_pin[POWER_DETECT_PIN_INDEX]
+        self.set_pin_out(self.power_control.pin)   # Work around as Tildagon(s) (version 1.6) is missing code to set the eGPIO direction to output
         self.set_power(False)
         # Set all HexDrive Hexpansion HS pins to low level outputs
         for hs_pin in self.config.pin:
@@ -38,13 +40,24 @@ class HexDriveApp(app.App):
     def set_power(self, state):
         if state == self.power_state:
             return
-        if state:
-            print("Enable HexDrive Power")
-            HexDrivePowerEnable.value(1)
-        else:
-            # Test Use - disable Hexpansion Power
-            print("Disable HexDrive Power")
-            HexDrivePowerEnable.value(0)      
+        print(f"HexDrive [{self.config.port}] Power={state}")  
+        #self.power_control.value(state) # currently broken
+        self.set_pin_value(self.power_control.pin, state)
+        self.power_state = state    
+
+
+    def set_pin_value(self, pin, value):
+        try:
+            i2c = I2C(7)
+            output_reg = int.from_bytes(i2c.readfrom_mem(pin[0], 0x02+pin[1], 1), 'little')
+            if value:
+                output_reg |= pin[2]
+            else:
+                output_reg &= ~(pin[2])
+            print(f"H:Write to {hex(pin[0])} address {hex(0x02+pin[1])} value {hex(output_reg)}")
+            i2c.writeto_mem(pin[0], 0x02+pin[1], bytes([output_reg]))
+        except:
+            print(f"H:access to I2C(7) blocked")
 
     def set_pin_out(self, pin):
         try:
@@ -56,6 +69,6 @@ class HexDriveApp(app.App):
             config_reg &= ~(pin[2])
             i2c.writeto_mem(pin[0], 0x04+pin[1], bytes([config_reg]))
         except:
-            print("access to I2C(7) blocked")
+            print(f"access to I2C(7) blocked")
 
 __app_export__ = HexDriveApp

@@ -6,7 +6,7 @@ import vfs
 from app_components.notification import Notification
 from app_components.tokens import label_font_size
 from events.input import BUTTON_TYPES, Buttons
-from machine import I2C, Pin
+from machine import I2C, Pin, PWM
 from system.eventbus import eventbus
 from system.hexpansion.config import _pin_mapping
 from system.hexpansion.events import (HexpansionInsertionEvent,
@@ -21,23 +21,22 @@ from tildagonos import tildagonos
 
 from tildagon import Pin as ePin
 
-CURRENT_APP_VERSION = 1 # Integer Version Number - checked against the EEPROM app.py version to determine if it needs updating
+CURRENT_APP_VERSION = 2 # Integer Version Number - checked against the EEPROM app.py version to determine if it needs updating
 
 # Motor Driver
 PWM_FREQ = 5000
-MAX_DUTY = 1023
+MAX_POWER = 65535
+POWER_STEP_PER_TICK = 5000
 
 VERTICAL_OFFSET = label_font_size
 H_START = -78
 V_START = -58
 
 TICK_MS = 20
-POWER_STEP_PER_TICK = 20
 LONG_PRESS_MS = 750
 
 USER_TICK_MULTIPLIER = 4
 
-MAX_POWER = 100
 
 # App states
 STATE_INIT = -1
@@ -56,7 +55,8 @@ STATE_ERROR = 11          # Hexpansion error
 
 MINIMISE_VALID_STATES = [0, 1, 2, 5, 6, 7, 8, 10, 11]
 
-POWER_ENABLE_PIN_INDEX = 0	# First LS pin
+POWER_ENABLE_PIN_INDEX = 0	# First LS pin used to enable the SMPSU
+POWER_DETECT_PIN_INDEX = 1  # Second LS pin used to sense if the SMPSU has a source of power
 
 EEPROM_ADDR  = 0x50
 HEXDRIVE_VID = 0xCAFE
@@ -128,11 +128,17 @@ class BadgeBotApp(app.App):
         self.ports_with_blank_eeprom = set()
         self.ports_with_hexdrive = set()
         self.ports_with_upgraded_hexdrive = set()
+        self.hexdrive_enable_state = [False] * 6
         eventbus.on_async(HexpansionInsertionEvent, self.handle_hexpansion_insertion, self)
         eventbus.on_async(HexpansionRemovalEvent,   self.handle_hexpansion_removal,   self)
+        self.A = PWM(Pin(33), freq = PWM_FREQ, duty_u16 = 0)
+        self.B = PWM(Pin(34), freq = PWM_FREQ, duty_u16 = 0)
+        self.C = PWM(Pin(47), freq = PWM_FREQ, duty_u16 = 0)
+        self.D = PWM(Pin(48), freq = PWM_FREQ, duty_u16 = 0)
 
         # Overall app state (controls what is displayed)
         self.current_state = STATE_INIT
+        self.divider = 1
 
     async def handle_hexpansion_removal(self, event):
         #await asyncio.sleep(1)
@@ -178,7 +184,7 @@ class BadgeBotApp(app.App):
             print(f"H:Found HexDrive on port {port}")
             self.ports_with_hexdrive.add(port)
 
-    def get_app_version_in_eeprom(self, port, header, i2c, addr):
+    def get_app_version_in_eeprom(self, port, header, i2c, addr) -> int:
         try:
             eep, partition = get_hexpansion_block_devices(i2c, header, addr)
         except RuntimeError as e:
@@ -212,7 +218,7 @@ class BadgeBotApp(app.App):
             print(f"H:Error reading HexDrive app.py: {e}")
             return 0
 
-    def update_app_in_eeprom(self, port, header, i2c, addr):
+    def update_app_in_eeprom(self, port, header, i2c, addr) -> bool:
         # Copy hexdreive.py to EEPROM as app.py
         print(f"H:Updating HexDrive app.py on port {port}")
         try:
@@ -246,7 +252,7 @@ class BadgeBotApp(app.App):
             print(f"H:Error updating HexDrive app.py: {e}")
             return False   
 
-    def prepare_eeprom(self, port, i2c, addr):
+    def prepare_eeprom(self, port, i2c, addr) -> bool:
         print(f"H:Initialising EEPROM @ {hex(addr)} on port {port}")
         header = HexpansionHeader(
             manifest_version="2024",
@@ -264,7 +270,7 @@ class BadgeBotApp(app.App):
         i2c.writeto(addr, bytes([0, 0]) + header.to_bytes())
         header = read_hexpansion_header(i2c, addr, set_read_addr=True, addr_len=2)
         if header is None:
-            raise RuntimeError("H:EEPROM Init failed")
+            raise RuntimeError(f"H:EEPROM Init failed")
             return False
         try:
             # Get block devices
@@ -281,7 +287,8 @@ class BadgeBotApp(app.App):
             return False
         try:
             # And mount!
-            vfs.mount(partition, "/eeprom")
+            mountpoint = '/hexpansion_' + str(port)
+            vfs.mount(partition, mountpoint, readonly=False)
             print(f"H:EEPROM initialised")
         except Exception as e:
             print(f"H:Error mounting: {e}")
@@ -298,27 +305,57 @@ class BadgeBotApp(app.App):
             i2c = I2C(7)
             config_reg = int.from_bytes(i2c.readfrom_mem(pin[0], 0x04+pin[1], 1), 'little')
             config_reg &= ~(pin[2])
+            #print(f"H:Write to {hex(pin[0])} address {hex(0x04+pin[1])} value {hex(config_reg)}")
             i2c.writeto_mem(pin[0], 0x04+pin[1], bytes([config_reg]))
+        except:
+            print(f"H:access to I2C(7) blocked")
+
+    def set_pin_value(self, pin, value):
+        try:
+            i2c = I2C(7)
+            output_reg = int.from_bytes(i2c.readfrom_mem(pin[0], 0x02+pin[1], 1), 'little')
+            if value:
+                output_reg |= pin[2]
+            else:
+                output_reg &= ~(pin[2])
+            #print(f"H:Write to {hex(pin[0])} address {hex(0x02+pin[1])} value {hex(output_reg)}")
+            i2c.writeto_mem(pin[0], 0x02+pin[1], bytes([output_reg]))
         except:
             print(f"H:access to I2C(7) blocked")
 
     def set_hexdrive_power(self, state):
         for port in self.ports_with_upgraded_hexdrive:
-            power_enable_pin_number = _pin_mapping[port]["ls"][POWER_ENABLE_PIN_INDEX]
-            HexDrivePowerEnable = ePin(power_enable_pin_number,Pin.OUT)
-            #Issue that the Badge Code does not set the IO expander to output mode
-            print(f"H:Setting HexDrive Power pin {power_enable_pin_number} to {state}")
-            self.set_pin_out(HexDrivePowerEnable.pin)
-            HexDrivePowerEnable.value(state)
+            power_detect = _pin_mapping[port]["ls"][POWER_DETECT_PIN_INDEX]
+            HexDrivePowerDetect = ePin(power_detect,Pin.IN)
+            power_enable = _pin_mapping[port]["ls"][POWER_ENABLE_PIN_INDEX]
+            HexDrivePowerEnable = ePin(power_enable,Pin.OUT)
+            self.set_pin_out(HexDrivePowerEnable.pin)   # work around for LS pin direction not being set
+            this_hexdrive_state = state
+            #print(f"H:HexDrive power detect pin {power_detect} = {HexDrivePowerDetect.value()}")
+            if not HexDrivePowerDetect.value():               
+                # If the SMPSU is not powered then we shouldn't enable it
+                this_hexdrive_state = False
+            if (this_hexdrive_state != self.hexdrive_enable_state[port-1]):
+                print(f"H:Setting HexDrive Power pin {power_enable} to {state}")
+                #HexDrivePowerEnable.value(this_hexdrive_state)
+                self.set_pin_value(HexDrivePowerEnable.pin, this_hexdrive_state)
+                self.hexdrive_enable_state[port-1] = this_hexdrive_state
 
     # Scan the Hexpansion ports for EEPROMs and HexDrives in case they are already plugged in when we start
     def scan_ports(self):
         for port in range(1, 7):
             self.check_port_for_hexdrive(port)
-
+           
     def update(self, delta):
         if self.notification:
             self.notification.update(delta)
+
+        # Code teo test use of LS ePins
+        #self.divider += 1
+        #if self.divider % 100 == 0:
+        #    self.set_hexdrive_power(False)
+        #elif self.divider % 100 == 50:
+        #    self.set_hexdrive_power(True)
 
         if self.current_state == STATE_INIT:
             # One Time initialisation
@@ -341,9 +378,11 @@ class BadgeBotApp(app.App):
                     self.button_states.clear()
                     self.current_state = STATE_PROGRAMMING
                     if self.prepare_eeprom(self.detected_port, I2C(self.detected_port), EEPROM_ADDR):
+                        self.notification = Notification(f"Initialised", port = self.detected_port)
                         self.ports_with_hexdrive.add(self.detected_port)
                         self.current_state = STATE_WAIT
                     else:
+                        self.notification = Notification(f"Failed", port = self.detected_port)
                         self.error_message = ["EEPROM","Initialisation","Failed"]
                         self.current_state = STATE_ERROR          
                 elif self.button_states.get(BUTTON_TYPES["CANCEL"]):
@@ -365,9 +404,11 @@ class BadgeBotApp(app.App):
                         header = False                        
                     if header and header.vid == HEXDRIVE_VID and header.pid == HEXDRIVE_PID:
                         if self.update_app_in_eeprom(self.upgrade_port, header, i2c, EEPROM_ADDR):
+                            self.notification = Notification(f"Upgraded", port = self.upgrade_port)
                             self.ports_with_upgraded_hexdrive.add(self.upgrade_port)
                             self.current_state = STATE_WAIT
                         else:
+                            self.notification = Notification(f"Failed", port = self.upgrade_port)
                             self.error_message = ["HexDrive","Programming","Failed"]
                             self.current_state = STATE_ERROR
                     else:
@@ -382,6 +423,7 @@ class BadgeBotApp(app.App):
                 # if there are any ports with blank eeproms
                 # Show the UI prompt and wait for button press
                 self.detected_port = self.ports_with_blank_eeprom.pop()
+                self.notification = Notification(f"Initialise?", port = self.detected_port)
                 self.current_state = STATE_DETECTED          
             elif 0 < len(self.ports_with_hexdrive):
                 # if there are any ports with HexDrives - check if they need upgrading
@@ -402,9 +444,11 @@ class BadgeBotApp(app.App):
                     else:    
                         # Show the UI prompt and wait for button press
                         self.upgrade_port = port
+                        self.notification = Notification(f"Upgrade?", port = self.upgrade_port)
                         self.current_state = STATE_UPGRADE
                 else:
                     print(f"H:Error reading Hexpansion header")
+                    self.notification = Notification(f"Error", port = port)
                     self.error_message = ["Hexpansion","Read","Failed"]
                     self.current_state = STATE_ERROR        
             elif self.current_state == STATE_WAIT: 
@@ -499,11 +543,17 @@ class BadgeBotApp(app.App):
             print(delta)
             power = self.get_current_power_level(delta)
             if power is None:
+                eventbus.emit(PatternEnable())
                 self.current_state = STATE_DONE
-            print(f"Using power: {power}")
-
+            else:
+                print(f"Using power: {power}")
+                A,B,C,D = power
+                self.A.duty_u16(A)
+                self.B.duty_u16(B)
+                self.C.duty_u16(C)
+                self.D.duty_u16(D)
+                
         elif self.current_state == STATE_DONE:
-            eventbus.emit(PatternEnable())
             if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
                 self.set_hexdrive_power(False)
                 self.reset()
