@@ -1,22 +1,24 @@
-import app
 import asyncio
-from app_components.tokens import label_font_size
-from app_components.notification import Notification
-from events.input import Buttons, BUTTON_TYPES
-from tildagonos import tildagonos
-from system.eventbus import eventbus
-from system.patterndisplay.events import (PatternDisable, PatternEnable)
+import re
 
+import app
+import vfs
+from app_components.notification import Notification
+from app_components.tokens import label_font_size
+from events.input import BUTTON_TYPES, Buttons
+from machine import I2C, Pin
+from system.eventbus import eventbus
+from system.hexpansion.config import _pin_mapping
+from system.hexpansion.events import (HexpansionInsertionEvent,
+                                      HexpansionRemovalEvent)
 # Hexpansion related imports
 from system.hexpansion.header import HexpansionHeader
-from system.hexpansion.util import (read_hexpansion_header, get_hexpansion_block_devices, detect_eeprom_addr)
-from system.hexpansion.events import (HexpansionInsertionEvent, HexpansionRemovalEvent)
-from system.hexpansion.config import _pin_mapping
+from system.hexpansion.util import (detect_eeprom_addr,
+                                    get_hexpansion_block_devices,
+                                    read_hexpansion_header)
+from system.patterndisplay.events import PatternDisable, PatternEnable
+from tildagonos import tildagonos
 
-import vfs
-import re
-import asyncio
-from machine import (Pin, I2C)
 from tildagon import Pin as ePin
 
 CURRENT_APP_VERSION = 1 # Integer Version Number - checked against the EEPROM app.py version to determine if it needs updating

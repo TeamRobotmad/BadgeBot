@@ -2,9 +2,11 @@
 # it is copied onto the EEPROM and renamed as app.py
 # It is then run from the EEPROM by the BadgeOS.
 
-import app
 import asyncio
-from machine import (Pin, I2C)
+
+import app
+from machine import I2C, Pin
+
 from tildagon import Pin as ePin
 
 # HexDrive.py App Version - parsed by app.py to check if upgrade is required
