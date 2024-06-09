@@ -22,10 +22,9 @@ from tildagonos import tildagonos
 
 from tildagon import Pin as ePin
 
-CURRENT_APP_VERSION = 2 # Integer Version Number - checked against the EEPROM app.py version to determine if it needs updating
+CURRENT_APP_VERSION = 1 # Integer Version Number - checked against the EEPROM app.py version to determine if it needs updating
 
 # Motor Driver
-PWM_FREQ = 20000
 MAX_POWER = 65535
 POWER_STEP_PER_TICK = 5000
 
@@ -129,7 +128,6 @@ class BadgeBotApp(app.App):
         self.ports_with_blank_eeprom = set()
         self.ports_with_hexdrive = set()
         self.ports_with_upgraded_hexdrive = set()
-        self.hexdrive_enable_state = [False] * 6
         eventbus.on_async(HexpansionInsertionEvent, self.handle_hexpansion_insertion, self)
         eventbus.on_async(HexpansionRemovalEvent,   self.handle_hexpansion_removal,   self)
 
@@ -137,7 +135,6 @@ class BadgeBotApp(app.App):
     
         # Overall app state (controls what is displayed)
         self.current_state = STATE_INIT
-        self.divider = 1
 
     async def handle_hexpansion_removal(self, event):
         #await asyncio.sleep(1)
@@ -242,15 +239,19 @@ class BadgeBotApp(app.App):
             with open(f"{mountpoint}/app.py", "wt") as appfile:
                 with open(path, "rt") as template:
                     appfile.write(template.read())
-            if not already_mounted:
-                print(f"H:Unmounting {mountpoint}")                    
-                vfs.umount(mountpoint)
-            print(f"H:HexDrive app.py updated to version {CURRENT_APP_VERSION}")
-            return True
         except Exception as e:
             print(f"H:Error updating HexDrive app.py: {e}")
             return False   
-
+        if not already_mounted:
+            print(f"H:Unmounting {mountpoint}")                    
+            try:
+                vfs.umount(mountpoint)
+                print(f"H:HexDrive app.py updated to version {CURRENT_APP_VERSION}")
+                return True
+            except Exception as e:
+                print(f"H:Error unmounting {mountpoint} {e}")
+                return False 
+    
     def prepare_eeprom(self, port, i2c, addr) -> bool:
         print(f"H:Initialising EEPROM @ {hex(addr)} on port {port}")
         header = HexpansionHeader(
@@ -294,34 +295,6 @@ class BadgeBotApp(app.App):
             return False
         return True 
 
-    def set_pin_out(self, pin):
-        # Tildagon(s) (version 1.6) is missing code to set the eGPIO direction to output
-        # so we need to update this directly
-        try:
-            # Use a Try in case access to i2C(7) is blocked for apps in future
-            # presumably if this happens then the code will have been updated to
-            # handle the GPIO direction correctly anyway.
-            i2c = I2C(7)
-            config_reg = int.from_bytes(i2c.readfrom_mem(pin[0], 0x04+pin[1], 1), 'little')
-            config_reg &= ~(pin[2])
-            #print(f"H:Write to {hex(pin[0])} address {hex(0x04+pin[1])} value {hex(config_reg)}")
-            i2c.writeto_mem(pin[0], 0x04+pin[1], bytes([config_reg]))
-        except:
-            print(f"H:access to I2C(7) blocked")
-
-    def set_pin_value(self, pin, value):
-        try:
-            i2c = I2C(7)
-            output_reg = int.from_bytes(i2c.readfrom_mem(pin[0], 0x02+pin[1], 1), 'little')
-            if value:
-                output_reg |= pin[2]
-            else:
-                output_reg &= ~(pin[2])
-            #print(f"H:Write to {hex(pin[0])} address {hex(0x02+pin[1])} value {hex(output_reg)}")
-            i2c.writeto_mem(pin[0], 0x02+pin[1], bytes([output_reg]))
-        except:
-            print(f"H:access to I2C(7) blocked")
-
     # Scan the Hexpansion ports for EEPROMs and HexDrives in case they are already plugged in when we start
     def scan_ports(self):
         for port in range(1, 7):
@@ -330,13 +303,6 @@ class BadgeBotApp(app.App):
     def update(self, delta):
         if self.notification:
             self.notification.update(delta)
-
-        # Code teo test use of LS ePins
-        #self.divider += 1
-        #if self.divider % 100 == 0:
-        #    self.hexdrive_app.set_power(False)
-        #elif self.divider % 100 == 50:
-        #    self.hexdrive_app.set_power(True)
 
         if self.current_state == STATE_INIT:
             # One Time initialisation
@@ -387,7 +353,8 @@ class BadgeBotApp(app.App):
                         if self.update_app_in_eeprom(self.upgrade_port, header, i2c, EEPROM_ADDR):
                             self.notification = Notification(f"Upgraded", port = self.upgrade_port)
                             self.ports_with_upgraded_hexdrive.add(self.upgrade_port)
-                            self.current_state = STATE_WAIT
+                            self.error_message = ["Upgraded","Please","Reboop"]
+                            self.current_state = STATE_ERROR                                     
                         else:
                             self.notification = Notification(f"Failed", port = self.upgrade_port)
                             self.error_message = ["HexDrive","Programming","Failed"]
@@ -446,7 +413,8 @@ class BadgeBotApp(app.App):
                             break
                     else:
                         print(f"H:App not found, please restart")
-
+                        self.error_message = ["Please","Reboop"]
+                        self.current_state = STATE_ERROR                           
                     self.current_state = STATE_MENU
                 elif self.hexdrive_seen:
                     self.hexdrive_seen = False
