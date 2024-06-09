@@ -18,7 +18,10 @@ jobs:
         repository: TeamRobotmad/badge-2024-software
     - name: Manage submodule
       run: |
-        git submodule sync BadgeBot
+        git submodule update --init ./sim/apps/Badgebot
+        cd ./sim/apps/Badgebot
+        git checkout  ${{ github.head_ref || github.ref_name }} 
+        cd ../../../
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v3
       with:
@@ -27,6 +30,6 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install pytest
-    - name: Analysing the code with pylint
+    - name: Run the tests
       run: |
         pytest tests
