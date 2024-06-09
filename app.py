@@ -12,6 +12,7 @@ from system.hexpansion.config import _pin_mapping
 from system.hexpansion.events import (HexpansionInsertionEvent,
                                       HexpansionRemovalEvent)
 # Hexpansion related imports
+from system.scheduler import scheduler
 from system.hexpansion.header import HexpansionHeader
 from system.hexpansion.util import (detect_eeprom_addr,
                                     get_hexpansion_block_devices,
@@ -136,6 +137,8 @@ class BadgeBotApp(app.App):
         self.C = PWM(Pin(47), freq = PWM_FREQ, duty_u16 = 0)
         self.D = PWM(Pin(48), freq = PWM_FREQ, duty_u16 = 0)
 
+        self.hexdrive_app = None
+    
         # Overall app state (controls what is displayed)
         self.current_state = STATE_INIT
         self.divider = 1
@@ -323,24 +326,6 @@ class BadgeBotApp(app.App):
         except:
             print(f"H:access to I2C(7) blocked")
 
-    def set_hexdrive_power(self, state):
-        for port in self.ports_with_upgraded_hexdrive:
-            power_detect = _pin_mapping[port]["ls"][POWER_DETECT_PIN_INDEX]
-            HexDrivePowerDetect = ePin(power_detect,Pin.IN)
-            power_enable = _pin_mapping[port]["ls"][POWER_ENABLE_PIN_INDEX]
-            HexDrivePowerEnable = ePin(power_enable,Pin.OUT)
-            self.set_pin_out(HexDrivePowerEnable.pin)   # work around for LS pin direction not being set
-            this_hexdrive_state = state
-            #print(f"H:HexDrive power detect pin {power_detect} = {HexDrivePowerDetect.value()}")
-            if not HexDrivePowerDetect.value():               
-                # If the SMPSU is not powered then we shouldn't enable it
-                this_hexdrive_state = False
-            if (this_hexdrive_state != self.hexdrive_enable_state[port-1]):
-                print(f"H:Setting HexDrive Power pin {power_enable} to {state}")
-                #HexDrivePowerEnable.value(this_hexdrive_state)
-                self.set_pin_value(HexDrivePowerEnable.pin, this_hexdrive_state)
-                self.hexdrive_enable_state[port-1] = this_hexdrive_state
-
     # Scan the Hexpansion ports for EEPROMs and HexDrives in case they are already plugged in when we start
     def scan_ports(self):
         for port in range(1, 7):
@@ -353,9 +338,9 @@ class BadgeBotApp(app.App):
         # Code teo test use of LS ePins
         #self.divider += 1
         #if self.divider % 100 == 0:
-        #    self.set_hexdrive_power(False)
+        #    self.hexdrive_app.set_power(False)
         #elif self.divider % 100 == 50:
-        #    self.set_hexdrive_power(True)
+        #    self.hexdrive_app.set_power(True)
 
         if self.current_state == STATE_INIT:
             # One Time initialisation
@@ -453,18 +438,25 @@ class BadgeBotApp(app.App):
                     self.current_state = STATE_ERROR        
             elif self.current_state == STATE_WAIT: 
                 if 0 < len(self.ports_with_upgraded_hexdrive):
+                    valid_port = next(iter(self.ports_with_upgraded_hexdrive))
                     # We have at least one HexDrive with the latest App.py
                     self.hexdrive_seen = True
+                    # Find our running hexdrive app
+                    for app in scheduler.apps:
+                        if hasattr(app, "config"):
+                            app.config.port == valid_port
+                            self.hexdrive_app = app
+                            print(f"H:Found app on port {valid_port}")
+                            break
+                    else:
+                        print(f"H:App not found, please restart")
+
                     self.current_state = STATE_MENU
                 elif self.hexdrive_seen:
                     self.hexdrive_seen = False
                     self.current_state = STATE_REMOVED
                 else:                   
                     self.current_state = STATE_WARNING
-
-
-
-
 
 
         if self.button_states.get(BUTTON_TYPES["CANCEL"]) and self.current_state in MINIMISE_VALID_STATES:
@@ -536,7 +528,7 @@ class BadgeBotApp(app.App):
             self.run_countdown_ms += delta
             if self.run_countdown_ms >= self.run_countdown_target_ms:
                 self.power_plan_iter = chain(*(instr.power_plan_iterator for instr in self.instructions))
-                self.set_hexdrive_power(True)
+                self.hexdrive_app.set_power(True)
                 self.current_state = STATE_RUN
 
         elif self.current_state == STATE_RUN:
@@ -555,7 +547,7 @@ class BadgeBotApp(app.App):
                 
         elif self.current_state == STATE_DONE:
             if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
-                self.set_hexdrive_power(False)
+                self.hexdrive_app.set_power(False)
                 self.reset()
 
     def _handle_instruction_press(self, press_type: BUTTON_TYPES):
