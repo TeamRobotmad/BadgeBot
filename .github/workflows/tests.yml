@@ -21,7 +21,6 @@ jobs:
         git submodule update --init
         cd ./sim/apps/BadgeBot
         git checkout  ${{ github.head_ref || github.ref_name }} 
-        cd ../../../
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v3
       with:
@@ -33,4 +32,4 @@ jobs:
         pip install pytest
     - name: Run the tests
       run: |
-        pytest test_smoke.py
+        pytest ./sim/apps/BadgeBot/tests
