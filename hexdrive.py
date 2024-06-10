@@ -66,7 +66,7 @@ class HexDriveApp(app.App):
         if (self.config is None) or (state == self.power_state):
             return False
         print(f"HexDrive [{self.config.port}] Power={state}")
-        if (self._get_pin_value(self.power_detect.pin))
+        if (self._get_pin_value(self.power_detect.pin)):
             # if the power detect pin is high the the SMPSU has a power source so enable it
             self._set_pin_state(self.power_control.pin, state)
             self._set_pin_out(self.power_control.pin)  # in case it gets corrupted by other code
