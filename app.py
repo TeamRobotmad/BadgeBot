@@ -8,7 +8,8 @@ from events.input import BUTTON_TYPES, Button, Buttons
 from machine import I2C
 from system.eventbus import eventbus
 from system.hexpansion.events import (HexpansionInsertionEvent,
-                                      HexpansionRemovalEvent)
+                                      HexpansionRemovalEvent,
+                                      HexpansionMountedEvent)
 from system.hexpansion.header import HexpansionHeader
 from system.hexpansion.util import get_hexpansion_block_devices
 from system.patterndisplay.events import PatternDisable, PatternEnable
@@ -93,6 +94,7 @@ class BadgeBotApp(app.App):
         self.hexdrive_app = None
         eventbus.on_async(HexpansionInsertionEvent, self.handle_hexpansion_insertion, self)
         eventbus.on_async(HexpansionRemovalEvent, self.handle_hexpansion_removal, self)
+        eventbus.on_async(HexpansionMountedEvent, self.handle_hexpansion_mounted, self)
 
         # Overall app state (controls what is displayed and what user inputs are accepted)
         self.current_state = STATE_INIT
@@ -104,6 +106,10 @@ class BadgeBotApp(app.App):
         self.gain_focus(RequestForegroundPushEvent(self))
    
     ### ASYNC EVENT HANDLERS ###
+
+    async def handle_hexpansion_mounted(self, event: HexpansionMountedEvent):
+        # To learn if and when we get this event 
+        print(f"H:Mounted {event.port} at {event.mountpoint}")
 
     async def handle_hexpansion_removal(self, event: HexpansionRemovalEvent):
         #await asyncio.sleep(1)
