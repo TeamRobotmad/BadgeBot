@@ -57,45 +57,6 @@ EEPROM_ADDR  = 0x50
 HEXDRIVE_VID = 0xCAFE
 HEXDRIVE_PID = 0xCBCB
 
-class Instruction:
-    def __init__(self, press_type: Button) -> None:
-        self._press_type = press_type
-        self._duration = 1
-        self.power_plan_iterator = iter([])
-
-    @property
-    def press_type(self) -> Button:
-        return self._press_type
-
-    def inc(self):
-        self._duration += 1
-
-    def __str__(self):
-        return f"{self.press_type.name} {self._duration}"
-
-    def directional_power_tuple(self, power):
-        if self._press_type == BUTTON_TYPES["UP"]:
-            return (power, 0, power, 0)
-        elif self._press_type == BUTTON_TYPES["DOWN"]:
-            return (0, power, 0, power)
-        elif self._press_type == BUTTON_TYPES["LEFT"]:
-            return (power, 0, 0, power)
-        elif self._press_type == BUTTON_TYPES["RIGHT"]:
-            return (0, power, power, 0)
-
-    def make_power_plan(self):
-        # return collection of tuples of power and their duration
-        ramp_up = [(self.directional_power_tuple(p), TICK_MS)
-                   for p in range(0, MAX_POWER, POWER_STEP_PER_TICK)]
-        power_durations = ramp_up.copy()
-        user_power_duration = USER_DRIVE_MS * (self._duration-1)
-        power_durations.append((self.directional_power_tuple(MAX_POWER), user_power_duration))
-        ramp_down = ramp_up.copy()
-        ramp_down.reverse()
-        power_durations.extend(ramp_down)
-        self.power_plan_iterator = iter(power_durations)
-
-
 class BadgeBotApp(app.App):
     def __init__(self):
         super().__init__()
@@ -129,7 +90,7 @@ class BadgeBotApp(app.App):
 
         self.hexdrive_app = None
     
-        # Overall app state (controls what is displayed)
+        # Overall app state (controls what is displayed and what user inputs are accepted)
         self.current_state = STATE_INIT
 
     async def handle_hexpansion_removal(self, event):
@@ -178,7 +139,7 @@ class BadgeBotApp(app.App):
 
     def get_app_version_in_eeprom(self, port, header, i2c, addr) -> int:
         try:
-            eep, partition = get_hexpansion_block_devices(i2c, header, addr)
+            _, partition = get_hexpansion_block_devices(i2c, header, addr)
         except RuntimeError as e:
             print(f"H:Error getting block devices: {e}")
             return 0
@@ -336,15 +297,15 @@ class BadgeBotApp(app.App):
                     self.button_states.clear()
                     self.current_state = STATE_PROGRAMMING
                     if self.prepare_eeprom(self.detected_port, I2C(self.detected_port)):
-                        self.notification = Notification(f"Initialised", port = self.detected_port)
+                        self.notification = Notification("Initialised", port = self.detected_port)
                         self.ports_with_hexdrive.add(self.detected_port)
                         self.current_state = STATE_WAIT
                     else:
-                        self.notification = Notification(f"Failed", port = self.detected_port)
+                        self.notification = Notification("Failed", port = self.detected_port)
                         self.error_message = ["EEPROM","Initialisation","Failed"]
                         self.current_state = STATE_ERROR          
                 elif self.button_states.get(BUTTON_TYPES["CANCEL"]):
-                    print(f"H:Cancelled")
+                    print("H:Cancelled")
                     self.button_states.clear()
                     self.current_state = STATE_WAIT
                 return           
@@ -362,19 +323,19 @@ class BadgeBotApp(app.App):
                         header = False                        
                     if header and header.vid == HEXDRIVE_VID and header.pid == HEXDRIVE_PID:
                         if self.update_app_in_eeprom(self.upgrade_port, header, i2c, EEPROM_ADDR):
-                            self.notification = Notification(f"Upgraded", port = self.upgrade_port)
+                            self.notification = Notification("Upgraded", port = self.upgrade_port)
                             self.ports_with_upgraded_hexdrive.add(self.upgrade_port)
                             self.error_message = ["Upgraded","Please","Reboop"]
                             self.current_state = STATE_ERROR                                     
                         else:
-                            self.notification = Notification(f"Failed", port = self.upgrade_port)
+                            self.notification = Notification("Failed", port = self.upgrade_port)
                             self.error_message = ["HexDrive","Programming","Failed"]
                             self.current_state = STATE_ERROR
                     else:
                         self.error_message = ["HexDrive","Read","Failed"]
                         self.current_state = STATE_ERROR
                 elif self.button_states.get(BUTTON_TYPES["CANCEL"]):
-                    print(f"H:Cancelled")
+                    print("H:Cancelled")
                     self.button_states.clear()
                     self.current_state = STATE_WAIT
                 return
@@ -382,7 +343,7 @@ class BadgeBotApp(app.App):
                 # if there are any ports with blank eeproms
                 # Show the UI prompt and wait for button press
                 self.detected_port = self.ports_with_blank_eeprom.pop()
-                self.notification = Notification(f"Initialise?", port = self.detected_port)
+                self.notification = Notification("Initialise?", port = self.detected_port)
                 self.current_state = STATE_DETECTED          
             elif 0 < len(self.ports_with_hexdrive):
                 # if there are any ports with HexDrives - check if they need upgrading
@@ -403,11 +364,11 @@ class BadgeBotApp(app.App):
                     else:    
                         # Show the UI prompt and wait for button press
                         self.upgrade_port = port
-                        self.notification = Notification(f"Upgrade?", port = self.upgrade_port)
+                        self.notification = Notification("Upgrade?", port = self.upgrade_port)
                         self.current_state = STATE_UPGRADE
                 else:
                     print(f"H:Error reading Hexpansion header")
-                    self.notification = Notification(f"Error", port = port)
+                    self.notification = Notification("Error", port = port)
                     self.error_message = ["Hexpansion","Read","Failed"]
                     self.current_state = STATE_ERROR        
             elif self.current_state == STATE_WAIT: 
@@ -528,7 +489,7 @@ class BadgeBotApp(app.App):
                 self.hexdrive_app.set_power(False)
                 self.reset()
 
-    def _handle_instruction_press(self, press_type: BUTTON_TYPES):
+    def _handle_instruction_press(self, press_type: Button):
         if self.last_press == press_type:
             self.current_instruction.inc()
         else:
@@ -539,7 +500,7 @@ class BadgeBotApp(app.App):
     def reset(self):
         self.current_state = STATE_MENU
         self.button_states.clear()
-        self.last_press: BUTTON_TYPES = BUTTON_TYPES["CANCEL"]
+        self.last_press = BUTTON_TYPES["CANCEL"]
         self.long_press_delta = 0
 
         self.is_scroll = False
@@ -564,37 +525,37 @@ class BadgeBotApp(app.App):
             ctx.rgb(0,0,0.1).rectangle(-120,-120,240,240).fill()
 
         if self.current_state == STATE_WARNING:
-            ctx.rgb(1,1,1).move_to(H_START, V_START + 0*VERTICAL_OFFSET + 20).text(f"Please buy")
-            ctx.rgb(1,1,0).move_to(H_START, V_START + 1*VERTICAL_OFFSET + 20).text(f"HexDrive")
-            ctx.rgb(1,1,1).move_to(H_START, V_START + 2*VERTICAL_OFFSET + 20).text(f"Hexpansion")
-            ctx.rgb(1,1,1).move_to(H_START, V_START + 3*VERTICAL_OFFSET + 20).text(f"from")
-            ctx.rgb(1,1,0).move_to(H_START, V_START + 4*VERTICAL_OFFSET + 20).text(f"RobotMad")
+            ctx.rgb(1,1,1).move_to(H_START, V_START + 0*VERTICAL_OFFSET + 20).text("Please buy")
+            ctx.rgb(1,1,0).move_to(H_START, V_START + 1*VERTICAL_OFFSET + 20).text("HexDrive")
+            ctx.rgb(1,1,1).move_to(H_START, V_START + 2*VERTICAL_OFFSET + 20).text("Hexpansion")
+            ctx.rgb(1,1,1).move_to(H_START, V_START + 3*VERTICAL_OFFSET + 20).text("from")
+            ctx.rgb(1,1,0).move_to(H_START, V_START + 4*VERTICAL_OFFSET + 20).text("RobotMad")
         elif self.current_state == STATE_REMOVED:
-            ctx.rgb(1,1,0).move_to(H_START, V_START + 0*VERTICAL_OFFSET + 20).text(f"HexDrive")
-            ctx.rgb(1,1,1).move_to(H_START, V_START + 1*VERTICAL_OFFSET + 20).text(f"removed")
-            ctx.rgb(1,1,1).move_to(H_START, V_START + 2*VERTICAL_OFFSET + 20).text(f"Please reinsert")            
+            ctx.rgb(1,1,0).move_to(H_START, V_START + 0*VERTICAL_OFFSET + 20).text("HexDrive")
+            ctx.rgb(1,1,1).move_to(H_START, V_START + 1*VERTICAL_OFFSET + 20).text("removed")
+            ctx.rgb(1,1,1).move_to(H_START, V_START + 2*VERTICAL_OFFSET + 20).text("Please reinsert")            
         elif self.current_state == STATE_DETECTED:  
-            ctx.rgb(1,1,1).move_to(H_START, V_START + 0*VERTICAL_OFFSET + 00).text(f"Hexpansion")
-            ctx.rgb(1,1,1).move_to(H_START, V_START + 1*VERTICAL_OFFSET + 00).text(f"Detected in")
+            ctx.rgb(1,1,1).move_to(H_START, V_START + 0*VERTICAL_OFFSET + 00).text("Hexpansion")
+            ctx.rgb(1,1,1).move_to(H_START, V_START + 1*VERTICAL_OFFSET + 00).text("Detected in")
             ctx.rgb(0,0,1).move_to(H_START, V_START + 2*VERTICAL_OFFSET + 00).text(f"Slot {self.detected_port}")
-            ctx.rgb(1,1,1).move_to(H_START, V_START + 3*VERTICAL_OFFSET + 00).text(f"Init EEPROM")
-            ctx.rgb(1,1,1).move_to(H_START, V_START + 4*VERTICAL_OFFSET + 00).text(f"as HexDrive?")
+            ctx.rgb(1,1,1).move_to(H_START, V_START + 3*VERTICAL_OFFSET + 00).text("Init EEPROM")
+            ctx.rgb(1,1,1).move_to(H_START, V_START + 4*VERTICAL_OFFSET + 00).text("as HexDrive?")
         elif self.current_state == STATE_UPGRADE:  
-            ctx.rgb(1,1,0).move_to(H_START, V_START + 0*VERTICAL_OFFSET + 00).text(f"HexDrive")
-            ctx.rgb(1,1,1).move_to(H_START, V_START + 1*VERTICAL_OFFSET + 00).text(f"Detected in")
+            ctx.rgb(1,1,0).move_to(H_START, V_START + 0*VERTICAL_OFFSET + 00).text("HexDrive")
+            ctx.rgb(1,1,1).move_to(H_START, V_START + 1*VERTICAL_OFFSET + 00).text("Detected in")
             ctx.rgb(0,0,1).move_to(H_START, V_START + 2*VERTICAL_OFFSET + 00).text(f"Slot {self.upgrade_port}")
-            ctx.rgb(1,1,1).move_to(H_START, V_START + 3*VERTICAL_OFFSET + 00).text(f"Program EEPROM")
-            ctx.rgb(1,1,1).move_to(H_START, V_START + 4*VERTICAL_OFFSET + 00).text(f"with new App?")            
+            ctx.rgb(1,1,1).move_to(H_START, V_START + 3*VERTICAL_OFFSET + 00).text("Program EEPROM")
+            ctx.rgb(1,1,1).move_to(H_START, V_START + 4*VERTICAL_OFFSET + 00).text("with new App?")            
         elif self.current_state == STATE_PROGRAMMING:
-            ctx.rgb(1,1,0).move_to(H_START, V_START + 0*VERTICAL_OFFSET + 20).text(f"HexDrive")
-            ctx.rgb(1,1,1).move_to(H_START, V_START + 1*VERTICAL_OFFSET + 20).text(f"Programming")
-            ctx.rgb(1,1,1).move_to(H_START, V_START + 2*VERTICAL_OFFSET + 20).text(f"EEPROM")
-            ctx.rgb(1,1,1).move_to(H_START, V_START + 3*VERTICAL_OFFSET + 20).text(f"...")             
+            ctx.rgb(1,1,0).move_to(H_START, V_START + 0*VERTICAL_OFFSET + 20).text("HexDrive")
+            ctx.rgb(1,1,1).move_to(H_START, V_START + 1*VERTICAL_OFFSET + 20).text("Programming")
+            ctx.rgb(1,1,1).move_to(H_START, V_START + 2*VERTICAL_OFFSET + 20).text("EEPROM")
+            ctx.rgb(1,1,1).move_to(H_START, V_START + 3*VERTICAL_OFFSET + 20).text("...")             
         elif self.current_state == STATE_MENU:
-            ctx.rgb(1,1,1).move_to(H_START, V_START + 0*VERTICAL_OFFSET + 00).text(f"To Program:")
-            ctx.rgb(1,1,0).move_to(H_START, V_START + 1*VERTICAL_OFFSET + 00).text(f"Press C")
-            ctx.rgb(1,1,1).move_to(H_START, V_START + 2*VERTICAL_OFFSET + 10).text(f"When finished:")
-            ctx.rgb(1,1,0).move_to(H_START, V_START + 3*VERTICAL_OFFSET + 10).text(f"Long press C")
+            ctx.rgb(1,1,1).move_to(H_START, V_START + 0*VERTICAL_OFFSET + 00).text("To Program:")
+            ctx.rgb(1,1,0).move_to(H_START, V_START + 1*VERTICAL_OFFSET + 00).text("Press C")
+            ctx.rgb(1,1,1).move_to(H_START, V_START + 2*VERTICAL_OFFSET + 10).text("When finished:")
+            ctx.rgb(1,1,0).move_to(H_START, V_START + 3*VERTICAL_OFFSET + 10).text("Long press C")
         elif self.current_state == STATE_ERROR:
             for i_num, instr in enumerate(self.error_message):
                 ctx.rgb(1,0,0).move_to(H_START, V_START + VERTICAL_OFFSET * i_num).text(str(instr))
@@ -609,8 +570,8 @@ class BadgeBotApp(app.App):
             ctx.rgb(1,1,1).move_to(H_START, V_START).text("Running power")
             ctx.rgb(1,0,0).move_to(H_START-30, V_START + 2*VERTICAL_OFFSET).text(str(self.current_power_duration))
         elif self.current_state == STATE_DONE:
-            ctx.rgb(1,1,1).move_to(H_START, V_START).text(f"Complete!")
-            ctx.rgb(1,1,1).move_to(H_START, V_START + VERTICAL_OFFSET).text("To restart:")
+            ctx.rgb(1,1,1).move_to(H_START, V_START + 0*VERTICAL_OFFSET).text("Complete!")
+            ctx.rgb(1,1,1).move_to(H_START, V_START + 1*VERTICAL_OFFSET).text("To restart:")
             ctx.rgb(1,1,0).move_to(H_START, V_START + 2*VERTICAL_OFFSET).text("Press C")
         if self.notification:
             self.notification.draw(ctx)
@@ -651,6 +612,44 @@ class BadgeBotApp(app.App):
     def clear_leds(self):
         for i in range(12):
             tildagonos.leds[i+1] = (0, 0, 0)
+
+class Instruction:
+    def __init__(self, press_type: Button) -> None:
+        self._press_type = press_type
+        self._duration: int = 1
+        self.power_plan_iterator = iter([])
+
+    @property
+    def press_type(self) -> Button:
+        return self._press_type
+
+    def inc(self):
+        self._duration += 1
+
+    def __str__(self):
+        return f"{self.press_type.name} {self._duration}"
+
+    def directional_power_tuple(self, power):
+        if self._press_type == BUTTON_TYPES["UP"]:
+            return (power, 0, power, 0)
+        elif self._press_type == BUTTON_TYPES["DOWN"]:
+            return (0, power, 0, power)
+        elif self._press_type == BUTTON_TYPES["LEFT"]:
+            return (power, 0, 0, power)
+        elif self._press_type == BUTTON_TYPES["RIGHT"]:
+            return (0, power, power, 0)
+
+    def make_power_plan(self):
+        # return collection of tuples of power and their duration
+        ramp_up = [(self.directional_power_tuple(p), TICK_MS)
+                   for p in range(0, MAX_POWER, POWER_STEP_PER_TICK)]
+        power_durations = ramp_up.copy()
+        user_power_duration = USER_DRIVE_MS * (self._duration-1)
+        power_durations.append((self.directional_power_tuple(MAX_POWER), user_power_duration))
+        ramp_down = ramp_up.copy()
+        ramp_down.reverse()
+        power_durations.extend(ramp_down)
+        self.power_plan_iterator = iter(power_durations)
 
 def chain(*iterables):
     for iterable in iterables:
