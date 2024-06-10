@@ -4,13 +4,12 @@
 
 import asyncio
 
-import app
-from machine import I2C, Pin, PWM
+from machine import I2C, PWM
 
-from tildagon import Pin as ePin
+import app
 
 # HexDrive.py App Version - parsed by app.py to check if upgrade is required
-APP_VERSION = 1 
+APP_VERSION = 2 
 
 POWER_ENABLE_PIN_INDEX = 0	# First LS pin used to enable the SMPSU
 POWER_DETECT_PIN_INDEX = 1  # Second LS pin used to sense if the SMPSU has a source of power

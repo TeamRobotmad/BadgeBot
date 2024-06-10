@@ -8,6 +8,7 @@ sys.path.append("../../../")
 import sim.run
 from system.hexpansion.config import HexpansionConfig
 
+
 def test_import_badgebot_app_and_app_export():
     import sim.apps.BadgeBot.app as BadgeBot
     from sim.apps.BadgeBot import BadgeBotApp

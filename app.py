@@ -1,38 +1,35 @@
-import asyncio
-import re
-
-import app
 import vfs
 from app_components.notification import Notification
 from app_components.tokens import label_font_size
-from events.input import BUTTON_TYPES, Buttons
+from events.input import BUTTON_TYPES, Button, Buttons
 from machine import I2C
 from system.eventbus import eventbus
 from system.hexpansion.events import (HexpansionInsertionEvent,
                                       HexpansionRemovalEvent)
-# Hexpansion related imports
-from system.scheduler import scheduler
 from system.hexpansion.header import HexpansionHeader
-from system.hexpansion.util import (get_hexpansion_block_devices,
-                                    read_hexpansion_header)
+from system.hexpansion.util import get_hexpansion_block_devices
 from system.patterndisplay.events import PatternDisable, PatternEnable
+from system.scheduler import scheduler
 from tildagonos import tildagonos
 
-CURRENT_APP_VERSION = 1 # Integer Version Number - checked against the EEPROM app.py version to determine if it needs updating
+import app
+
+CURRENT_APP_VERSION = 2 # Integer Version Number - checked against the EEPROM app.py version to determine if it needs updating
 
 # Motor Driver
 MAX_POWER = 65535
 POWER_STEP_PER_TICK = 5000
 
+# Screen positioning for text
 VERTICAL_OFFSET = label_font_size
 H_START = -78
 V_START = -58
 
-TICK_MS = 20
-LONG_PRESS_MS = 750
-
-USER_TICK_MULTIPLIER = 4
-
+# Timings
+TICK_MS = 20 # Smallest unit of change for power, in ms
+USER_DRIVE_MS = 100 # User specifed drive durations, in ms
+LONG_PRESS_MS = 750 # Time for long button press to register, in ms
+RUN_COUNTDOWN_MS = 3000 # Time after running program until drive starts, in ms
 
 # App states
 STATE_INIT = -1
@@ -49,23 +46,25 @@ STATE_PROGRAMMING = 9     # Hexpansion EEPROM programming
 STATE_REMOVED = 10        # Hexpansion removed
 STATE_ERROR = 11          # Hexpansion error
 
+# App states where user can minimise app
 MINIMISE_VALID_STATES = [0, 1, 2, 5, 6, 7, 8, 10, 11]
 
 POWER_ENABLE_PIN_INDEX = 0	# First LS pin used to enable the SMPSU
 POWER_DETECT_PIN_INDEX = 1  # Second LS pin used to sense if the SMPSU has a source of power
 
+# Hexdrive constants
 EEPROM_ADDR  = 0x50
 HEXDRIVE_VID = 0xCAFE
 HEXDRIVE_PID = 0xCBCB
 
 class Instruction:
-    def __init__(self, press_type: BUTTON_TYPES) -> None:
+    def __init__(self, press_type: Button) -> None:
         self._press_type = press_type
         self._duration = 1
         self.power_plan_iterator = iter([])
 
     @property
-    def press_type(self) -> BUTTON_TYPES:
+    def press_type(self) -> Button:
         return self._press_type
 
     def inc(self):
@@ -89,7 +88,7 @@ class Instruction:
         ramp_up = [(self.directional_power_tuple(p), TICK_MS)
                    for p in range(0, MAX_POWER, POWER_STEP_PER_TICK)]
         power_durations = ramp_up.copy()
-        user_power_duration = TICK_MS * USER_TICK_MULTIPLIER * (self._duration-1)
+        user_power_duration = USER_DRIVE_MS * (self._duration-1)
         power_durations.append((self.directional_power_tuple(MAX_POWER), user_power_duration))
         ramp_down = ramp_up.copy()
         ramp_down.reverse()
@@ -101,14 +100,13 @@ class BadgeBotApp(app.App):
     def __init__(self):
         super().__init__()
         self.button_states = Buttons(self)
-        self.last_press: BUTTON_TYPES = BUTTON_TYPES["CANCEL"]
+        self.last_press: Button = BUTTON_TYPES["CANCEL"]
         self.long_press_delta = 0
 
         self.is_scroll = False
         self.scroll_offset = 0
 
-        self.run_countdown_target_ms = 3000
-        self.run_countdown_ms = 0
+        self.run_countdown_elapsed_ms = 0
 
         self.instructions = []
         self.current_instruction = None
@@ -508,8 +506,8 @@ class BadgeBotApp(app.App):
             tildagonos.leds.write()
 
         elif self.current_state == STATE_COUNTDOWN:
-            self.run_countdown_ms += delta
-            if self.run_countdown_ms >= self.run_countdown_target_ms:
+            self.run_countdown_elapsed_ms += delta
+            if self.run_countdown_elapsed_ms >= RUN_COUNTDOWN_MS:
                 self.power_plan_iter = chain(*(instr.power_plan_iterator for instr in self.instructions))
                 self.hexdrive_app.set_power(True)
                 self.current_state = STATE_RUN
@@ -547,8 +545,7 @@ class BadgeBotApp(app.App):
         self.is_scroll = False
         self.scroll_offset = 0
 
-        self.run_countdown_target_ms = 3000
-        self.run_countdown_ms = 0
+        self.run_countdown_elapsed_ms = 0
 
         self.instructions = []
         self.current_instruction = None
@@ -606,7 +603,7 @@ class BadgeBotApp(app.App):
                 ctx.rgb(1,1,0).move_to(H_START, V_START + VERTICAL_OFFSET * (self.scroll_offset + i_num)).text(str(instr))
         elif self.current_state == STATE_COUNTDOWN:
             ctx.rgb(1,1,1).move_to(H_START, V_START).text("Running in:")
-            countdown_val = (self.run_countdown_target_ms - self.run_countdown_ms) / 1000
+            countdown_val = (RUN_COUNTDOWN_MS - self.run_countdown_elapsed_ms) / 1000
             ctx.rgb(1,1,0).move_to(H_START, V_START+VERTICAL_OFFSET).text(str(countdown_val))
         elif self.current_state == STATE_RUN:
             ctx.rgb(1,1,1).move_to(H_START, V_START).text("Running power")
@@ -652,7 +649,7 @@ class BadgeBotApp(app.App):
             self.current_instruction = None
 
     def clear_leds(self):
-        for i in range(0,12):
+        for i in range(12):
             tildagonos.leds[i+1] = (0, 0, 0)
 
 def chain(*iterables):
