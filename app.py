@@ -6,21 +6,17 @@ import vfs
 from app_components.notification import Notification
 from app_components.tokens import label_font_size
 from events.input import BUTTON_TYPES, Buttons
-from machine import I2C, Pin
+from machine import I2C
 from system.eventbus import eventbus
-from system.hexpansion.config import _pin_mapping
 from system.hexpansion.events import (HexpansionInsertionEvent,
                                       HexpansionRemovalEvent)
 # Hexpansion related imports
 from system.scheduler import scheduler
 from system.hexpansion.header import HexpansionHeader
-from system.hexpansion.util import (detect_eeprom_addr,
-                                    get_hexpansion_block_devices,
+from system.hexpansion.util import (get_hexpansion_block_devices,
                                     read_hexpansion_header)
 from system.patterndisplay.events import PatternDisable, PatternEnable
 from tildagonos import tildagonos
-
-from tildagon import Pin as ePin
 
 CURRENT_APP_VERSION = 1 # Integer Version Number - checked against the EEPROM app.py version to determine if it needs updating
 
@@ -125,6 +121,8 @@ class BadgeBotApp(app.App):
 
         # Hexpansion related
         self.hexdrive_seen = False
+        self.detected_port = None
+        self.upgrade_port = None
         self.ports_with_blank_eeprom = set()
         self.ports_with_hexdrive = set()
         self.ports_with_upgraded_hexdrive = set()
@@ -167,7 +165,7 @@ class BadgeBotApp(app.App):
             header_bytes = i2c.readfrom(EEPROM_ADDR, 32)
         except OSError:
             # no EEPROM on this port
-            print(f"H:No compatible EEPROM on port {port}")
+            #print(f"H:No compatible EEPROM on port {port}")
             return
         try:
             header = HexpansionHeader.from_bytes(header_bytes)
@@ -246,14 +244,15 @@ class BadgeBotApp(app.App):
             print(f"H:Unmounting {mountpoint}")                    
             try:
                 vfs.umount(mountpoint)
-                print(f"H:HexDrive app.py updated to version {CURRENT_APP_VERSION}")
-                return True
             except Exception as e:
-                print(f"H:Error unmounting {mountpoint} {e}")
+                print(f"H:Error unmounting {mountpoint}: {e}")
                 return False 
+        print(f"H:HexDrive app.py updated to version {CURRENT_APP_VERSION}")            
+        return True
     
-    def prepare_eeprom(self, port, i2c, addr) -> bool:
-        print(f"H:Initialising EEPROM @ {hex(addr)} on port {port}")
+
+    def prepare_eeprom(self, port, i2c) -> bool:
+        print(f"H:Initialising EEPROM on port {port}")
         header = HexpansionHeader(
             manifest_version="2024",
             fs_offset=32,
@@ -267,14 +266,26 @@ class BadgeBotApp(app.App):
         # Write and read back header
         # write_header is broken for our type of EEPROM so we do it manually
         #write_header(port, header, addr=addr, addr_len=addr_len, page_size=header.eeprom_page_size)
-        i2c.writeto(addr, bytes([0, 0]) + header.to_bytes())
-        header = read_hexpansion_header(i2c, addr, set_read_addr=True, addr_len=2)
-        if header is None:
-            raise RuntimeError(f"H:EEPROM Init failed")
+        try:
+            i2c.writeto(EEPROM_ADDR, bytes([0, 0]) + header.to_bytes())
+        except OSError as e:
+            print(f"H:Error writing header: {e}")
+            return False
+        #header = read_hexpansion_header(i2c, EEPROM_ADDR, set_read_addr=True, addr_len=2)
+        try:
+            i2c.writeto(EEPROM_ADDR, bytes([0,0]))  # Read header @ address 0                
+            header_bytes = i2c.readfrom(EEPROM_ADDR, 32)
+        except OSError as e:
+            print(f"H:Error reading header back: {e}")
+            return False
+        try:
+            header = HexpansionHeader.from_bytes(header_bytes)
+        except RuntimeError as e:
+            print(f"H:Error parsing header: {e}")
             return False
         try:
             # Get block devices
-            eep, partition = get_hexpansion_block_devices(i2c, header, addr)
+            eep, partition = get_hexpansion_block_devices(i2c, header, EEPROM_ADDR)
         except RuntimeError as e:
             print(f"H:Error getting block devices: {e}")
             return False           
@@ -295,11 +306,13 @@ class BadgeBotApp(app.App):
             return False
         return True 
 
+
     # Scan the Hexpansion ports for EEPROMs and HexDrives in case they are already plugged in when we start
     def scan_ports(self):
         for port in range(1, 7):
             self.check_port_for_hexdrive(port)
-           
+
+
     def update(self, delta):
         if self.notification:
             self.notification.update(delta)
@@ -324,7 +337,7 @@ class BadgeBotApp(app.App):
                 if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
                     self.button_states.clear()
                     self.current_state = STATE_PROGRAMMING
-                    if self.prepare_eeprom(self.detected_port, I2C(self.detected_port), EEPROM_ADDR):
+                    if self.prepare_eeprom(self.detected_port, I2C(self.detected_port)):
                         self.notification = Notification(f"Initialised", port = self.detected_port)
                         self.ports_with_hexdrive.add(self.detected_port)
                         self.current_state = STATE_WAIT
@@ -410,12 +423,18 @@ class BadgeBotApp(app.App):
                             app.config.port == valid_port
                             self.hexdrive_app = app
                             print(f"H:Found app on port {valid_port}")
+                            if self.hexdrive_app.get_status():
+                                print(f"H:HexDrive [{valid_port}] OK")
+                                self.current_state = STATE_MENU
+                            else:
+                                print(f"H:HexDrive {valid_port}: Failed to initialise PWM resources")
+                                self.error_message = ["HexDrive {valid_port}","PWM Init","Failed","Please","Reboop"]
+                                self.current_state = STATE_ERROR
                             break
                     else:
-                        print(f"H:App not found, please restart")
-                        self.error_message = ["Please","Reboop"]
+                        print(f"H:HexDrive {valid_port}: App not found, please restart")
+                        self.error_message = ["HexDrive {vaild_port}","App not found","Please","Reboop"]
                         self.current_state = STATE_ERROR                           
-                    self.current_state = STATE_MENU
                 elif self.hexdrive_seen:
                     self.hexdrive_seen = False
                     self.current_state = STATE_REMOVED

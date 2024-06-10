@@ -26,7 +26,7 @@ class HexDriveApp(app.App):
         # Set Power Enable Pin to Output
         self.power_control = self.config.ls_pin[POWER_ENABLE_PIN_INDEX]
         self.power_detect = self.config.ls_pin[POWER_DETECT_PIN_INDEX]
-        self.set_pin_out(self.power_control.pin)   # Work around as Tildagon(s) (version 1.6) is missing code to set the eGPIO direction to output
+        self._set_pin_out(self.power_control.pin)  
         self.set_power(False)
         # Set all HexDrive Hexpansion HS pins to low level outputs
         for hs_pin in self.config.pin:
@@ -41,25 +41,33 @@ class HexDriveApp(app.App):
                 self.PWMOutput[i_num] = PWM(hs_pin, freq = PWM_FREQ, duty_u16 = 0)
                 print(self.PWMOutput[i_num])
             except:
+                # There are a finite number of PWM resources so it is possible that we run out
                 print(f"H:{self.config.port}:{i_num} PWM allocation failed")
                 self.setup_failed = True
+
 
     async def background_task(self):
         while 1:
             # we will do something here probably
             await asyncio.sleep(5)
 
-    # TODO: how to expose this or register it with the event bus so that it can be called/actioned from the main App?
+
+    def get_status(self) -> bool:
+        if self.setup_failed:
+            return False
+        return True
+
+
     def set_power(self, state):
         if state == self.power_state:
             return
-        print(f"HexDrive [{self.config.port}] Power={state}")  
-        #self.power_control.value(state) # currently broken
-        self.set_pin_value(self.power_control.pin, state)
+        print(f"HexDrive [{self.config.port}] Power={state}")
+        #TODO - check power_detect pin to see if power is present  
+        self._set_pin_value(self.power_control.pin, state)
         self.power_state = state    
 
 
-    def set_pin_value(self, pin, value):
+    def _set_pin_value(self, pin, value):
         try:
             i2c = I2C(7)
             output_reg = int.from_bytes(i2c.readfrom_mem(pin[0], 0x02+pin[1], 1), 'little')
@@ -67,12 +75,13 @@ class HexDriveApp(app.App):
                 output_reg |= pin[2]
             else:
                 output_reg &= ~(pin[2])
-            print(f"H:Write to {hex(pin[0])} address {hex(0x02+pin[1])} value {hex(output_reg)}")
+            #print(f"H:Write to {hex(pin[0])} address {hex(0x02+pin[1])} value {hex(output_reg)}")
             i2c.writeto_mem(pin[0], 0x02+pin[1], bytes([output_reg]))
         except:
             print(f"H:access to I2C(7) blocked")
 
-    def set_pin_out(self, pin):
+
+    def _set_pin_out(self, pin):
         try:
             # Use a Try in case access to i2C(7) is blocked for apps in future
             # presumably if this happens then the code will have been updated to
@@ -84,11 +93,13 @@ class HexDriveApp(app.App):
         except:
             print(f"access to I2C(7) blocked")
 
-    def set_pwm(self, pwms):
+
+    def set_pwm(self, pwms) -> bool:
         if self.setup_failed:
-            return
+            return False
         for i, pwm in enumerate(pwms):
             print(f"Set PWM {i} to {pwm}")
             self.PWMOutput[i].duty_u16(pwm)
-
+        return True
+    
 __app_export__ = HexDriveApp
