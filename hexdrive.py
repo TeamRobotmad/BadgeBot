@@ -3,8 +3,8 @@
 # It is then run from the EEPROM by the BadgeOS.
 
 import asyncio
-from machine import I2C, PWM
 import app
+from machine import I2C, PWM
 
 # HexDrive.py App Version - parsed by app.py to check if upgrade is required
 APP_VERSION = 2 
@@ -13,13 +13,16 @@ POWER_ENABLE_PIN_INDEX = 0	# First LS pin used to enable the SMPSU
 POWER_DETECT_PIN_INDEX = 1  # Second LS pin used to sense if the SMPSU has a source of power
 
 DEFAULT_PWM_FREQ = 20000    
+DEFAULT_KEEP_ALIVE_PERIOD = 1000  # 1 second
 class HexDriveApp(app.App):
 
     def __init__(self, config=None):
         self.config = config
+        self.keep_alive_period = DEFAULT_KEEP_ALIVE_PERIOD
         self.power_state = None
         self.pwm_setup_failed = True
         self.last_update_time = 0
+        self.outputs_energised = False
         self.PWMOutput = [None] * len(self.config.pin)
         self.power_detect_pin = self.config.ls_pin[POWER_DETECT_PIN_INDEX]
         self.power_control_pin = self.config.ls_pin[POWER_ENABLE_PIN_INDEX]        
@@ -39,13 +42,12 @@ class HexDriveApp(app.App):
             hs_pin.value(0)    
         # Allocate PWM generation to pins
         for i_num, hs_pin in enumerate(self.config.pin):
-            print(f"H:{self.config.port}:{i_num} PWM on pin {self.config.pin[i_num]}")
             try:
                 self.PWMOutput[i_num] = PWM(hs_pin, freq = DEFAULT_PWM_FREQ, duty_u16 = 0)
-                print(self.PWMOutput[i_num])
+                print(f"H:{self.config.port}:PWM[{i_num}]:{self.PWMOutput[i_num]}")
             except:
                 # There are a finite number of PWM resources so it is possible that we run out
-                print(f"H:{self.config.port}:{i_num} PWM allocation failed")
+                print(f"H:{self.config.port}:PWM[{i_num}]:PWM allocation failed")
                 return False
         self.pwm_setup_failed = False
         return not self.pwm_setup_failed
@@ -60,10 +62,16 @@ class HexDriveApp(app.App):
         return True
 
 
-    async def background_task(self):
-        while 1:
-            # 
-            await asyncio.sleep(5)
+    # Check keep alive period and turn off PWM outputs if exceeded
+    def background_update(self, delta):
+        if (self.config is None) or self.pwm_setup_failed or (not self.outputs_energised):
+            return
+        self.time_since_last_update += delta
+        if self.time_since_last_update > self.keep_alive_period:
+            self.set_pwm([0, 0, 0, 0])
+            self.outputs_energised = False
+            self.time_since_last_update = 0
+            print(f"H:{self.config.port}:Keep Alive Timeout")
 
 
     def get_status(self) -> bool:
@@ -71,18 +79,25 @@ class HexDriveApp(app.App):
 
 
     # Turn the SPMPSU on or off
+    # Just because the SPMSU is turned off does not mean that the outputs are NOT energised
+    # as there could be external battery power
     def set_power(self, state) -> bool:
         if (self.config is None) or (state == self.power_state):
             return False
-        print(f"HexDrive [{self.config.port}] Power={state}")
+        print(f"H:[{self.config.port}]:Power={'On' if state else 'Off'}")
         if (self._get_pin_state(self.power_detect_pin.pin)):
-            # if the power detect pin is high the the SMPSU has a power source so enable it
+            # if the power detect pin is high then the SMPSU has a power source so enable it
             self._set_pin_state(self.power_control_pin.pin, state)
             self._set_pin_direction(self.power_control_pin.pin, 0)  # in case it gets corrupted by other code
         self.power_state = state
         return self.power_state    
 
 
+    # Set the keep alive period - this is the time in milli-seconds that the PWM outputs will be kept on
+    def set_keep_alive(self, period):
+        self.keep_alive_period = period
+
+    
     # Only one PWM frequency (in Hz) is supported for all outputs due to timer limitations
     def set_freq(self, freq) -> bool:
         if self.pwm_setup_failed:
@@ -101,6 +116,8 @@ class HexDriveApp(app.App):
     def set_pwm(self, pwms) -> bool:
         if self.pwm_setup_failed:
             return False
+        self.time_since_last_update = 0
+        self.outputs_energised = any(pwms)
         for i, pwm in enumerate(pwms):
             if pwm != self.PWMOutput[i].duty_u16():
                 # pwm duty cycle has changed so update it
