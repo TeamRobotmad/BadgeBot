@@ -1,3 +1,6 @@
+import asyncio
+import time
+
 import vfs
 from app_components.notification import Notification
 from app_components.tokens import label_font_size
@@ -130,6 +133,26 @@ class BadgeBotApp(app.App):
     async def lose_focus(self, event: RequestForegroundPopEvent):
         if event.app is self:
             eventbus.emit(PatternEnable())
+
+    async def background_task(self):
+        # Modiifed background task loop for shorter sleep time
+        last_time = time.ticks_ms()
+        while True:
+            cur_time = time.ticks_ms()
+            delta_ticks = time.ticks_diff(cur_time, last_time)
+            self.background_update(delta_ticks)
+             # If we want to be kind we could make this variable depending on app state
+             # I.e on transition into run set this lower
+            await asyncio.sleep(0.01)
+            last_time = cur_time
+
+    def background_update(self, delta):
+        if self.current_state == STATE_RUN:
+            power = self.get_current_power_level(delta)
+            if power is None:
+                self.current_state = STATE_DONE
+            else:
+                self.hexdrive_app.set_pwm(power)
 
     def check_port_for_hexdrive(self, port):
         # avoiding use of read_hexpansion_header as this triggers a full i2c scan each time
@@ -489,14 +512,8 @@ class BadgeBotApp(app.App):
                 self.current_state = STATE_RUN
 
         elif self.current_state == STATE_RUN:
-            print(delta)
-            power = self.get_current_power_level(delta)
-            if power is None:
-                self.current_state = STATE_DONE
-            else:
-                print(f"Using power: {power}")
-                self.hexdrive_app.set_pwm(power)
-
+            # Run is primarily managed in the background update
+            pass
                 
         elif self.current_state == STATE_DONE:
             if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
