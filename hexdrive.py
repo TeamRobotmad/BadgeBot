@@ -20,6 +20,9 @@ class HexDriveApp(app.App):
         self.power_state = None
         self.pwm_setup_failed = True
         self.last_update_time = 0
+        self.PWMOutput = [None] * len(self.config.pin)
+        self.power_detect_pin = self.config.ls_pin[POWER_DETECT_PIN_INDEX]
+        self.power_control_pin = self.config.ls_pin[POWER_ENABLE_PIN_INDEX]        
         self.initialise()
 
     def initialise(self) -> bool:
@@ -28,18 +31,13 @@ class HexDriveApp(app.App):
         # report app starting and which port it is running on
         print(f"HexDrive App Init on port {self.config.port}")
         # Set Power Detect Pin to Input and Power Enable Pin to Output
-        self.power_detect_pin = self.config.ls_pin[POWER_DETECT_PIN_INDEX]
-        self.power_control_pin = self.config.ls_pin[POWER_ENABLE_PIN_INDEX]
         self._set_pin_direction(self.power_detect_pin.pin,  1)
         self._set_pin_direction(self.power_control_pin.pin, 0)  
         self.set_power(False)
         # Set all HexDrive Hexpansion HS pins to low level outputs
         for hs_pin in self.config.pin:
-            hs_pin.value(0)
-    
+            hs_pin.value(0)    
         # Allocate PWM generation to pins
-        self.pwm_setup_failed = False
-        self.PWMOutput = [None] * len(self.config.pin)
         for i_num, hs_pin in enumerate(self.config.pin):
             print(f"H:{self.config.port}:{i_num} PWM on pin {self.config.pin[i_num]}")
             try:
@@ -48,8 +46,19 @@ class HexDriveApp(app.App):
             except:
                 # There are a finite number of PWM resources so it is possible that we run out
                 print(f"H:{self.config.port}:{i_num} PWM allocation failed")
-                self.pwm_setup_failed = True
-        return not self.setup_failed
+                return False
+        self.pwm_setup_failed = False
+        return not self.pwm_setup_failed
+
+
+    def deinitialise(self) -> bool:
+        # Turn off all PWM outputs & release resources
+        for i, pwm in enumerate(self.PWMOutput):
+            pwm.deinit()
+            self.PWMOutput[i] = None
+        self.set_power(False)
+        return True
+
 
     async def background_task(self):
         while 1:
@@ -58,7 +67,7 @@ class HexDriveApp(app.App):
 
 
     def get_status(self) -> bool:
-        return not self.setup_failed
+        return not self.pwm_setup_failed
 
 
     # Turn the SPMPSU on or off
@@ -66,17 +75,17 @@ class HexDriveApp(app.App):
         if (self.config is None) or (state == self.power_state):
             return False
         print(f"HexDrive [{self.config.port}] Power={state}")
-        if (self._get_pin_value(self.power_detect.pin)):
+        if (self._get_pin_state(self.power_detect_pin.pin)):
             # if the power detect pin is high the the SMPSU has a power source so enable it
-            self._set_pin_state(self.power_control.pin, state)
-            self._set_pin_out(self.power_control.pin)  # in case it gets corrupted by other code
+            self._set_pin_state(self.power_control_pin.pin, state)
+            self._set_pin_direction(self.power_control_pin.pin, 0)  # in case it gets corrupted by other code
         self.power_state = state
         return self.power_state    
 
 
     # Only one PWM frequency (in Hz) is supported for all outputs due to timer limitations
     def set_freq(self, freq) -> bool:
-        if self.setup_failed:
+        if self.pwm_setup_failed:
             return False
         for i, pwm in enumerate(self.PWMOutput):
             try:
@@ -95,8 +104,12 @@ class HexDriveApp(app.App):
         for i, pwm in enumerate(pwms):
             if pwm != self.PWMOutput[i].duty_u16():
                 # pwm duty cycle has changed so update it
-                print(f"H:{self.config.port}:PWM[{i}]:{pwm}")
-                self.PWMOutput[i].duty_u16(pwm)
+                try:
+                    self.PWMOutput[i].duty_u16(pwm)
+                    print(f"H:{self.config.port}:PWM[{i}]:{pwm}")
+                except:
+                    print(f"H:{self.config.port}:PWM[{i}]:{pwm} set failed")
+                    return False
         return True
     
 
@@ -105,8 +118,8 @@ class HexDriveApp(app.App):
             i2c = I2C(7)
             output_reg = i2c.readfrom_mem(pin[0], 0x02+pin[1], 1)[0]
             output_reg = (output_reg | pin[2]) if state else (output_reg & ~pin[2])
-            print(f"H:Write to {hex(pin[0])} address {hex(0x02+pin[1])} value {hex(output_reg)}")
             i2c.writeto_mem(pin[0], 0x02+pin[1], bytes([output_reg]))
+            print(f"H:Write to {hex(pin[0])} address {hex(0x02+pin[1])} value {hex(output_reg)}")
         except:
             print(f"H:access to I2C(7) blocked")
 
