@@ -1,19 +1,21 @@
 # This is the app to be installed from the HexDrive Hexpansion EEPROM.
-# it is copied onto the EEPROM and renamed as app.py
+# it is copied onto the EEPROM and renamed as app.py/mpy
 # It is then run from the EEPROM by the BadgeOS.
 
 import asyncio
 import app
 from machine import I2C, PWM
+from system.eventbus import eventbus
+from system.scheduler.events import RequestStopAppEvent
 
 # HexDrive.py App Version - parsed by app.py to check if upgrade is required
 APP_VERSION = 2 
 
-POWER_ENABLE_PIN_INDEX = 0	# First LS pin used to enable the SMPSU
-POWER_DETECT_PIN_INDEX = 1  # Second LS pin used to sense if the SMPSU has a source of power
+POWER_ENABLE_PIN_INDEX = const(0)	# First LS pin used to enable the SMPSU
+POWER_DETECT_PIN_INDEX = const(1)  # Second LS pin used to sense if the SMPSU has a source of power
 
-DEFAULT_PWM_FREQ = 20000    
-DEFAULT_KEEP_ALIVE_PERIOD = 1000  # 1 second
+DEFAULT_PWM_FREQ = const(20000)    
+DEFAULT_KEEP_ALIVE_PERIOD = const(1000)  # 1 second
 class HexDriveApp(app.App):
 
     def __init__(self, config=None):
@@ -25,7 +27,10 @@ class HexDriveApp(app.App):
         self.outputs_energised = False
         self.PWMOutput = [None] * len(self.config.pin)
         self.power_detect_pin = self.config.ls_pin[POWER_DETECT_PIN_INDEX]
-        self.power_control_pin = self.config.ls_pin[POWER_ENABLE_PIN_INDEX]        
+        self.power_control_pin = self.config.ls_pin[POWER_ENABLE_PIN_INDEX]       
+
+        eventbus.on_async(RequestStopAppEvent, self._handle_stop_app, self)
+
         self.initialise()
 
     def initialise(self) -> bool:
@@ -61,17 +66,24 @@ class HexDriveApp(app.App):
         self.set_power(False)
         return True
 
+    async def _handle_stop_app(self, event):
+        if event.app == self:
+            print(f"H:{self.config.port}:Stopping HexDrive App")
+            self.deinitialise()
 
     # Check keep alive period and turn off PWM outputs if exceeded
     def background_update(self, delta):
-        if (self.config is None) or self.pwm_setup_failed or (not self.outputs_energised):
+        if (self.config is None) or self.pwm_setup_failed:
             return
         self.time_since_last_update += delta
         if self.time_since_last_update > self.keep_alive_period:
             self.set_pwm([0, 0, 0, 0])
-            self.outputs_energised = False
             self.time_since_last_update = 0
-            print(f"H:{self.config.port}:Keep Alive Timeout")
+            if self.outputs_energised:
+                # First time the keep alive period has expired so report it
+                print(f"H:{self.config.port}:Keep Alive Timeout")            
+                self.outputs_energised = False
+            # we keep retriggering in case anything else has corrupted the PWM outputs
 
 
     def get_status(self) -> bool:
@@ -137,8 +149,8 @@ class HexDriveApp(app.App):
             output_reg = (output_reg | pin[2]) if state else (output_reg & ~pin[2])
             i2c.writeto_mem(pin[0], 0x02+pin[1], bytes([output_reg]))
             print(f"H:Write to {hex(pin[0])} address {hex(0x02+pin[1])} value {hex(output_reg)}")
-        except:
-            print(f"H:access to I2C(7) blocked")
+        except Exception as e:
+            print(f"H:access to I2C(7) failed: {e}")
 
 
     def _get_pin_state(self, pin) -> bool:
@@ -146,8 +158,8 @@ class HexDriveApp(app.App):
             i2c = I2C(7)
             input_reg = i2c.readfrom_mem(pin[0], 0x00+pin[1], 1)[0]
             return (input_reg & pin[2]) != 0
-        except:
-            print(f"H:access to I2C(7) blocked")
+        except Exception as e:
+            print(f"H:access to I2C(7) failed: {e}")
 
 
     def _set_pin_direction(self, pin, direction):
@@ -159,7 +171,7 @@ class HexDriveApp(app.App):
             config_reg = i2c.readfrom_mem(pin[0], 0x04+pin[1], 1)[0]
             config_reg = (config_reg | pin[2]) if (1 == direction) else (config_reg & ~pin[2])
             i2c.writeto_mem(pin[0], 0x04+pin[1], bytes([config_reg]))
-        except:
-            print(f"H:access to I2C(7) blocked")
+        except Exception as e:
+            print(f"H:access to I2C(7) failed: {e}")
     
 __app_export__ = HexDriveApp

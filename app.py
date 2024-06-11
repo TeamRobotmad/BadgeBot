@@ -1,6 +1,6 @@
 import asyncio
 import time
-
+import os
 import vfs
 from app_components.notification import Notification
 from app_components.tokens import label_font_size
@@ -196,33 +196,46 @@ class BadgeBotApp(app.App):
         try:
             vfs.mount(partition, mountpoint, readonly=True)
             print(f"H:Mounted {partition} at {mountpoint}")
-        except Exception as e:
+        except OSError as e:
             if e.args[0] == 1:
                 already_mounted = True
             else:
                 print(f"H:Error mounting: {e}")
-        print("H:Reading app.py")
-        try:
-            with open(f"{mountpoint}/app.py", "rt") as appfile:
-                app = appfile.read()
-                version = app.split("APP_VERSION = ")[1].split("\n")[0]
-                #matching = re.match(".*^app_version = (\d*).*", app, flags=re.MULTILINE+re.DOTALL)
-                #if matching:
-                #    version = int(matching.group(1))
-            if not already_mounted:
-                print(f"H:Unmounting {mountpoint}")                    
-                vfs.umount(mountpoint)
-            print(f"H:HexDrive app.py version is {version}")
-            return int(version)
         except Exception as e:
-            print(f"H:Error reading HexDrive app.py: {e}")
-            return 0
+            print(f"H:Error mounting: {e}")
+        print("H:Reading app.mpy")
+        try:
+            appfile = open(f"{mountpoint}/app.mpy", "rb")
+            app = appfile.read()
+            appfile.close()
+        except OSError as e:
+            if e.args[0] == 2:
+                # file does not exist is not an error
+                print(f"H:No app.mpy found")
+            else:    
+                print(f"H:Error reading HexDrive app.mpy: {e}")
+        except Exception as e:
+            print(f"H:Error reading HexDrive app.mpy: {e}")            
+        try:
+            # TODO - means of identifying the version number in the app.mpy file 
+            version = app.split("APP_VERSION = ")[1].split("\n")[0]
+        except Exception as e:
+            version = 0
+            pass                 
+        if not already_mounted:
+            print(f"H:Unmounting {mountpoint}")                    
+            try:
+                vfs.umount(mountpoint)
+            except Exception as e:
+                print(f"H:Error unmounting {mountpoint}: {e}")
+        print(f"H:HexDrive app.mpy version:{version}")
+        return int(version)
 
     def update_app_in_eeprom(self, port, header, i2c, addr) -> bool:
-        # Copy hexdreive.py to EEPROM as app.py
-        print(f"H:Updating HexDrive app.py on port {port}")
+        # Copy hexdreive.py to EEPROM as app.mpy
+        print(f"H:Updating HexDrive app.mpy on port {port}")
         try:
-            eep, partition = get_hexpansion_block_devices(i2c, header, addr)
+            _, partition = get_hexpansion_block_devices(i2c, header, addr)
         except RuntimeError as e:
             print(f"H:Error getting block devices: {e}")
             return False              
@@ -232,30 +245,57 @@ class BadgeBotApp(app.App):
             print(f"H:Mounting {partition} at {mountpoint}")
             try:
                 vfs.mount(partition, mountpoint, readonly=False)
-            except Exception as e:
+            except OSError as e:
                 if e.args[0] == 1:
                     already_mounted = True
                 else:
                     print(f"H:Error mounting: {e}")
+            except Exception as e:
+                print(f"H:Error mounting: {e}")
+        source_path = f"/" + __file__.rsplit("/", 1)[0] + f"/hexdrive.mpy"
+        dest_path   = f"{mountpoint}/app.mpy"
         try:
-            path = "/" + __file__.rsplit("/", 1)[0] + "/hexdrive.py"
-            print(f"H:Copying {path} to {mountpoint}/app.py")
-            with open(f"{mountpoint}/app.py", "wt") as appfile:
-                with open(path, "rt") as template:
-                    appfile.write(template.read())
+            # delete the existing app.mpy file
+            print(f"H:Deleting {dest_path}")
+            os.remove(f"{mountpoint}/app.py")  # temporary - to tidy up old app.py files
+            os.remove(dest_path)
         except Exception as e:
-            print(f"H:Error updating HexDrive app.py: {e}")
+            # ignore errors which will happen if the file does not exist
+            pass
+        print(f"H:Copying {source_path} to {dest_path}")
+        try:
+            appfile = open(dest_path, "wb")
+        except Exception as e:
+            print(f"H:Error opening {dest_path}: {e}")
             return False   
+        try:        
+            template = open(source_path, "rb")
+        except Exception as e:
+            print(f"H:Error opening {source_path}: {e}")
+            return False   
+        try:    
+            appfile.write(template.read())                           
+        except Exception as e:
+            print(f"H:Error updating HexDrive: {e}")
+            return False   
+        try:
+            appfile.close()
+            template.close()     
+        except Exception as e:
+            print(f"H:Error closing files: {e}")
+            return False
         if not already_mounted:
-            print(f"H:Unmounting {mountpoint}")                    
             try:
                 vfs.umount(mountpoint)
+                print(f"H:Unmounted {mountpoint}")                    
             except Exception as e:
                 print(f"H:Error unmounting {mountpoint}: {e}")
                 return False 
         print(f"H:HexDrive app.py updated to version {CURRENT_APP_VERSION}")            
         return True
     
+
+
 
     def prepare_eeprom(self, port, i2c) -> bool:
         print(f"H:Initialising EEPROM on port {port}")
@@ -274,14 +314,14 @@ class BadgeBotApp(app.App):
         #write_header(port, header, addr=addr, addr_len=addr_len, page_size=header.eeprom_page_size)
         try:
             i2c.writeto(EEPROM_ADDR, bytes([0, 0]) + header.to_bytes())
-        except OSError as e:
+        except Exception as e:
             print(f"H:Error writing header: {e}")
             return False
         #header = read_hexpansion_header(i2c, EEPROM_ADDR, set_read_addr=True, addr_len=2)
         try:
             i2c.writeto(EEPROM_ADDR, bytes([0,0]))  # Read header @ address 0                
             header_bytes = i2c.readfrom(EEPROM_ADDR, 32)
-        except OSError as e:
+        except Exception as e:
             print(f"H:Error reading header back: {e}")
             return False
         try:
@@ -291,7 +331,7 @@ class BadgeBotApp(app.App):
             return False
         try:
             # Get block devices
-            eep, partition = get_hexpansion_block_devices(i2c, header, EEPROM_ADDR)
+            _, partition = get_hexpansion_block_devices(i2c, header, EEPROM_ADDR)
         except RuntimeError as e:
             print(f"H:Error getting block devices: {e}")
             return False           
