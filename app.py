@@ -20,7 +20,7 @@ from tildagonos import tildagonos
 
 import app
 
-CURRENT_APP_VERSION = 2 # Integer Version Number - checked against the EEPROM app.py version to determine if it needs updating
+CURRENT_APP_VERSION = 2555 # Integer Version Number - checked against the EEPROM app.py version to determine if it needs updating
 
 # Motor Driver
 MAX_POWER = 65535
@@ -217,8 +217,10 @@ class BadgeBotApp(app.App):
         except Exception as e:
             print(f"H:Error reading HexDrive app.mpy: {e}")            
         try:
+            #version = app.split("APP_VERSION = ")[1].split("\n")[0]
             # TODO - means of identifying the version number in the app.mpy file 
-            version = app.split("APP_VERSION = ")[1].split("\n")[0]
+            # quick hack - lets use the length of the file as a version number
+            version = len(app)
         except Exception as e:
             version = 0
             pass                 
@@ -257,7 +259,7 @@ class BadgeBotApp(app.App):
         try:
             # delete the existing app.mpy file
             print(f"H:Deleting {dest_path}")
-            os.remove(f"{mountpoint}/app.py")  # temporary - to tidy up old app.py files
+            os.remove(f"{mountpoint}/app.py")
             os.remove(dest_path)
         except Exception as e:
             # ignore errors which will happen if the file does not exist
@@ -291,7 +293,7 @@ class BadgeBotApp(app.App):
             except Exception as e:
                 print(f"H:Error unmounting {mountpoint}: {e}")
                 return False 
-        print(f"H:HexDrive app.py updated to version {CURRENT_APP_VERSION}")            
+        print(f"H:HexDrive app.mpy updated to version {CURRENT_APP_VERSION}")            
         return True
     
 
@@ -323,12 +325,15 @@ class BadgeBotApp(app.App):
             header_bytes = i2c.readfrom(EEPROM_ADDR, 32)
         except Exception as e:
             print(f"H:Error reading header back: {e}")
-            return False
+            #return False
         try:
             header = HexpansionHeader.from_bytes(header_bytes)
         except RuntimeError as e:
             print(f"H:Error parsing header: {e}")
-            return False
+            #return False
+        except Exception as e:
+            print(f"H:Error parsing header: {e}")
+            #return False
         try:
             # Get block devices
             _, partition = get_hexpansion_block_devices(i2c, header, EEPROM_ADDR)
@@ -644,7 +649,7 @@ class BadgeBotApp(app.App):
             countdown_val = (RUN_COUNTDOWN_MS - self.run_countdown_elapsed_ms) / 1000
             ctx.rgb(1,1,0).move_to(H_START, V_START+VERTICAL_OFFSET).text(str(countdown_val))
         elif self.current_state == STATE_RUN:
-            ctx.rgb(1,1,1).move_to(H_START, V_START).text("Running power")
+            ctx.rgb(1,1,1).move_to(H_START, V_START).text("Running...")
             ctx.rgb(1,0,0).move_to(H_START-30, V_START + 2*VERTICAL_OFFSET).text(str(self.current_power_duration))
         elif self.current_state == STATE_DONE:
             ctx.rgb(1,1,1).move_to(H_START, V_START + 0*VERTICAL_OFFSET).text("Complete!")
