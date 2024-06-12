@@ -20,7 +20,7 @@ from tildagonos import tildagonos
 
 import app
 
-CURRENT_APP_VERSION = 2555 # Integer Version Number - checked against the EEPROM app.py version to determine if it needs updating
+CURRENT_APP_VERSION = 2648 # Integer Version Number - checked against the EEPROM app.py version to determine if it needs updating
 
 # Motor Driver
 MAX_POWER = 65535
