@@ -3,10 +3,12 @@
 # It is then run from the EEPROM by the BadgeOS.
 
 import asyncio
-import app
 from machine import I2C, PWM
 from system.eventbus import eventbus
 from system.scheduler.events import RequestStopAppEvent
+from micropython import const
+import app
+
 
 # HexDrive.py App Version - parsed by app.py to check if upgrade is required
 APP_VERSION = 2555 
