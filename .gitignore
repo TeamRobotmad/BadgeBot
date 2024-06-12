@@ -1,3 +1,4 @@
 *.pyc
 *.pyo
-hexdrive.mpy
+*.mpy
+BadgeBot.code-workspace
