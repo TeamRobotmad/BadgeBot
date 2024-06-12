@@ -1,10 +1,14 @@
 import os
 import sys
 from pathlib import Path
+import mpy_cross
 
-files_to_keep = {
+files_to_mpy = {
     Path("app.py"),
     Path("hexdrive.py"),
+}
+
+files_to_keep = {
     Path("tildagon.toml")
 }
 
@@ -38,6 +42,10 @@ if __name__ == "__main__":
         raise FileNotFoundError(f"Some of {files_to_keep} are not found so assuming wrong directory. "
                                 "Please run this script from BadgeBot dir.")
     
+    for file in files_to_mpy:
+        print(f"Mpy-ing file: {file}")
+        mpy_cross.run(file, "-v")
+
     files_to_remove = found_files.difference(files_to_keep)
     if not force_mode:
         if input(f"About to remove {len(files_to_remove)} files from {os.getcwd()}, continue? y/n") != "y":
