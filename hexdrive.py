@@ -6,18 +6,18 @@ import asyncio
 from machine import I2C, PWM
 from system.eventbus import eventbus
 from system.scheduler.events import RequestStopAppEvent
-from micropython import const
 import app
 
 
 # HexDrive.py App Version - parsed by app.py to check if upgrade is required
 APP_VERSION = 2555 
 
-_ENABLE_PIN = const(0)	 # First LS pin used to enable the SMPSU
-_DETECT_PIN = const(1)   # Second LS pin used to sense if the SMPSU has a source of power
+_ENABLE_PIN = 0	  # First LS pin used to enable the SMPSU
+_DETECT_PIN = 1   # Second LS pin used to sense if the SMPSU has a source of power
 
-_DEFAULT_PWM_FREQ = const(20000)    
-_DEFAULT_KEEP_ALIVE_PERIOD = const(1000)  # 1 second
+_DEFAULT_PWM_FREQ = 20000    
+_DEFAULT_KEEP_ALIVE_PERIOD = 1000  # 1 second
+
 class HexDriveApp(app.App):
 
     def __init__(self, config=None):
