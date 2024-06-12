@@ -10,7 +10,7 @@ import app
 
 
 # HexDrive.py App Version - parsed by app.py to check if upgrade is required
-APP_VERSION = 2555 
+APP_VERSION = 2648 
 
 _ENABLE_PIN = 0	  # First LS pin used to enable the SMPSU
 _DETECT_PIN = 1   # Second LS pin used to sense if the SMPSU has a source of power
