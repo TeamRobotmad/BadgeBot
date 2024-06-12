@@ -9,7 +9,8 @@ files_to_mpy = {
 }
 
 files_to_keep = {
-    Path("tildagon.toml")
+    Path("tildagon.toml"),
+    Path("metadata.json")
 }
 
 def _cosntruct_filepaths(dirname, filenames):
