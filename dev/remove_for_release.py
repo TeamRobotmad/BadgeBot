@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 
 files_to_keep = {
@@ -20,13 +21,16 @@ def find_files(top_level_dir):
         # if dirname not in dirs_to_keep:
          if ".git" not in dirname:
             found_files.extend(_cosntruct_filepaths(dirname, filenames))
-            found_files.append(Path(dirname))
 
-    print(found_files)
     return found_files
 
 
 if __name__ == "__main__":
+
+    force_mode = False
+
+    if len(sys.argv) >= 2:
+        force_mode = sys.argv[1] == "-f"
 
     found_files = set(find_files("."))
 
@@ -34,5 +38,12 @@ if __name__ == "__main__":
         raise FileNotFoundError(f"Some of {files_to_keep} are not found so assuming wrong directory. "
                                 "Please run this script from BadgeBot dir.")
     
-    for file in found_files.difference(files_to_keep):
-        print(file)
+    files_to_remove = found_files.difference(files_to_keep)
+    if not force_mode:
+        if input(f"About to remove {len(files_to_remove)} files from {os.getcwd()}, continue? y/n") != "y":
+            print("Aborting file removal")
+            exit(0)
+
+    for file in files_to_remove:
+        print(f"Removing file: {file}")
+        os.remove(file)
