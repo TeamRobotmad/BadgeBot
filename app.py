@@ -34,6 +34,7 @@ V_START = -58
 # Timings
 TICK_MS = 20 # Smallest unit of change for power, in ms
 USER_DRIVE_MS = 100 # User specifed drive durations, in ms
+USER_TURN_MS  = 20 # User specifed turn durations, in ms
 LONG_PRESS_MS = 750 # Time for long button press to register, in ms
 RUN_COUNTDOWN_MS = 3000 # Time after running program until drive starts, in ms
 
@@ -721,16 +722,30 @@ class Instruction:
         elif self._press_type == BUTTON_TYPES["RIGHT"]:
             return (0, power, power, 0)
 
+    def directional_duration(self):
+        if self._press_type == BUTTON_TYPES["UP"]:
+            return (USER_DRIVE_MS)
+        elif self._press_type == BUTTON_TYPES["DOWN"]:
+            return (USER_DRIVE_MS)
+        elif self._press_type == BUTTON_TYPES["LEFT"]:
+            return (USER_TURN_MS)
+        elif self._press_type == BUTTON_TYPES["RIGHT"]:
+            return (USER_TURN_MS)
+        
     def make_power_plan(self):
         # return collection of tuples of power and their duration
         ramp_up = [(self.directional_power_tuple(p), TICK_MS)
                    for p in range(0, MAX_POWER, POWER_STEP_PER_TICK)]
+        print(f"Ramp up:")
+        print(ramp_up)
         power_durations = ramp_up.copy()
-        user_power_duration = USER_DRIVE_MS * (self._duration-1)
+        user_power_duration = self.directional_duration() * (self._duration-1)
         power_durations.append((self.directional_power_tuple(MAX_POWER), user_power_duration))
         ramp_down = ramp_up.copy()
         ramp_down.reverse()
         power_durations.extend(ramp_down)
+        print(f"Power durations:")
+        print(power_durations)
         self.power_plan_iterator = iter(power_durations)
 
 def chain(*iterables):
