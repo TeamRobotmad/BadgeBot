@@ -41,7 +41,7 @@ TICK_MS       =  10 # Smallest unit of change for power, in ms
 USER_DRIVE_MS =  50 # User specifed drive durations, in ms
 USER_TURN_MS  =  20 # User specifed turn durations, in ms
 LONG_PRESS_MS = 750 # Time for long button press to register, in ms
-RUN_COUNTDOWN_MS = 3000 # Time after running program until drive starts, in ms
+RUN_COUNTDOWN_MS = 5000 # Time after running program until drive starts, in ms
 
 # App states
 STATE_INIT = -1
@@ -610,7 +610,10 @@ class BadgeBotApp(app.App):
                 self.button_states.clear()
             elif self.button_states.get(BUTTON_TYPES["CONFIRM"]):
                 self.hexdrive_app.set_power(False)
-                self.restart()    
+                #self.restart()    
+                self.reset()
+                self.error_message = ["Restart Feature","Not Yet Available"]
+                self.current_state = STATE_ERROR                       
                 self.button_states.clear()
 
 
@@ -628,7 +631,11 @@ class BadgeBotApp(app.App):
         self.last_press = BUTTON_TYPES["CANCEL"]
         self.long_press_delta = 0
         self.is_scroll = False
-        self.run_countdown_elapsed_ms = 0       
+        self.run_countdown_elapsed_ms = 0
+        self.current_power_duration = ((0,0,0,0), 0)
+        self.power_plan_iter = iter([])
+        # reset the instructions iterator
+
 
 
     def reset(self):
@@ -649,9 +656,9 @@ class BadgeBotApp(app.App):
         ctx.font_size = label_font_size
         # Scroll mode indicator
         if self.is_scroll:
-            ctx.rgb(0.1,0,0).rectangle(-120,-120,240,240).fill()
+            ctx.rgb(0,0.2,0).rectangle(-120,-120,240,240).fill()
         else:
-            ctx.rgb(0,0,0.1).rectangle(-120,-120,240,240).fill()
+            ctx.rgb(0,0,0.2).rectangle(-120,-120,240,240).fill()
 
         if   self.current_state == STATE_WARNING:
             self.draw_message(ctx, ["BadgeBot requires","HexDrive hexpansion","from RobotMad","github.com/TeamRobotmad","/BadgeBot"], [(1,1,1),(1,1,0),(1,1,0),(1,1,1),(1,1,1)], label_font_size)
@@ -672,7 +679,7 @@ class BadgeBotApp(app.App):
                 ctx.rgb(1,1,0).move_to(H_START, V_START + VERTICAL_OFFSET * (self.scroll_offset + i_num)).text(str(instr))
         elif self.current_state == STATE_COUNTDOWN:
             ctx.rgb(1,1,1).move_to(H_START, V_START).text("Running in:")
-            countdown_val = (RUN_COUNTDOWN_MS - self.run_countdown_elapsed_ms) // 1000
+            countdown_val = 1 + ((RUN_COUNTDOWN_MS - self.run_countdown_elapsed_ms) // 1000)
             self.draw_message(ctx, [str(countdown_val)], [(1,1,0)], twentyfour_pt)
             #ctx.rgb(1,1,0).move_to(H_START, V_START+VERTICAL_OFFSET).text(str(countdown_val))
         elif self.current_state == STATE_RUN:
