@@ -4,11 +4,11 @@ from pathlib import Path
 import mpy_cross
 
 files_to_mpy = {
-    Path("app.py"),
     Path("hexdrive.py"),
 }
 
 files_to_keep = {
+    Path("app.py"),
     Path("tildagon.toml"),
     Path("metadata.json")
 }
@@ -24,7 +24,7 @@ def find_files(top_level_dir):
 
     for dirname, dirnames, filenames  in walkerator:
         # if dirname not in dirs_to_keep:
-         if ".git" not in dirname:
+        if dirname != "./.git" and ".git/" not in dirname:
             found_files.extend(_cosntruct_filepaths(dirname, filenames))
 
     return found_files
