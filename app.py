@@ -586,11 +586,11 @@ class BadgeBotApp(app.App):
                     tildagonos.leds[8] = (0, 255, 0)
                     tildagonos.leds[9] = (0, 255, 0)
                 elif self.last_press == BUTTON_TYPES["UP"]:
-                    tildagonos.leds[12] = (0, 0, 255)
-                    tildagonos.leds[1] = (0, 0, 255)
-                elif self.last_press == BUTTON_TYPES["DOWN"]:
                     tildagonos.leds[6] = (255, 255, 0)
                     tildagonos.leds[7] = (255, 255, 0)
+                elif self.last_press == BUTTON_TYPES["DOWN"]:
+                    tildagonos.leds[1] = (0, 0, 255)
+                    tildagonos.leds[12] = (0, 0, 255)
             tildagonos.leds.write()
 
         elif self.current_state == STATE_COUNTDOWN:
