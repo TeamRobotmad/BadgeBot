@@ -1,6 +1,7 @@
 import os
 import sys
 from pathlib import Path
+
 import mpy_cross
 
 files_to_mpy = {
