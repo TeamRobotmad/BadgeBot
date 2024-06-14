@@ -1,4 +1,0 @@
-pylint
-isort
-pytest
-mpy-cross
