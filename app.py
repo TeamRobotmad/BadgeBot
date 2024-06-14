@@ -402,11 +402,13 @@ class BadgeBotApp(app.App):
 
 
     def update(self, delta):
+        self.clear_leds()
         if self.notification:
             self.notification.update(delta)
 
         if self.current_state == STATE_INIT:
             # One Time initialisation
+            eventbus.emit(PatternDisable())
             self.scan_ports()
             if (len(self.ports_with_hexdrive) == 0) and (len(self.ports_with_blank_eeprom) == 0):
                 # There are currently no possible HexDrives plugged in
@@ -594,7 +596,7 @@ class BadgeBotApp(app.App):
         elif self.current_state == STATE_COUNTDOWN:
             self.run_countdown_elapsed_ms += delta
             if self.run_countdown_elapsed_ms >= RUN_COUNTDOWN_MS:
-                self.power_plan_iter = chain(*(instr.power_plan_iterator for instr in self.instructions))
+                self.power_plan_iter = chain(*(instr.power_plan for instr in self.instructions))
                 self.hexdrive_app.set_power(True)
                 self.current_state = STATE_RUN
 
@@ -609,10 +611,9 @@ class BadgeBotApp(app.App):
                 self.button_states.clear()
             elif self.button_states.get(BUTTON_TYPES["CONFIRM"]):
                 self.hexdrive_app.set_power(False)
-                #self.restart()    
-                self.reset()
-                self.error_message = ["Restart Feature","Not Yet Available"]
-                self.current_state = STATE_ERROR                       
+                self.run_countdown_elapsed_ms = 0
+                self.current_power_duration = ((0,0,0,0), 0)
+                self.current_state = STATE_COUNTDOWN                       
                 self.button_states.clear()
 
 
@@ -623,19 +624,6 @@ class BadgeBotApp(app.App):
             self.finalize_instruction()
             self.current_instruction = Instruction(press_type)
         self.last_press = press_type
-
-
-    def restart(self):
-        self.current_state = STATE_COUNTDOWN
-        self.last_press = BUTTON_TYPES["CANCEL"]
-        self.long_press_delta = 0
-        self.is_scroll = False
-        self.run_countdown_elapsed_ms = 0
-        self.current_power_duration = ((0,0,0,0), 0)
-        self.power_plan_iter = iter([])
-        # reset the instructions iterator
-
-
 
     def reset(self):
         self.current_state = STATE_MENU
@@ -755,7 +743,7 @@ class Instruction:
     def __init__(self, press_type: Button) -> None:
         self._press_type = press_type
         self._duration: int = 1
-        self.power_plan_iterator = iter([])
+        self.power_plan = []
 
 
     @property
@@ -810,7 +798,7 @@ class Instruction:
         power_durations.extend(ramp_down)
         print("Power durations:")
         print(power_durations)
-        self.power_plan_iterator = iter(power_durations)
+        self.power_plan = power_durations
 
 
 
