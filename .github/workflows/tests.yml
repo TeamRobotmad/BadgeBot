@@ -18,7 +18,7 @@ jobs:
         repository: TeamRobotmad/badge-2024-software
     - name: Manage submodule
       run: |
-        git submodule update --init
+        git submodule update --init --force --remote
         cd ./sim/apps/BadgeBot
         git checkout  ${{ github.head_ref || github.ref_name }} 
     - name: Set up Python ${{ matrix.python-version }}
