@@ -507,8 +507,7 @@ class BadgeBotApp(app.App):
                     self.hexdrive_seen = True
                     # Find our running hexdrive app
                     for app in scheduler.apps:
-                        if hasattr(app, "config"):
-                            app.config.port == valid_port
+                        if hasattr(app, "config") and app.config.port == valid_port:
                             self.hexdrive_app = app
                             print(f"H:Found app on port {valid_port}")
                             if self.hexdrive_app.get_status():
