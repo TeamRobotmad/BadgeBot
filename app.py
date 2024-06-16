@@ -758,9 +758,9 @@ class Instruction:
 
     def directional_power_tuple(self, power):
         if self._press_type == BUTTON_TYPES["UP"]:
-            return (power, 0, power, 0)
-        elif self._press_type == BUTTON_TYPES["DOWN"]:
             return (0, power, 0, power)
+        elif self._press_type == BUTTON_TYPES["DOWN"]:
+            return (power, 0, power, 0)
         elif self._press_type == BUTTON_TYPES["LEFT"]:
             return (power, 0, 0, power)
         elif self._press_type == BUTTON_TYPES["RIGHT"]:
