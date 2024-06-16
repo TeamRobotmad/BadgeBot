@@ -9,6 +9,7 @@ Companion app for HexDrive expansion, assuming BadgeBot configuration with 2 mot
 Stable version available via [Tildagon App Directory](https://apps.badge.emfcamp.org/).
 
 ### Usage guide
+https://drive.google.com/drive/folders/1DVCi_XbHi8Y9YzOkOgK-ow21TaVT0tyb?usp=sharing
 
 ## Developers guide
 
