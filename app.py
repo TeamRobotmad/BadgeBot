@@ -19,7 +19,7 @@ from system.scheduler import scheduler
 from system.scheduler.events import (RequestForegroundPopEvent,
                                      RequestForegroundPushEvent)
 from tildagonos import tildagonos
-
+from math import pi, cos
 import app
 
 from .utils import chain, draw_logo_animated
@@ -34,6 +34,7 @@ CURRENT_APP_VERSION = 2648 # Integer Version Number - checked against the EEPROM
 VERTICAL_OFFSET = label_font_size
 H_START = -78
 V_START = -58
+_BRIGHTNESS = 1.0
 
 # Motor Driver - Defaults
 _MAX_POWER = 65535
@@ -113,6 +114,7 @@ class BadgeBotApp(app.App):
         self._settings['max_power']     = _MAX_POWER
         self._settings['drive_step_ms'] = _USER_DRIVE_MS
         self._settings['turn_step_ms']  = _USER_TURN_MS
+        self._settings['brightness']    = _BRIGHTNESS
         self.update_settings()   
 
         # Hexpansion related
@@ -396,6 +398,7 @@ class BadgeBotApp(app.App):
         self._settings['max_power']     = settings.get("badgebot_max_power",     _MAX_POWER)
         self._settings['drive_step_ms'] = settings.get("badgebot_drive_step_ms", _USER_DRIVE_MS)
         self._settings['turn_step_ms']  = settings.get("badgebot_turn_step_ms",  _USER_TURN_MS)
+        self._settings['brightness']    = settings.get("pattern_brightness",     _BRIGHTNESS)
         if (self._settings['acceleration'] != _POWER_STEP_PER_TICK):
             print(f"Power step per tick: {self._settings['acceleration']}")
         if (self._settings['max_power'] != _MAX_POWER):
@@ -404,11 +407,13 @@ class BadgeBotApp(app.App):
             print(f"Drive step ms: {self._settings['drive_step_ms']}")
         if (self._settings['turn_step_ms'] != _USER_TURN_MS):
             print(f"Turn step ms: {self._settings['turn_step_ms']}")    
+        if (self._settings['brightness'] != _BRIGHTNESS):
+            print(f"Brightness: {self._settings['brightness']}")
 
     ### MAIN APP CONTROL FUNCTIONS ###
 
     def update(self, delta):
-        self.clear_leds()
+        #self.clear_leds()
         if self.notification:
             self.notification.update(delta)
 
@@ -436,6 +441,18 @@ class BadgeBotApp(app.App):
                     # after 10 seconds show the logo
                     self.current_state = STATE_LOGO
                     self.animation_counter = 0
+                elif self.current_state == STATE_LOGO:
+                    # LED management - to match rotating logo:
+                    for i in range(1,13):
+                        colour = (255, 241, 0)                                
+                        # if ((i-1)% 4) == int(self.animation_counter * pi / 6 ) % 4:
+                        wave = self._settings['brightness'] * pow((1.0 + cos(((i-0.5) * 2.0 * pi / 3.0) - self.animation_counter * 2.0 * pi / 3.0))/2.0, 3)    
+                        # 4 sides each projecting a pattern (hence 12 LEDs/4 = 3)
+                        #wave = self._settings['brightness'] * (1.0 - ((((i-1)/3) - self.animation_counter/3) % 1.0))
+                        print(f"i:{i} wave:{wave}") 
+                        tildagonos.leds[i] = tuple(int(wave * j) for j in colour)                                                     
+                    tildagonos.leds.write()
+
         elif self.current_state == STATE_ERROR or self.current_state == STATE_REMOVED: 
             if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
                 # Logo/Error has been acknowledged by the user
@@ -626,7 +643,12 @@ class BadgeBotApp(app.App):
                 elif self.last_press == BUTTON_TYPES["DOWN"]:
                     tildagonos.leds[6] = (255, 255, 0)
                     tildagonos.leds[7] = (255, 255, 0)
-            tildagonos.leds.write()
+                if self._settings['brightness'] < 1.0:
+                    # Scale brightness
+                    for i in range(1,13):
+                        tildagonos.leds[i] = tuple(int(j * self._settings['brightness']) for j in tildagonos.leds[i])                            
+                    tildagonos.leds.write()                         
+                tildagonos.leds.write()
 
         elif self.current_state == STATE_COUNTDOWN:
             self.run_countdown_elapsed_ms += delta
