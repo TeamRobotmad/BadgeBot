@@ -6,7 +6,8 @@ import settings
 import vfs
 from app_components.notification import Notification
 from app_components.tokens import label_font_size, twentyfour_pt
-from events.input import BUTTON_TYPES, Button, Buttons
+from events.input import BUTTON_TYPES, Button, Buttons, ButtonUpEvent
+from frontboards.twentyfour import BUTTONS
 from machine import I2C
 from system.eventbus import eventbus
 from system.hexpansion.events import (HexpansionInsertionEvent,
@@ -141,6 +142,7 @@ class BadgeBotApp(app.App):
 
         eventbus.on_async(RequestForegroundPushEvent, self.gain_focus, self)
         eventbus.on_async(RequestForegroundPopEvent, self.lose_focus, self)
+        eventbus.on_async(ButtonUpEvent, self.handle_button_up, self)
 
         # We start with focus on launch, without an event emmited
         self.gain_focus(RequestForegroundPushEvent(self))
@@ -168,9 +170,6 @@ class BadgeBotApp(app.App):
         elif self.hexdrive_port is not None and event.port == self.hexdrive_port:
             self.current_state = STATE_WAIT
 
-
-        
-
     async def handle_hexpansion_insertion(self, event: HexpansionInsertionEvent):
         if self.check_port_for_hexdrive(event.port):
             self.current_state = STATE_WAIT
@@ -197,6 +196,11 @@ class BadgeBotApp(app.App):
              # I.e on transition into run set this lower
             await asyncio.sleep(0.01)
             last_time = cur_time
+
+    async def handle_button_up(self, event: ButtonUpEvent):
+        if self.current_state == STATE_RECEIVE_INSTR and event.button == BUTTONS["C"]:
+            self.is_scroll = not self.is_scroll
+            self.notification = Notification(f"Scroll {"yes" if self.is_scroll else "no"}")
 
 
     ### NON-ASYNC FUCNTIONS ###
@@ -601,10 +605,6 @@ class BadgeBotApp(app.App):
         elif self.current_state == STATE_RECEIVE_INSTR:
             # Enable/disable scrolling and check for long press
             if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
-                if self.long_press_delta == 0:
-                    # TODO Move to button up event
-                    self.is_scroll = not self.is_scroll
-                    self.notification = Notification(f"Scroll {self.is_scroll}")
                 self.long_press_delta += delta
                 if self.long_press_delta >= _LONG_PRESS_MS:
                     self.finalize_instruction()
@@ -632,25 +632,25 @@ class BadgeBotApp(app.App):
                 elif self.button_states.get(BUTTON_TYPES["DOWN"]):
                     self._handle_instruction_press(BUTTON_TYPES["DOWN"])
                     self.button_states.clear()
-                # LED management
-                if self.last_press == BUTTON_TYPES["RIGHT"]:
-                    tildagonos.leds[2] = (255, 0, 0)
-                    tildagonos.leds[3] = (255, 0, 0)
-                elif self.last_press == BUTTON_TYPES["LEFT"]:
-                    tildagonos.leds[8] = (0, 255, 0)
-                    tildagonos.leds[9] = (0, 255, 0)
-                elif self.last_press == BUTTON_TYPES["UP"]:
-                    tildagonos.leds[12] = (0, 0, 255)
-                    tildagonos.leds[1] = (0, 0, 255)
-                elif self.last_press == BUTTON_TYPES["DOWN"]:
-                    tildagonos.leds[6] = (255, 255, 0)
-                    tildagonos.leds[7] = (255, 255, 0)
-                if self._settings['brightness'] < 1.0:
-                    # Scale brightness
-                    for i in range(1,13):
-                        tildagonos.leds[i] = tuple(int(j * self._settings['brightness']) for j in tildagonos.leds[i])                            
-                    tildagonos.leds.write()                         
-                tildagonos.leds.write()
+            # LED management
+            if self.last_press == BUTTON_TYPES["RIGHT"]:
+                tildagonos.leds[2] = (255, 0, 0)
+                tildagonos.leds[3] = (255, 0, 0)
+            elif self.last_press == BUTTON_TYPES["LEFT"]:
+                tildagonos.leds[8] = (0, 255, 0)
+                tildagonos.leds[9] = (0, 255, 0)
+            elif self.last_press == BUTTON_TYPES["UP"]:
+                tildagonos.leds[12] = (0, 0, 255)
+                tildagonos.leds[1] = (0, 0, 255)
+            elif self.last_press == BUTTON_TYPES["DOWN"]:
+                tildagonos.leds[6] = (255, 255, 0)
+                tildagonos.leds[7] = (255, 255, 0)
+            if self._settings['brightness'] < 1.0:
+                # Scale brightness
+                for i in range(1,13):
+                    tildagonos.leds[i] = tuple(int(j * self._settings['brightness']) for j in tildagonos.leds[i])                            
+                tildagonos.leds.write()                         
+            tildagonos.leds.write()
 
         elif self.current_state == STATE_COUNTDOWN:
             self.run_countdown_elapsed_ms += delta
