@@ -410,6 +410,15 @@ class BadgeBotApp(app.App):
         except Exception as e:
             print(f"H:Error writing header: {e}")
             return False
+        # Poll ACK
+        while True:
+            try:
+                if i2c.writeto(_EEPROM_ADDR, bytes([0]*_EEPROM_NUM_ADDRESS_BYTES)):  # Poll ACK
+                    break
+            except OSError:
+                pass
+            finally:
+                time.sleep_ms(1)
         try:
             i2c.writeto(_EEPROM_ADDR, bytes([0]*_EEPROM_NUM_ADDRESS_BYTES))  # Read header @ address 0                
             header_bytes = i2c.readfrom(_EEPROM_ADDR, 32)
