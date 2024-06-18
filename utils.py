@@ -18,7 +18,7 @@ def roundtext(ctx, t, r, top=False):
         ctx.rotate(-w/2/r)
     ctx.restore()
 
-def draw_logo_animated(ctx, animation_counter=0, messages=None):
+def draw_logo_animated(ctx, rpm, animation_counter=0, messages=None):
     legw = .12
     # 0:black, 1:white, 2:yellow
     colours = [(0, 0, 0), (1, 1, 1), (1.0, 0.84, 0)]
@@ -29,7 +29,7 @@ def draw_logo_animated(ctx, animation_counter=0, messages=None):
         ctx.rgba(*colours[c], 1)
         hexagon(ctx, 0, 0, r)
     ctx.save()
-    ctx.rotate(animation_counter * pi / 6)
+    ctx.rotate(rpm * animation_counter * pi / 30.0)
 
     # Chip
     rs = [(45, 0), (38, 2), (33, 0)] # Outer, Inner, Solid

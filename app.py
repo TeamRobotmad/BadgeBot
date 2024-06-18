@@ -92,6 +92,7 @@ class BadgeBotApp(app.App):
         self.long_press_delta = 0
 
         # UI Featrue Controls
+        self.rpm = 5                    # logo rotation speed in RPM
         self.animation_counter = 0
         self.b_msg = "BadgeBot"
         self.t_msg = "RobotMad"
@@ -444,12 +445,10 @@ class BadgeBotApp(app.App):
                 elif self.current_state == STATE_LOGO:
                     # LED management - to match rotating logo:
                     for i in range(1,13):
-                        colour = (255, 241, 0)                                
-                        # if ((i-1)% 4) == int(self.animation_counter * pi / 6 ) % 4:
-                        wave = self._settings['brightness'] * pow((1.0 + cos(((i-0.5) * 2.0 * pi / 3.0) - self.animation_counter * 2.0 * pi / 3.0))/2.0, 3)    
-                        # 4 sides each projecting a pattern (hence 12 LEDs/4 = 3)
-                        #wave = self._settings['brightness'] * (1.0 - ((((i-1)/3) - self.animation_counter/3) % 1.0))
-                        print(f"i:{i} wave:{wave}") 
+                        colour = (255, 241, 0)      # custom Robotmad shade of yellow                                
+                        # raised cosine cubed wave
+                        wave = self._settings['brightness'] * pow((1.0 + cos(((i-1) * 2.0 * pi / 3.0) - (self.animation_counter * 2.0 * pi / 15.0)))/2.0, 3)    
+                        # 4 sides each projecting a pattern of 3 LEDs (12 LEDs in total)
                         tildagonos.leds[i] = tuple(int(wave * j) for j in colour)                                                     
                     tildagonos.leds.write()
 
@@ -677,7 +676,7 @@ class BadgeBotApp(app.App):
         ctx.save()
         ctx.font_size = label_font_size
         if self.current_state == STATE_LOGO:
-            draw_logo_animated(ctx, self.animation_counter, [self.b_msg, self.t_msg])
+            draw_logo_animated(ctx, self.rpm, self.animation_counter, [self.b_msg, self.t_msg])
         # Scroll mode indicator
         elif self.is_scroll:
             ctx.rgb(0,0.2,0).rectangle(-120,-120,240,240).fill()
