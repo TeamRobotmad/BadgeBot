@@ -93,7 +93,7 @@ class BadgeBotApp(app.App):
         # UI Featrue Controls
         self.animation_counter = 0
         self.b_msg = "BadgeBot"
-        self.t_msg = "TeamRobotMad"
+        self.t_msg = "RobotMad"
         self.is_scroll = False
         self.scroll_offset = 0
         self.notification = None
@@ -419,26 +419,30 @@ class BadgeBotApp(app.App):
             self.scan_ports()
             if (len(self.ports_with_hexdrive) == 0) and (len(self.ports_with_blank_eeprom) == 0):
                 # There are currently no possible HexDrives plugged in
+                self.animation_counter = 0
                 self.current_state = STATE_WARNING
             else:
                 self.current_state = STATE_WAIT
             return
-        elif self.current_state == STATE_WARNING:
-            # Show the warning screen for 10 seconds
-            self.animation_counter += delta/1000
-            if self.animation_counter > 10:
-                # after 10 seconds show the logo
-                self.current_state = STATE_LOGO
-        elif self.current_state == STATE_LOGO:
-            # animate the logo
-            self.animation_counter += delta/1000
+        elif self.current_state == STATE_WARNING or self.current_state == STATE_LOGO:
+            if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
+                # Warning has been acknowledged by the user
+                self.button_states.clear()
+                self.current_state = STATE_WAIT
+            else:
+                # Show the warning screen for 10 seconds
+                self.animation_counter += delta/1000
+                if self.current_state == STATE_WARNING and self.animation_counter > 10:
+                    # after 10 seconds show the logo
+                    self.current_state = STATE_LOGO
+                    self.animation_counter = 0
         elif self.current_state == STATE_ERROR or self.current_state == STATE_REMOVED: 
-            if self.button_states.get(BUTTON_TYPES["CONFIRM"]) or self.button_states.get(BUTTON_TYPES["CANCEL"]):
-                # Warning/Error has been acknowledged by the user
+            if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
+                # Logo/Error has been acknowledged by the user
                 self.button_states.clear()
                 self.current_state = STATE_WAIT
                 self.error_message = []
-        elif self.current_state in MINIMISE_VALID_STATES:
+        if self.current_state in MINIMISE_VALID_STATES:
             if self.current_state == STATE_DETECTED:
                 # We are currently asking the user if they want hexpansion EEPROM initialising
                 if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
@@ -536,6 +540,7 @@ class BadgeBotApp(app.App):
                             if self.hexdrive_app.get_status():
                                 print(f"H:HexDrive [{valid_port}] OK")
                                 self.current_state = STATE_MENU
+                                self.animation_counter = 0
                             else:
                                 print(f"H:HexDrive {valid_port}: Failed to initialise PWM resources")
                                 self.error_message = ["HexDrive {valid_port}","PWM Init","Failed","Please","Reboop"]
@@ -548,7 +553,8 @@ class BadgeBotApp(app.App):
                 elif self.hexdrive_seen:
                     self.hexdrive_seen = False
                     self.current_state = STATE_REMOVED
-                else:                   
+                else:
+                    self.animation_counter = 0                   
                     self.current_state = STATE_WARNING
 ### END OF UI FOR HEXPANSION INITIALISATION AND UPGRADE ###
 
@@ -561,10 +567,17 @@ class BadgeBotApp(app.App):
             if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
                 self.current_state = STATE_RECEIVE_INSTR
                 self.button_states.clear()
+            # Show the instructions screen for 10 seconds
+            self.animation_counter += delta/1000
+            if self.animation_counter > 10:
+                # after 10 seconds show the logo
+                self.animation_counter = 0
+                self.current_state = STATE_LOGO
         elif self.current_state == STATE_WARNING:
             # Exit warning screen
             if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
                 self.current_state = STATE_LOGO
+                self.animation_counter = 0
                 self.button_states.clear()
         elif self.current_state == STATE_RECEIVE_INSTR:
             # Enable/disable scrolling and check for long press
@@ -704,7 +717,7 @@ class BadgeBotApp(app.App):
             ctx.rgb(*colour).move_to(-width//2, ctx.font_size*(i_num-((num_lines-2)/2))).text(text_line)
 
 
-### BADGENBOT DEMO FUNCTIONALITY ###
+### BADGEBOT DEMO FUNCTIONALITY ###
     def _handle_instruction_press(self, press_type: Button):
         if self.last_press == press_type:
             self.current_instruction.inc()
@@ -716,6 +729,7 @@ class BadgeBotApp(app.App):
     def reset(self):
         self.current_state = STATE_MENU
         self.last_press = BUTTON_TYPES["CONFIRM"]
+        self.animation_counter = 0
         self.long_press_delta = 0
         self.is_scroll = False
         self.scroll_offset = 0

@@ -1,57 +1,56 @@
 #util.py
 
 from math import pi
+from display import hexagon
 
-
-def roundtext(ctx, t, r, top=False, h=20):
+def roundtext(ctx, t, r, top=False):
     ctx.save()
-    r=(h-r) if top else r
+    h = ctx.font_size
+    r=(h-r) if top else r-h/2
     w=sum(map(ctx.text_width, t))
     ctx.rotate(w/2/r)
     for c in t:
         w=ctx.text_width(c)
         ctx.rotate(-w/2/r)
-        
         ctx.move_to(-w/2, r)
         ctx.text(c)
         ctx.move_to(0,0)
         ctx.rotate(-w/2/r)
     ctx.restore()
 
-
 def draw_logo_animated(ctx, animation_counter=0, messages=None):
     legw = .12
-    #rs = [(150, 0), (100, 1), (75, 0), (45, 1), (40, 0)]
-    rs = [(150, 0), (100, 1), (75, 0), (45, 0), (40, 0)]
+    # 0:black, 1:white, 2:yellow
+    colours = [(0, 0, 0), (1, 1, 1), (1.0, 0.84, 0)]
+
+    #Hexagon
+    rs = [(150, 1), (119, 0), (111, 2)]
     for r,c in rs:
-        ctx.arc(0,0,r,0,2*pi,0)
-        ctx.rgba(c,c,c, 1)
-        ctx.fill()
+        ctx.rgba(*colours[c], 1)
+        hexagon(ctx, 0, 0, r)
     ctx.save()
-    ctx.rotate(animation_counter * pi / 3)
-    for i in range(6):
-        ctx.begin_path()
-        ctx.arc(0, 0, 105, i*pi*2/6, (i+legw)*pi*2/6, 0)
-        ctx.arc(0, 0, 44, (i+legw)*pi*2/6, i*pi*2/6, -1)
-        ctx.rgba(1, 1, 0, 1)
-        ctx.fill()
+    ctx.rotate(animation_counter * pi / 6)
+
+    # Chip
+    rs = [(45, 0), (38, 2), (33, 0)] # Outer, Inner, Solid
+    # pins
+    pin_width = rs[0][0] // 6
+    ctx.rgba(0, 0, 0, 1)
+    for j in range(5):
+        ctx.rectangle(-rs[0][0]-pin_width, (2-j)*2*pin_width, 2*(rs[0][0]+pin_width), pin_width).fill()
+        ctx.rectangle((2-j)*2*pin_width, -rs[0][0]-pin_width, pin_width, 2*(rs[0][0]+pin_width)).fill()
+    # Chip Body    
+    for r,c in rs:
+        ctx.rgba(*colours[c], 1)
+        ctx.round_rectangle(-r, -r, 2*r, 2*r, r//10).fill()
     ctx.restore()
-    #ps = [(-30, 5), (-20, 14), (-12, 5), (-5, 5), (5, 10), (12, 10), (20, 6)]
-    #ctx.move_to(ps[0][0], ps[0][1])
-    #ctx.begin_path()
-    #for px, py in ps:
-    #    ctx.line_to(px, py)
-    #for px, py in ps:
-    #    ctx.line_to(-px, -py)
-    #ctx.line_to(-30, 5)
-    #ctx.rgba(1, 1, 1, 1)
-    #ctx.fill()
     ctx.rgba(0,0,0,1)
     if messages is not None:
         if 0 < len(messages):
             roundtext(ctx,messages[0], 97, False)
         if 1 < len(messages):
             roundtext(ctx,messages[1], 97, True)
+
     
 def chain(*iterables):
     for iterable in iterables:
