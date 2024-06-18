@@ -31,7 +31,7 @@ def draw_logo_animated(ctx, rpm, animation_counter=0, messages=None, qr_code=Non
     ctx.save()
     ctx.rotate(rpm * animation_counter * pi / 30.0)
     # Chip
-    rs = [(46, 0), (40, 2)] # , (40, 0)] # Outer, Inner, Solid
+    rs = [(50, 0), (45, 2)] # , (40, 0)] # Outer, Inner, Solid (replaced by QR code)
     # pins
     pin_width = rs[0][0] // 6
     ctx.rgba(0, 0, 0, 1)
@@ -59,21 +59,16 @@ def draw_logo_animated(ctx, rpm, animation_counter=0, messages=None, qr_code=Non
 # QR code data
 def draw_QRCode(ctx, qr_code, size=240, colour=(1,1,1)):
     qr_size = len( qr_code )
-    #print(f"QR Size{qr_size}")
+    print(f"Drawing QR code of size {qr_size}x{qr_size}")
 
     #   Draw background - assume already drawn
     #ctx.rgb(*colour).rectangle(-size/2, -size/2, size, size).fill()
 
-    #   Size of each QR code pixel on the canvas
-    pixel_size = int( (size-4) / qr_size ) + 1
-    #print(f"Pixel Size{pixel_size}")
-
-    #   Border size in pixels
-    border_size = ( size - (pixel_size*qr_size) ) / 2
-    #print(f"Border Size{border_size}")
+    #   Size of each QR code pixel on the canvas (enforce space for a border)
+    pixel_size = int((size-8)//qr_size)
 
     #   Calculate the offset to start drawing the QR code (centre it within the available space)
-    offset = -size/2 + border_size
+    offset = -(pixel_size*qr_size//2)
 
     #   Loop through the array
     ctx.rgba(0,0,0,1)
@@ -82,7 +77,7 @@ def draw_QRCode(ctx, qr_code, size=240, colour=(1,1,1)):
         for col in range( len(qr_code) ):
             if qr_code[row][col] == True:
                 x = (col * pixel_size) + offset
-                ctx.rectangle(x, y, pixel_size, pixel_size).fill()  
+                ctx.rectangle(x, y, pixel_size+1, pixel_size).fill()  
 
 
 def chain(*iterables):
