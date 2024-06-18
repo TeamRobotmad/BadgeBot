@@ -24,15 +24,48 @@ from math import pi, cos
 import app
 
 from .utils import chain, draw_logo_animated
-from .uQR import QRCode
+#from .uQR import QRCode
 
 # Hard coded to talk to 16bit address EEPROM on address 0x50 - because we know that is what is on the HexDrive Hexpansion
 # makes it a lot more efficient than scanning the I2C bus for devices and working out what they are
 
 CURRENT_APP_VERSION = 2648 # Integer Version Number - checked against the EEPROM app.py version to determine if it needs updating
 
-_URL = "https://robotmad.odoo.com" # URL for QR code
-
+# If you change the URL then you will need to regenerate the QR code
+#_URL = "https://robotmad.odoo.com" # URL for QR code
+_QR_CODE = [[False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False], 
+            [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False], 
+            [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False], 
+            [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False], 
+            [False, False, False, False, True, True, True, True, True, True, True, False, False, True, True, False, True, True, True, True, False, False, True, True, True, True, True, True, True, False, False, False, False], 
+            [False, False, False, False, True, False, False, False, False, False, True, False, False, False, True, True, False, False, True, True, False, False, True, False, False, False, False, False, True, False, False, False, False], 
+            [False, False, False, False, True, False, True, True, True, False, True, False, True, True, True, False, True, False, False, True, False, False, True, False, True, True, True, False, True, False, False, False, False], 
+            [False, False, False, False, True, False, True, True, True, False, True, False, False, True, True, True, False, False, True, False, False, False, True, False, True, True, True, False, True, False, False, False, False], 
+            [False, False, False, False, True, False, True, True, True, False, True, False, False, False, True, False, True, False, True, True, True, False, True, False, True, True, True, False, True, False, False, False, False], 
+            [False, False, False, False, True, False, False, False, False, False, True, False, False, True, False, True, False, True, True, True, False, False, True, False, False, False, False, False, True, False, False, False, False], 
+            [False, False, False, False, True, True, True, True, True, True, True, False, True, False, True, False, True, False, True, False, True, False, True, True, True, True, True, True, True, False, False, False, False], 
+            [False, False, False, False, False, False, False, False, False, False, False, False, True, True, True, True, False, True, False, True, True, False, False, False, False, False, False, False, False, False, False, False, False], 
+            [False, False, False, False, True, True, True, False, True, True, True, True, True, False, True, False, True, True, False, False, True, True, True, False, False, False, True, False, False, False, False, False, False], 
+            [False, False, False, False, True, True, True, False, True, False, False, True, False, False, True, True, False, False, False, False, True, True, True, False, False, False, False, False, True, False, False, False, False], 
+            [False, False, False, False, True, False, False, True, False, True, True, True, False, True, False, True, True, True, False, False, False, True, False, False, False, False, True, True, True, False, False, False, False], 
+            [False, False, False, False, True, False, True, True, True, True, False, True, True, False, False, True, False, True, True, True, False, False, True, True, False, False, False, True, False, False, False, False, False], 
+            [False, False, False, False, False, False, False, False, False, True, True, False, True, False, False, False, True, True, False, False, True, True, True, True, False, True, False, True, True, False, False, False, False], 
+            [False, False, False, False, False, False, False, False, False, False, False, True, False, True, False, True, False, False, False, False, True, True, True, False, False, True, False, False, True, False, False, False, False], 
+            [False, False, False, False, True, False, False, True, False, False, True, False, True, False, True, False, True, True, False, False, False, False, True, True, False, False, True, True, True, False, False, False, False], 
+            [False, False, False, False, False, True, True, False, True, True, False, False, True, True, True, True, False, True, True, True, True, True, True, False, True, False, False, True, False, False, False, False, False], 
+            [False, False, False, False, True, False, False, True, False, True, True, True, True, False, True, False, True, True, True, True, True, True, True, True, True, True, False, False, False, False, False, False, False], 
+            [False, False, False, False, False, False, False, False, False, False, False, False, True, True, False, False, False, False, False, True, True, False, False, False, True, True, False, True, True, False, False, False, False], 
+            [False, False, False, False, True, True, True, True, True, True, True, False, True, True, False, False, False, True, False, True, True, False, True, False, True, True, False, True, True, False, False, False, False], 
+            [False, False, False, False, True, False, False, False, False, False, True, False, True, True, False, True, True, True, False, False, True, False, False, False, True, True, False, False, False, False, False, False, False], 
+            [False, False, False, False, True, False, True, True, True, False, True, False, True, False, True, True, True, True, False, False, True, True, True, True, True, True, False, False, False, False, False, False, False], 
+            [False, False, False, False, True, False, True, True, True, False, True, False, False, True, True, False, True, True, False, True, False, False, False, True, True, True, True, False, False, False, False, False, False], 
+            [False, False, False, False, True, False, True, True, True, False, True, False, True, True, False, False, False, True, True, True, True, False, False, False, True, False, False, False, True, False, False, False, False], 
+            [False, False, False, False, True, False, False, False, False, False, True, False, True, False, False, False, True, True, True, False, True, False, True, False, True, True, False, True, False, False, False, False, False], 
+            [False, False, False, False, True, True, True, True, True, True, True, False, True, False, True, True, True, True, False, True, True, True, False, True, False, False, False, True, True, False, False, False, False], 
+            [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False], 
+            [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False], 
+            [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False], 
+            [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False]]
 # Screen positioning for movement sequence text
 VERTICAL_OFFSET = label_font_size
 H_START = -78
@@ -97,9 +130,12 @@ class BadgeBotApp(app.App):
         # UI Featrue Controls
         self.rpm = 5                    # logo rotation speed in RPM
         self.animation_counter = 0
-        qr = QRCode(error_correction=1, box_size=10, border=4)
-        qr.add_data(_URL)
-        self.qr_code = qr.get_matrix()
+        # reinstate the code below to generate a new QR code
+        #qr = QRCode(error_correction=1, box_size=10, border=4)
+        #qr.add_data(_URL)
+        #self.qr_code = qr.get_matrix()
+        #print(f"QR Code: {self.qr_code}")
+        self.qr_code = _QR_CODE
         self.b_msg = "BadgeBot"
         self.t_msg = "RobotMad"
         self.is_scroll = False
@@ -178,7 +214,7 @@ class BadgeBotApp(app.App):
         if event.app is self:
             self.we_have_focus = True
             eventbus.emit(PatternDisable())
-            self.clear_leds()
+            #self.clear_leds()
 
     async def lose_focus(self, event: RequestForegroundPopEvent):
         if event.app is self:
@@ -430,7 +466,7 @@ class BadgeBotApp(app.App):
 
 ### START UI FOR HEXPANSION INITIALISATION AND UPGRADE ###
         if self.current_state == STATE_INIT:
-            # One Time initialisation
+            # One Time initialisation      
             eventbus.emit(PatternDisable())
             self.scan_ports()
             if (len(self.ports_with_hexdrive) == 0) and (len(self.ports_with_blank_eeprom) == 0):
