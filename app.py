@@ -66,7 +66,7 @@ STATE_ERROR = 11          # Hexpansion error
 STATE_LOGO = 12           # Logo display
 
 # App states where user can minimise app
-MINIMISE_VALID_STATES = [0, 1, 2, 5, 6, 7, 8, 10, 11]
+MINIMISE_VALID_STATES = [0, 1, 2, 5, 6, 7, 8, 10, 11, 12]
 
 # HexDrive Hexpansion constants
 _EEPROM_ADDR  = 0x50
@@ -439,14 +439,19 @@ class BadgeBotApp(app.App):
             if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
                 # Warning has been acknowledged by the user
                 self.button_states.clear()
-                self.current_state = STATE_WAIT
+                if self.current_state == STATE_WARNING:
+                    self.animation_counter = 0
+                    self.current_state = STATE_LOGO
+                else:
+                    self.current_state = STATE_WARNING    
             else:
+                # "CANCEL" button is handled below in common for all MINIMISE_VALID_STATES 
                 # Show the warning screen for 10 seconds
                 self.animation_counter += delta/1000
                 if self.current_state == STATE_WARNING and self.animation_counter > 10:
                     # after 10 seconds show the logo
-                    self.current_state = STATE_LOGO
                     self.animation_counter = 0
+                    self.current_state = STATE_LOGO
                 elif self.current_state == STATE_LOGO:
                     # LED management - to match rotating logo:
                     for i in range(1,13):
@@ -456,7 +461,6 @@ class BadgeBotApp(app.App):
                         # 4 sides each projecting a pattern of 3 LEDs (12 LEDs in total)
                         tildagonos.leds[i] = tuple(int(wave * j) for j in colour)                                                     
                     tildagonos.leds.write()
-
         elif self.current_state == STATE_ERROR or self.current_state == STATE_REMOVED: 
             if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
                 # Logo/Error has been acknowledged by the user
@@ -594,12 +598,6 @@ class BadgeBotApp(app.App):
                 # after 10 seconds show the logo
                 self.animation_counter = 0
                 self.current_state = STATE_LOGO
-        elif self.current_state == STATE_WARNING:
-            # Exit warning screen
-            if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
-                self.current_state = STATE_LOGO
-                self.animation_counter = 0
-                self.button_states.clear()
         elif self.current_state == STATE_RECEIVE_INSTR:
             # Enable/disable scrolling and check for long press
             if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
