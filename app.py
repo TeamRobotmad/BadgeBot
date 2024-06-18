@@ -29,7 +29,7 @@ from .utils import chain, draw_logo_animated
 # Hard coded to talk to 16bit address EEPROM on address 0x50 - because we know that is what is on the HexDrive Hexpansion
 # makes it a lot more efficient than scanning the I2C bus for devices and working out what they are
 
-CURRENT_APP_VERSION = 2648 # Integer Version Number - checked against the EEPROM app.py version to determine if it needs updating
+CURRENT_APP_VERSION = 2647 # Integer Version Number - checked against the EEPROM app.py version to determine if it needs updating
 
 # If you change the URL then you will need to regenerate the QR code
 _QR_CODE = [0x1fcf67f, 
