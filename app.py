@@ -470,7 +470,7 @@ class BadgeBotApp(app.App):
         if self.notification:
             self.notification.update(delta)
 
-### START UI FOR HEXPANSION INITIALISATION AND UPGRADE ###
+        ### START UI FOR HEXPANSION INITIALISATION AND UPGRADE ###
         if self.current_state == STATE_INIT:
             # One Time initialisation      
             eventbus.emit(PatternDisable())
