@@ -498,6 +498,8 @@ class BadgeBotApp(app.App):
                 if self.current_state == STATE_WARNING:
                     self.animation_counter = 0
                     self.current_state = STATE_LOGO
+                else if self.hexdrive_port is not None:
+                    self.current_state = STATE_MENU
                 else:
                     self.current_state = STATE_WARNING    
             else:
@@ -634,10 +636,14 @@ class BadgeBotApp(app.App):
                             break
                     else:
                         print(f"H:HexDrive {valid_port}: App not found, please reboop")
+                        self.hexdrive_port = None
+                        self.hexdrive_app = None                        
                         self.error_message = [f"HexDrive {valid_port}","App not found.","Please","reboop"]
                         self.current_state = STATE_ERROR                           
                 elif self.hexdrive_seen:
                     self.hexdrive_seen = False
+                    self.hexdrive_port = None
+                    self.hexdrive_app = None                      
                     self.current_state = STATE_REMOVED
                 else:
                     self.animation_counter = 0                   
