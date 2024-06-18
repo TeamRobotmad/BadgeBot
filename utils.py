@@ -75,7 +75,9 @@ def draw_QRCode(ctx, qr_code, size=240, colour=(1,1,1)):
     for row in range( len(qr_code) ):
         y = (row * pixel_size) + offset
         for col in range( len(qr_code) ):
-            if qr_code[row][col] == True:
+            # check if the bit representing the col pixel is set
+            # LSBit is on the left
+            if qr_code[row] & (1 << col):
                 x = (col * pixel_size) + offset
                 ctx.rectangle(x, y, pixel_size+1, pixel_size).fill()  
 

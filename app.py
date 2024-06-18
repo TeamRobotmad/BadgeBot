@@ -32,8 +32,6 @@ from .utils import chain, draw_logo_animated
 CURRENT_APP_VERSION = 2648 # Integer Version Number - checked against the EEPROM app.py version to determine if it needs updating
 
 # If you change the URL then you will need to regenerate the QR code
-#TODO - convert into a much more efficient format - e.g. one word per row usign one bit per pixel
-#TODO remove the border from the "image"
 #_URL = "https://robotmad.odoo.com" # URL for QR code
 _QR_CODE = [[True, True, True, True, True, True, True, False, False, True, True, False, True, True, True, True, False, False, True, True, True, True, True, True, True], 
             [True, False, False, False, False, False, True, False, False, False, True, True, False, False, True, True, False, False, True, False, False, False, False, False, True], 
@@ -121,7 +119,7 @@ class BadgeBotApp(app.App):
             unique_id=0x0,
             friendly_name="HexDrive",
         )
-        # UI Featrue Controls
+        # UI Feature Controls
         self.rpm = 5                    # logo rotation speed in RPM
         self.animation_counter = 0
         # reinstate the code below to generate a new QR code
@@ -129,7 +127,18 @@ class BadgeBotApp(app.App):
         #qr.add_data(_URL)
         #self.qr_code = qr.get_matrix()
         #print(f"QR Code: {self.qr_code}")
-        self.qr_code = _QR_CODE
+        self.full_qr_code = _QR_CODE
+        # convert QR code made up of True/False into words of 1s and 0s
+        if 32 < len(self.full_qr_code):
+            print("QR code too big")
+        else:
+            for row in range(self.full_qr_code):
+                bitfield = 0x00000000
+                for col in range(self.full_qr_code):
+                    # LSBit is on the left
+                    bitfield = bitfield | (1 << col) if self.full_qr_code[row][col] else bitfield
+                print(f"0b{bitfield:032}")
+
         self.b_msg = "BadgeBot"
         self.t_msg = "RobotMad"
         self.is_scroll = False
