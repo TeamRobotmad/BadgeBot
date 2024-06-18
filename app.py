@@ -29,7 +29,7 @@ from .utils import chain, draw_logo_animated
 # Hard coded to talk to 16bit address EEPROM on address 0x50 - because we know that is what is on the HexDrive Hexpansion
 # makes it a lot more efficient than scanning the I2C bus for devices and working out what they are
 
-CURRENT_APP_VERSION = 2648 # Integer Version Number - checked against the EEPROM app.py version to determine if it needs updating
+CURRENT_APP_VERSION = 2647 # Integer Version Number - checked against the EEPROM app.py version to determine if it needs updating
 
 # If you change the URL then you will need to regenerate the QR code
 _QR_CODE = [0x1fcf67f, 
@@ -410,6 +410,15 @@ class BadgeBotApp(app.App):
         except Exception as e:
             print(f"H:Error writing header: {e}")
             return False
+        # Poll ACK
+        while True:
+            try:
+                if i2c.writeto(_EEPROM_ADDR, bytes([0]*_EEPROM_NUM_ADDRESS_BYTES)):  # Poll ACK
+                    break
+            except OSError:
+                pass
+            finally:
+                time.sleep_ms(1)
         try:
             i2c.writeto(_EEPROM_ADDR, bytes([0]*_EEPROM_NUM_ADDRESS_BYTES))  # Read header @ address 0                
             header_bytes = i2c.readfrom(_EEPROM_ADDR, 32)
@@ -489,6 +498,8 @@ class BadgeBotApp(app.App):
                 if self.current_state == STATE_WARNING:
                     self.animation_counter = 0
                     self.current_state = STATE_LOGO
+                elif self.hexdrive_port is not None:
+                    self.current_state = STATE_MENU
                 else:
                     self.current_state = STATE_WARNING    
             else:
@@ -625,10 +636,14 @@ class BadgeBotApp(app.App):
                             break
                     else:
                         print(f"H:HexDrive {valid_port}: App not found, please reboop")
+                        self.hexdrive_port = None
+                        self.hexdrive_app = None                        
                         self.error_message = [f"HexDrive {valid_port}","App not found.","Please","reboop"]
                         self.current_state = STATE_ERROR                           
                 elif self.hexdrive_seen:
                     self.hexdrive_seen = False
+                    self.hexdrive_port = None
+                    self.hexdrive_app = None                      
                     self.current_state = STATE_REMOVED
                 else:
                     self.animation_counter = 0                   
