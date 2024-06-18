@@ -193,7 +193,7 @@ class BadgeBotApp(app.App):
             delta_ticks = time.ticks_diff(cur_time, last_time)
             self.background_update(delta_ticks)
              # If we want to be kind we could make this variable depending on app state
-             # I.e on transition into run set this lower
+             # i.e. on transition into run set this lower
             await asyncio.sleep(0.01)
             last_time = cur_time
 
@@ -423,7 +423,7 @@ class BadgeBotApp(app.App):
     ### MAIN APP CONTROL FUNCTIONS ###
 
     def update(self, delta):
-        #self.clear_leds()
+        self.clear_leds()
         if self.notification:
             self.notification.update(delta)
 
@@ -461,16 +461,21 @@ class BadgeBotApp(app.App):
                     for i in range(1,13):
                         colour = (255, 241, 0)      # custom Robotmad shade of yellow                                
                         # raised cosine cubed wave
-                        wave = self._settings['brightness'] * pow((1.0 + cos(((i-1) *  pi / 1.5) - (self.rpm * self.animation_counter * pi / 7.5)))/2.0, 3)    
+                        wave = self._settings['brightness'] * pow((1.0 + cos(((i) *  pi / 1.5) - (self.rpm * self.animation_counter * pi / 7.5)))/2.0, 3)    
                         # 4 sides each projecting a pattern of 3 LEDs (12 LEDs in total)
                         tildagonos.leds[i] = tuple(int(wave * j) for j in colour)                                                     
-                    tildagonos.leds.write()
+                else: # STATE_WARNING
+                    for i in range(1,13):
+                        tildagonos.leds[i] = (255,0,0)                       
         elif self.current_state == STATE_ERROR or self.current_state == STATE_REMOVED: 
             if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
                 # Logo/Error has been acknowledged by the user
                 self.button_states.clear()
                 self.current_state = STATE_WAIT
                 self.error_message = []
+            else:
+                for i in range(1,13):
+                    tildagonos.leds[i] = (255,0,0)                   
         if self.current_state in MINIMISE_VALID_STATES:
             if self.current_state == STATE_DETECTED:
                 # We are currently asking the user if they want hexpansion EEPROM initialising
@@ -587,13 +592,13 @@ class BadgeBotApp(app.App):
                     self.current_state = STATE_WARNING
 ### END OF UI FOR HEXPANSION INITIALISATION AND UPGRADE ###
 
-
         if self.button_states.get(BUTTON_TYPES["CANCEL"]) and self.current_state in MINIMISE_VALID_STATES and self.current_state != STATE_DONE:
             self.button_states.clear()
             self.minimise()
         elif self.current_state == STATE_MENU:
             # Exit start menu
             if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
+                self.is_scroll = True   # so that release of this button will CLEAR Scroll mode
                 self.current_state = STATE_RECEIVE_INSTR
                 self.button_states.clear()
             # Show the instructions screen for 10 seconds
@@ -634,35 +639,30 @@ class BadgeBotApp(app.App):
                     self.button_states.clear()
             # LED management
             if self.last_press == BUTTON_TYPES["RIGHT"]:
-                tildagonos.leds[2] = (255, 0, 0)
-                tildagonos.leds[3] = (255, 0, 0)
+                # Green = Starboard = Right
+                tildagonos.leds[2]  = (0, 255, 0)
+                tildagonos.leds[3]  = (0, 255, 0)
             elif self.last_press == BUTTON_TYPES["LEFT"]:
-                tildagonos.leds[8] = (0, 255, 0)
-                tildagonos.leds[9] = (0, 255, 0)
+                # Red = Port = Left
+                tildagonos.leds[8]  = (255, 0, 0)
+                tildagonos.leds[9]  = (255, 0, 0)
             elif self.last_press == BUTTON_TYPES["UP"]:
-                tildagonos.leds[12] = (0, 0, 255)
-                tildagonos.leds[1] = (0, 0, 255)
+                # Cyan
+                tildagonos.leds[12] = (0, 255, 255)
+                tildagonos.leds[1]  = (0, 255, 255)
             elif self.last_press == BUTTON_TYPES["DOWN"]:
-                tildagonos.leds[6] = (255, 255, 0)
-                tildagonos.leds[7] = (255, 255, 0)
-            if self._settings['brightness'] < 1.0:
-                # Scale brightness
-                for i in range(1,13):
-                    tildagonos.leds[i] = tuple(int(j * self._settings['brightness']) for j in tildagonos.leds[i])                            
-                tildagonos.leds.write()                         
-            tildagonos.leds.write()
-
+                # Magenta
+                tildagonos.leds[6]  = (255, 0, 255)
+                tildagonos.leds[7]  = (255, 0, 255)
         elif self.current_state == STATE_COUNTDOWN:
             self.run_countdown_elapsed_ms += delta
             if self.run_countdown_elapsed_ms >= _RUN_COUNTDOWN_MS:
                 self.power_plan_iter = chain(*(instr.power_plan for instr in self.instructions))
                 self.hexdrive_app.set_power(True)
                 self.current_state = STATE_RUN
-
         elif self.current_state == STATE_RUN:
             # Run is primarily managed in the background update
             pass
-                
         elif self.current_state == STATE_DONE:
             if self.button_states.get(BUTTON_TYPES["CANCEL"]):
                 self.hexdrive_app.set_power(False)
@@ -674,6 +674,12 @@ class BadgeBotApp(app.App):
                 self.current_power_duration = ((0,0,0,0), 0)
                 self.current_state = STATE_COUNTDOWN                       
                 self.button_states.clear()
+        if self._settings['brightness'] < 1.0:
+            # Scale brightness
+            for i in range(1,13):
+                tildagonos.leds[i] = tuple(int(j * self._settings['brightness']) for j in tildagonos.leds[i])                            
+        tildagonos.leds.write()
+
 
     def draw(self, ctx):
         ctx.save()
@@ -723,7 +729,6 @@ class BadgeBotApp(app.App):
     def clear_leds(self):
         for i in range(1,13):
             tildagonos.leds[i] = (0, 0, 0)
-            tildagonos.leds.write()
 
 
     def draw_message(self, ctx, message, colours, size):
@@ -738,7 +743,10 @@ class BadgeBotApp(app.App):
                 colour = None
             if colour is None:
                 colour = (1,1,1)
-            ctx.rgb(*colour).move_to(-width//2, ctx.font_size*(i_num-((num_lines-2)/2))).text(text_line)
+            # Font is not central in the height allocated to it due to space for descenders etc...
+            # this is most obvious when there is only one line of text        
+            y_position = int(0.35 * ctx.font_size) if num_lines == 1 else int((i_num-((num_lines-2)/2)) * ctx.font_size)
+            ctx.rgb(*colour).move_to(-width//2, y_position).text(text_line)
 
 
 ### BADGEBOT DEMO FUNCTIONALITY ###
