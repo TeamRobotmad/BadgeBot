@@ -23,12 +23,14 @@ from math import pi, cos
 import app
 
 from .utils import chain, draw_logo_animated
+from .uQR import QRCode
 
 # Hard coded to talk to 16bit address EEPROM on address 0x50 - because we know that is what is on the HexDrive Hexpansion
 # makes it a lot more efficient than scanning the I2C bus for devices and working out what they are
 
 CURRENT_APP_VERSION = 2648 # Integer Version Number - checked against the EEPROM app.py version to determine if it needs updating
 
+_URL = "https://robotmad.odoo.com" # URL for QR code
 
 # Screen positioning for movement sequence text
 VERTICAL_OFFSET = label_font_size
@@ -94,6 +96,9 @@ class BadgeBotApp(app.App):
         # UI Featrue Controls
         self.rpm = 5                    # logo rotation speed in RPM
         self.animation_counter = 0
+        qr = QRCode(error_correction=1, box_size=10, border=4)
+        qr.add_data(_URL)
+        self.qr_code = qr.get_matrix()
         self.b_msg = "BadgeBot"
         self.t_msg = "RobotMad"
         self.is_scroll = False
@@ -447,7 +452,7 @@ class BadgeBotApp(app.App):
                     for i in range(1,13):
                         colour = (255, 241, 0)      # custom Robotmad shade of yellow                                
                         # raised cosine cubed wave
-                        wave = self._settings['brightness'] * pow((1.0 + cos(((i-1) * 2.0 * pi / 3.0) - (self.animation_counter * 2.0 * pi / 15.0)))/2.0, 3)    
+                        wave = self._settings['brightness'] * pow((1.0 + cos(((i-1) *  pi / 1.5) - (self.rpm * self.animation_counter * pi / 7.5)))/2.0, 3)    
                         # 4 sides each projecting a pattern of 3 LEDs (12 LEDs in total)
                         tildagonos.leds[i] = tuple(int(wave * j) for j in colour)                                                     
                     tildagonos.leds.write()
@@ -676,7 +681,7 @@ class BadgeBotApp(app.App):
         ctx.save()
         ctx.font_size = label_font_size
         if self.current_state == STATE_LOGO:
-            draw_logo_animated(ctx, self.rpm, self.animation_counter, [self.b_msg, self.t_msg])
+            draw_logo_animated(ctx, self.rpm, self.animation_counter, [self.b_msg, self.t_msg], self.qr_code)
         # Scroll mode indicator
         elif self.is_scroll:
             ctx.rgb(0,0.2,0).rectangle(-120,-120,240,240).fill()
