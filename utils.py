@@ -37,8 +37,8 @@ def draw_logo_animated(ctx, animation_counter=0, messages=None):
     pin_width = rs[0][0] // 6
     ctx.rgba(0, 0, 0, 1)
     for j in range(5):
-        ctx.rectangle(-rs[0][0]-pin_width, (2-j)*2*pin_width, 2*(rs[0][0]+pin_width), pin_width).fill()
-        ctx.rectangle((2-j)*2*pin_width, -rs[0][0]-pin_width, pin_width, 2*(rs[0][0]+pin_width)).fill()
+        ctx.rectangle(-rs[0][0]-pin_width, (1.75-j)*2*pin_width, 2*(rs[0][0]+pin_width), pin_width).fill()
+        ctx.rectangle((1.75-j)*2*pin_width, -rs[0][0]-pin_width, pin_width, 2*(rs[0][0]+pin_width)).fill()
     # Chip Body    
     for r,c in rs:
         ctx.rgba(*colours[c], 1)
