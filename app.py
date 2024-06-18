@@ -200,7 +200,8 @@ class BadgeBotApp(app.App):
     async def handle_button_up(self, event: ButtonUpEvent):
         if self.current_state == STATE_RECEIVE_INSTR and event.button == BUTTONS["C"]:
             self.is_scroll = not self.is_scroll
-            self.notification = Notification(f"Scroll {"yes" if self.is_scroll else "no"}")
+            state = "yes" if self.is_scroll else "no"
+            self.notification = Notification(f"Scroll {state}")
 
 
     ### NON-ASYNC FUCNTIONS ###
