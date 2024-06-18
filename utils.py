@@ -1,6 +1,8 @@
 #util.py
 from math import pi
+
 from display import hexagon
+
 
 def roundtext(ctx, t, r, top=False):
     ctx.save()

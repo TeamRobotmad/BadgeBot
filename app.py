@@ -1,6 +1,7 @@
 import asyncio
 import os
 import time
+from math import cos, pi
 
 import settings
 import vfs
@@ -20,11 +21,10 @@ from system.scheduler import scheduler
 from system.scheduler.events import (RequestForegroundPopEvent,
                                      RequestForegroundPushEvent)
 from tildagonos import tildagonos
-from math import pi, cos
+
 import app
 
 from .utils import chain, draw_logo_animated
-#from .uQR import QRCode
 
 # Hard coded to talk to 16bit address EEPROM on address 0x50 - because we know that is what is on the HexDrive Hexpansion
 # makes it a lot more efficient than scanning the I2C bus for devices and working out what they are
@@ -32,7 +32,6 @@ from .utils import chain, draw_logo_animated
 CURRENT_APP_VERSION = 2648 # Integer Version Number - checked against the EEPROM app.py version to determine if it needs updating
 
 # If you change the URL then you will need to regenerate the QR code
-#_URL = "https://robotmad.odoo.com" # URL for QR code
 _QR_CODE = [0x1fcf67f, 
             0x104cc41, 
             0x174975d, 
@@ -114,24 +113,6 @@ class BadgeBotApp(app.App):
         self.rpm = 5                    # logo rotation speed in RPM
         self.animation_counter = 0
 
-        # reinstate the code below to generate a new QR code
-        if False:
-            qr = QRCode(error_correction=1, box_size=10, border=0)
-            qr.add_data(_URL)
-            self.qr_code = qr.get_matrix()
-            # convert QR code made up of True/False into words of 1s and 0s
-            if 32 < len(self.qr_code):
-                print("QR code too big")
-            else:
-                qr_code_size = len(self.qr_code)
-                print(f"_QR_CODE = [")
-                for row in range(qr_code_size):
-                    bitfield = 0x00000000
-                    for col in range(qr_code_size):
-                        # LSBit is on the left
-                        bitfield = bitfield | (1 << col) if self.qr_code[row][col] else bitfield
-                    print(f"0x{bitfield:08x},")
-                print(f"]")
         self.qr_code = _QR_CODE
         self.b_msg = "BadgeBot"
         self.t_msg = "RobotMad"
@@ -211,7 +192,6 @@ class BadgeBotApp(app.App):
         if event.app is self:
             self.we_have_focus = True
             eventbus.emit(PatternDisable())
-            #self.clear_leds()
 
     async def lose_focus(self, event: RequestForegroundPopEvent):
         if event.app is self:
@@ -246,6 +226,25 @@ class BadgeBotApp(app.App):
                 self.current_state = STATE_DONE
             else:
                 self.hexdrive_app.set_pwm(power)
+
+    def generate_new_qr(self):
+        from .uQR import QRCode
+        qr = QRCode(error_correction=1, box_size=10, border=0)
+        qr.add_data("https://robotmad.odoo.com")
+        self.qr_code = qr.get_matrix()
+        # convert QR code made up of True/False into words of 1s and 0s
+        if 32 < len(self.qr_code):
+            print("QR code too big")
+        else:
+            qr_code_size = len(self.qr_code)
+            print(f"_QR_CODE = [")
+            for row in range(qr_code_size):
+                bitfield = 0x00000000
+                for col in range(qr_code_size):
+                    # LSBit is on the left
+                    bitfield = bitfield | (1 << col) if self.qr_code[row][col] else bitfield
+                print(f"0x{bitfield:08x},")
+            print(f"]")
 
 
     ### HEXPANSION FUNCTIONS ###
