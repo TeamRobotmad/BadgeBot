@@ -498,7 +498,7 @@ class BadgeBotApp(app.App):
                 if self.current_state == STATE_WARNING:
                     self.animation_counter = 0
                     self.current_state = STATE_LOGO
-                else if self.hexdrive_port is not None:
+                elif self.hexdrive_port is not None:
                     self.current_state = STATE_MENU
                 else:
                     self.current_state = STATE_WARNING    
