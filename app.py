@@ -33,31 +33,31 @@ CURRENT_APP_VERSION = 2648 # Integer Version Number - checked against the EEPROM
 
 # If you change the URL then you will need to regenerate the QR code
 #_URL = "https://robotmad.odoo.com" # URL for QR code
-_QR_CODE = [[True, True, True, True, True, True, True, False, False, True, True, False, True, True, True, True, False, False, True, True, True, True, True, True, True], 
-            [True, False, False, False, False, False, True, False, False, False, True, True, False, False, True, True, False, False, True, False, False, False, False, False, True], 
-            [True, False, True, True, True, False, True, False, True, True, True, False, True, False, False, True, False, False, True, False, True, True, True, False, True], 
-            [True, False, True, True, True, False, True, False, False, True, True, True, False, False, True, False, False, False, True, False, True, True, True, False, True], 
-            [True, False, True, True, True, False, True, False, False, False, True, False, True, False, True, True, True, False, True, False, True, True, True, False, True], 
-            [True, False, False, False, False, False, True, False, False, True, False, True, False, True, True, True, False, False, True, False, False, False, False, False, True], 
-            [True, True, True, True, True, True, True, False, True, False, True, False, True, False, True, False, True, False, True, True, True, True, True, True, True], 
-            [False, False, False, False, False, False, False, False, True, True, True, True, False, True, False, True, True, False, False, False, False, False, False, False, False], 
-            [True, True, True, False, True, True, True, True, True, False, True, False, True, True, False, False, True, True, True, False, False, False, True, False, False], 
-            [True, True, True, False, True, False, False, True, False, False, True, True, False, False, False, False, True, True, True, False, False, False, False, False, True], 
-            [True, False, False, True, False, True, True, True, False, True, False, True, True, True, False, False, False, True, False, False, False, False, True, True, True], 
-            [True, False, True, True, True, True, False, True, True, False, False, True, False, True, True, True, False, False, True, True, False, False, False, True, False], 
-            [False, False, False, False, False, True, True, False, True, False, False, False, True, True, False, False, True, True, True, True, False, True, False, True, True], 
-            [False, False, False, False, False, False, False, True, False, True, False, True, False, False, False, False, True, True, True, False, False, True, False, False, True], 
-            [True, False, False, True, False, False, True, False, True, False, True, False, True, True, False, False, False, False, True, True, False, False, True, True, True], 
-            [False, True, True, False, True, True, False, False, True, True, True, True, False, True, True, True, True, True, True, False, True, False, False, True, False], 
-            [True, False, False, True, False, True, True, True, True, False, True, False, True, True, True, True, True, True, True, True, True, True, False, False, False], 
-            [False, False, False, False, False, False, False, False, True, True, False, False, False, False, False, True, True, False, False, False, True, True, False, True, True], 
-            [True, True, True, True, True, True, True, False, True, True, False, False, False, True, False, True, True, False, True, False, True, True, False, True, True], 
-            [True, False, False, False, False, False, True, False, True, True, False, True, True, True, False, False, True, False, False, False, True, True, False, False, False], 
-            [True, False, True, True, True, False, True, False, True, False, True, True, True, True, False, False, True, True, True, True, True, True, False, False, False], 
-            [True, False, True, True, True, False, True, False, False, True, True, False, True, True, False, True, False, False, False, True, True, True, True, False, False], 
-            [True, False, True, True, True, False, True, False, True, True, False, False, False, True, True, True, True, False, False, False, True, False, False, False, True], 
-            [True, False, False, False, False, False, True, False, True, False, False, False, True, True, True, False, True, False, True, False, True, True, False, True, False], 
-            [True, True, True, True, True, True, True, False, True, False, True, True, True, True, False, True, True, True, False, True, False, False, False, True, True]]
+_QR_CODE = [0x1fcf67f, 
+            0x104cc41, 
+            0x174975d, 
+            0x1744e5d, 
+            0x175d45d, 
+            0x104ea41, 
+            0x1fd557f, 
+            0x001af00, 
+            0x04735f7, 
+            0x1070c97, 
+            0x1c23ae9, 
+            0x08ce9bd, 
+            0x1af3160, 
+            0x1270a80,
+            0x1cc3549,
+            0x097ef36,
+            0x03ff5e9,
+            0x1b18300,
+            0x1b5a37f,
+            0x0313b41,
+            0x03f3d5d,
+            0x078b65d,
+            0x111e35d,
+            0x0b57141,
+            0x18bbd7f]
 
 # Screen positioning for movement sequence text
 VERTICAL_OFFSET = label_font_size
@@ -99,6 +99,7 @@ MINIMISE_VALID_STATES = [0, 1, 2, 5, 6, 7, 8, 10, 11, 12]
 _EEPROM_ADDR  = 0x50
 _EEPROM_NUM_ADDRESS_BYTES = 2
 _EEPROM_PAGE_SIZE = 32
+_EEPROM_TOTAL_SIZE = 64 * 1024 // 8
 _HEXDRIVE_VID = 0xCAFE
 _HEXDRIVE_PID = 0xCBCB
 
@@ -112,23 +113,26 @@ class BadgeBotApp(app.App):
         # UI Feature Controls
         self.rpm = 5                    # logo rotation speed in RPM
         self.animation_counter = 0
-        # reinstate the code below to generate a new QR code
-        #qr = QRCode(error_correction=1, box_size=10, border=0)
-        #qr.add_data(_URL)
-        #self.qr_code = qr.get_matrix()
-        #print(f"QR Code: {self.qr_code}")
-        self.full_qr_code = _QR_CODE
-        # convert QR code made up of True/False into words of 1s and 0s
-        if 32 < len(self.full_qr_code):
-            print("QR code too big")
-        else:
-            for row in range(self.full_qr_code):
-                bitfield = 0x00000000
-                for col in range(self.full_qr_code):
-                    # LSBit is on the left
-                    bitfield = bitfield | (1 << col) if self.full_qr_code[row][col] else bitfield
-                print(f"0b{bitfield:032}")
 
+        # reinstate the code below to generate a new QR code
+        if False:
+            qr = QRCode(error_correction=1, box_size=10, border=0)
+            qr.add_data(_URL)
+            self.qr_code = qr.get_matrix()
+            # convert QR code made up of True/False into words of 1s and 0s
+            if 32 < len(self.qr_code):
+                print("QR code too big")
+            else:
+                qr_code_size = len(self.qr_code)
+                print(f"_QR_CODE = [")
+                for row in range(qr_code_size):
+                    bitfield = 0x00000000
+                    for col in range(qr_code_size):
+                        # LSBit is on the left
+                        bitfield = bitfield | (1 << col) if self.qr_code[row][col] else bitfield
+                    print(f"0x{bitfield:08x},")
+                print(f"]")
+        self.qr_code = _QR_CODE
         self.b_msg = "BadgeBot"
         self.t_msg = "RobotMad"
         self.is_scroll = False
@@ -395,7 +399,7 @@ class BadgeBotApp(app.App):
             manifest_version="2024",
             fs_offset=32,
             eeprom_page_size=_EEPROM_PAGE_SIZE,
-            eeprom_total_size=64 * 1024 // 8,
+            eeprom_total_size=_EEPROM_TOTAL_SIZE,
             vid=_HEXDRIVE_VID,
             pid=_HEXDRIVE_PID,
             unique_id=0x0,
