@@ -32,7 +32,7 @@ def draw_logo_animated(ctx, rpm, animation_counter=0, messages=None, qr_code=Non
     ctx.rotate(rpm * animation_counter * pi / 30.0)
     # Chip
     rs = [(50, 0), (45, 2)] # , (40, 0)] # Outer, Inner, Solid (replaced by QR code)
-    # pins
+    # pins - one rectangle does pins on opposite sides in one go
     pin_width = rs[0][0] // 6
     ctx.rgba(0, 0, 0, 1)
     for j in range(5):
