@@ -11,7 +11,7 @@ from system.scheduler.events import RequestStopAppEvent
 import app
 
 # HexDrive.py App Version - used app.py to check if upgrade is required
-APP_VERSION = 4 
+APP_VERSION = 5 
 
 _ENABLE_PIN = 0	  # First LS pin used to enable the SMPSU
 _DETECT_PIN = 1   # Second LS pin used to sense if the SMPSU has a source of power
