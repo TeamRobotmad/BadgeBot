@@ -10,8 +10,8 @@ from system.scheduler.events import RequestStopAppEvent
 
 import app
 
-# HexDrive.py App Version - parsed by app.py to check if upgrade is required
-APP_VERSION = 2647 
+# HexDrive.py App Version - used to check if upgrade is required
+APP_VERSION = 3 
 
 _ENABLE_PIN = 0	  # First LS pin used to enable the SMPSU
 _DETECT_PIN = 1   # Second LS pin used to sense if the SMPSU has a source of power
@@ -41,7 +41,7 @@ class HexDriveApp(app.App):
         if self.config is None:
             return False        
         # report app starting and which port it is running on
-        print(f"HexDrive App on port {self.config.port}")
+        print(f"HexDrive V{APP_VERSION} on port {self.config.port}")
         # Set Power Detect Pin to Input and Power Enable Pin to Output
         self._set_pin_direction(self.power_detect.pin,  1)
         self._set_pin_direction(self.power_control.pin, 0)  
@@ -101,7 +101,9 @@ class HexDriveApp(app.App):
                     print(f"H:{self.config.port}:Keep Alive Timeout")            
             # we keep retriggering in case anything else has corrupted the PWM outputs
 
-
+    def get_version(self) -> int:
+        return APP_VERSION
+    
     # Get the current status of the HexDrive App
     def get_status(self) -> bool:
         return not self.pwm_setup_failed
