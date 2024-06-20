@@ -201,10 +201,10 @@ class HexDriveApp(app.App):
             # Ensure PWM frequency is suitable for use with Servos
             # otherwise the pulse width will not be accepted
             if self._logging:
-                print(f"H:{self.config.port}:PWM[{i}]:Force freq to {_DEFAULT_SERVO_FREQ}Hz for Servo")
+                print(f"H:{self.config.port}:PWM[{channel}]:Force freq to {_DEFAULT_SERVO_FREQ}Hz for Servo")
             self.PWMOutput[int(channel)].freq(_DEFAULT_SERVO_FREQ)
         # Scale servo position to PWM duty cycle (500-2500us)
-        pulse_width = int(self._servo_centre_ns + (position * 1000))
+        pulse_width = int(self._servo_centre_ns[channel] + (position * 1000))
         try:
             if pulse_width != self.PWMOutput[int(channel)].duty_ns():
                 self.PWMOutput[int(channel)].duty_ns(pulse_width)
@@ -217,6 +217,9 @@ class HexDriveApp(app.App):
         return True
 
     # Set the centre position for a specific servo output
+    # Note this does not change the current position of the servo
+    # it will only affect the position next time it is set
+    # you can use this to trim the centre position of the servo
     def set_servocentre(self, centre, channel=None) -> bool:
         if self.pwm_setup_failed:
             return False
