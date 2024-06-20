@@ -11,7 +11,7 @@ from system.scheduler.events import RequestStopAppEvent
 import app
 
 # HexDrive.py App Version - parsed by app.py to check if upgrade is required
-APP_VERSION = 2647 
+APP_VERSION = 3 
 
 _ENABLE_PIN = 0	  # First LS pin used to enable the SMPSU
 _DETECT_PIN = 1   # Second LS pin used to sense if the SMPSU has a source of power
@@ -152,26 +152,69 @@ class HexDriveApp(app.App):
                 return False
         return True
     
+    # set the pulse width for a specific servo output
+    # Based on standard RC servos with centre at 1500us and range of 1000-2000us
+    # The position is a signed value from -1000 to 1000
+    def set_servoposition(self, i, position) -> bool:
+        if self.pwm_setup_failed:
+            return False
+        if i < 0 or i >= len(self.PWMOutput):
+            return False
+        # Scale servo position to PWM duty cycle (500-2500us)
+        pulse_width = 1500000 + (position * 10)
+        try:
+            if pulse_width != self.PWMOutput[i].duty_ns():
+                self.PWMOutput[i].duty_ns(pulse_width)
+                if self._logging:
+                    print(f"H:{self.config.port}:PWM[{i}]:{pulse_width//1000}us")
+        except:
+            print(f"H:{self.config.port}:PWM[{i}]:{position} set failed")
+            return False
+        return True
 
-    # Set all 4 PWM duty cycles in one go (0-65535)
+        if self.set_pwmoutput(i, pwm):
+            self.time_since_last_update = 0
+            return True
+        return False 
+    
+    # Set all 4 PWM duty cycles in one go using a signed value per motor channel (0-65535)
+    def set_motors(self, outputs) -> bool:
+        if self.pwm_setup_failed:
+            return False
+        self.outputs_energised = any(outputs)
+        for i, output in enumerate(outputs):
+            pwmA =  output if output > 0 else 0
+            pwmB = -output if output < 0 else 0
+            if not self.set_pwmoutput(i<<1, pwmA) or not self.set_pwmoutput((i<<1)+1, pwmB):
+                return False
+        self.time_since_last_update = 0
+        return True
+
+    # Set all 4 PWM duty cycles in one go using a tuple (0-65535)
     def set_pwm(self, pwms) -> bool:
         if self.pwm_setup_failed:
             return False
-        self.time_since_last_update = 0
         self.outputs_energised = any(pwms)
         for i, pwm in enumerate(pwms):
-            #if pwm != self.PWMOutput[i].duty_u16():
-            # pwm duty cycle has changed so update it
-            try:
+            if not self.set_pwmoutput(i, pwm):
+                return False
+        self.time_since_last_update = 0
+        return True
+    
+    # Set a single PWM duty cycle (0-65535) for a specific output
+    def set_pwmoutput(self, i, pwm) -> bool:
+        if i < 0 or i >= len(self.PWMOutput):
+            return False
+        try:
+            if pwm != self.PWMOutput[i].duty_u16():
                 self.PWMOutput[i].duty_u16(pwm)
                 if self._logging:
                     print(f"H:{self.config.port}:PWM[{i}]:{pwm}")
-            except:
-                print(f"H:{self.config.port}:PWM[{i}]:{pwm} set failed")
-                return False
+        except:
+            print(f"H:{self.config.port}:PWM[{i}]:{pwm} set failed")
+            return False
         return True
     
-
     def _set_pin_state(self, pin, state):
         try:
             i2c = I2C(7)
