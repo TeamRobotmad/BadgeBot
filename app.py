@@ -29,7 +29,7 @@ from .utils import chain, draw_logo_animated
 # Hard coded to talk to EEPROMs on address 0x50 - because we know that is what is on the HexDrive Hexpansion
 # makes it a lot more efficient than scanning the I2C bus for devices and working out what they are
 
-CURRENT_APP_VERSION = 3 # Integer Version Number - checked against the EEPROM app.py version to determine if it needs updating
+CURRENT_APP_VERSION = 4 # Integer Version Number - checked against the EEPROM app.py version to determine if it needs updating
 
 # If you change the URL then you will need to regenerate the QR code
 _QR_CODE = [0x1fcf67f, 
@@ -332,10 +332,11 @@ class BadgeBotApp(app.App):
         try:
             # delete the existing app.mpy file
             print(f"H:Deleting {dest_path}")
-            os.remove(f"{mountpoint}/app.py")
             os.remove(dest_path)
-        except Exception:
-            # ignore errors which will happen if the file does not exist
+        except Exception as e:
+            if e.args[0] != 2:
+                # ignore errors which will happen if the file does not exist
+                print(f"H:Error deleting {dest_path}: {e}")
             pass
         print(f"H:Copying {source_path} to {dest_path}")
         try:
@@ -453,6 +454,7 @@ class BadgeBotApp(app.App):
             return False
         return True
 
+
     def read_hexpansion_header(self, i2c=None, port=None) -> HexpansionHeader:                
         try:
             if i2c is None:
@@ -464,14 +466,14 @@ class BadgeBotApp(app.App):
             return HexpansionHeader.from_bytes(header_bytes)
         except OSError:     
             return None   
-        
+
+
     def find_hexdrive_app(self, port) -> app:                    
         for an_app in scheduler.apps:
-            if hasattr(an_app, "config"):
-                print(f"H:Checking app {an_app} with config {an_app.config}")
-            if hasattr(an_app, "config") and an_app.config.port == port:
+            if hasattr(an_app, "config") and hasattr(an_app.config, "port") and  an_app.config.port == port:
                 return an_app
         return None
+
 
     def update_settings(self):
         for setting in self._default_settings:
