@@ -11,7 +11,7 @@ from system.scheduler.events import RequestStopAppEvent
 import app
 
 # HexDrive.py App Version - used app.py to check if upgrade is required
-APP_VERSION = 5 
+APP_VERSION = 4 
 
 _ENABLE_PIN = 0	  # First LS pin used to enable the SMPSU
 _DETECT_PIN = 1   # Second LS pin used to sense if the SMPSU has a source of power
@@ -47,7 +47,7 @@ class HexDriveApp(app.App):
         if self.config is None:
             return False        
         # report app starting and which port it is running on
-        print(f"HexDrive V{APP_VERSION} on port {self.config.port}")
+        print(f"HexDrive V{APP_VERSION} by RobotMad on port {self.config.port}")
         # Set Power Detect Pin to Input and Power Enable Pin to Output
         self._set_pin_direction(self.power_detect.pin,  1)  # input
         self._set_pin_direction(self.power_control.pin, 0)  # output
@@ -85,7 +85,7 @@ class HexDriveApp(app.App):
     async def _handle_stop_app(self, event):
         if event.app == self:
             if self._logging:
-                print(f"H:{self.config.port}:Stopping HexDrive App & Release PWM resources")
+                print(f"H:{self.config.port}:Stopping HexDrive App & Releasing PWM resources")
             self.deinitialise()
 
 
