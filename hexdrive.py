@@ -10,8 +10,9 @@ from system.scheduler.events import RequestStopAppEvent
 
 import app
 
-# HexDrive.py App Version - used app.py to check if upgrade is required
-APP_VERSION = 4 
+# HexDrive.py App Version - used to check if upgrade is required
+APP_VERSION = 3 
+
 
 _ENABLE_PIN = 0	  # First LS pin used to enable the SMPSU
 _DETECT_PIN = 1   # Second LS pin used to sense if the SMPSU has a source of power
@@ -112,7 +113,6 @@ class HexDriveApp(app.App):
     def get_version(self) -> int:
         return APP_VERSION
     
-
     # Get the current status of the HexDrive App
     def get_status(self) -> bool:
         return not self.pwm_setup_failed
