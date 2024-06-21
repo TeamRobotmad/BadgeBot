@@ -20,7 +20,6 @@ def roundtext(ctx, t, r, top=False):
     ctx.restore()
 
 def draw_logo_animated(ctx, rpm, animation_counter=0, messages=None, qr_code=None):
-    legw = .12
     # 0:black, 1:white, 2:yellow
     colours = [(0, 0, 0), (1, 1, 1), (1.0, 0.84, 0)]
 
@@ -61,8 +60,7 @@ def draw_logo_animated(ctx, rpm, animation_counter=0, messages=None, qr_code=Non
 # QR code data
 def draw_QRCode(ctx, qr_code, size=240, colour=(1,1,1)):
     qr_size = len( qr_code )
-    print(f"Drawing QR code of size {qr_size}x{qr_size}")
-
+    
     #   Draw background - assume already drawn
     #ctx.rgb(*colour).rectangle(-size/2, -size/2, size, size).fill()
 

@@ -59,7 +59,6 @@ _QR_CODE = [0x1fcf67f,
             0x18bbd7f]
 
 # Screen positioning for movement sequence text
-VERTICAL_OFFSET = label_font_size
 H_START = -78
 V_START = -58
 _BRIGHTNESS = 1.0
@@ -238,11 +237,11 @@ class BadgeBotApp(app.App):
 
     def background_update(self, delta):
         if self.current_state == STATE_RUN:
-            power = self.get_current_power_level(delta)
-            if power is None:
+            output = self.get_current_power_level(delta)
+            if output is None:
                 self.current_state = STATE_DONE
             else:
-                self.hexdrive_app.set_pwm(power)
+                self.hexdrive_app.set_motors(output)
 
     def generate_new_qr(self):
         from .uQR import QRCode
@@ -332,10 +331,11 @@ class BadgeBotApp(app.App):
         try:
             # delete the existing app.mpy file
             print(f"H:Deleting {dest_path}")
-            os.remove(f"{mountpoint}/app.py")
             os.remove(dest_path)
-        except Exception:
-            # ignore errors which will happen if the file does not exist
+        except Exception as e:
+            if e.args[0] != 2:
+                # ignore errors which will happen if the file does not exist
+                print(f"H:Error deleting {dest_path}: {e}")
             pass
         print(f"H:Copying {source_path} to {dest_path}")
         try:
@@ -453,6 +453,7 @@ class BadgeBotApp(app.App):
             return False
         return True
 
+
     def read_hexpansion_header(self, i2c=None, port=None) -> HexpansionHeader:                
         try:
             if i2c is None:
@@ -464,14 +465,14 @@ class BadgeBotApp(app.App):
             return HexpansionHeader.from_bytes(header_bytes)
         except OSError:     
             return None   
-        
+
+
     def find_hexdrive_app(self, port) -> app:                    
         for an_app in scheduler.apps:
-            if hasattr(an_app, "config"):
-                print(f"H:Checking app {an_app} with config {an_app.config}")
-            if hasattr(an_app, "config") and an_app.config.port == port:
+            if hasattr(an_app, "config") and hasattr(an_app.config, "port") and  an_app.config.port == port:
                 return an_app
         return None
+
 
     def update_settings(self):
         for setting in self._default_settings:
@@ -674,6 +675,16 @@ class BadgeBotApp(app.App):
                             print(f"H:Found app on port {valid_port}")
                             if self.hexdrive_app.get_status():
                                 print(f"H:HexDrive [{valid_port}] OK")
+                                ##########################
+                                # TEST CODE HERE
+                                #self.hexdrive_app.set_freq(5000)
+                                #self.hexdrive_app.set_power(True)
+                                #self.hexdrive_app.set_keep_alive(10000)
+                                #self.hexdrive_app.set_servoposition(0,0)
+                                #self.hexdrive_app.set_servoposition(1,0)
+                                #self.hexdrive_app.set_servocentre(1600)
+                                #self.hexdrive_app.set_servoposition(1,50)
+                                ##########################
                                 self.current_state = STATE_MENU
                                 self.animation_counter = 0
                             else:
@@ -817,7 +828,22 @@ class BadgeBotApp(app.App):
         elif self.current_state == STATE_RECEIVE_INSTR:
             # Display list of movements
             for i_num, instr in enumerate(["START"] + self.instructions + [self.current_instruction, "END"]):
-                ctx.rgb(1,1,0).move_to(H_START, V_START + VERTICAL_OFFSET * (self.scroll_offset + i_num)).text(str(instr))
+                # map the instruction to a colour & change language from up/down to fwd/rev
+                colour = (1,1,1)
+                if instr is not None:
+                    direction = str(instr).split()[0]
+                    print(direction)
+                    if   direction == "UP":
+                        instr = "FWD " + str(instr).split()[1]
+                        colour = (0,1,1)
+                    elif direction == "DOWN":
+                        instr = "REV " + str(instr).split()[1]
+                        colour = (1,0,1)
+                    elif direction == "LEFT":
+                        colour = (1,0,0)
+                    elif direction == "RIGHT":
+                        colour = (0,1,0)            
+                ctx.rgb(*colour).move_to(H_START, V_START + label_font_size * (self.scroll_offset + i_num)).text(str(instr))
         elif self.current_state == STATE_COUNTDOWN:
             countdown_val = 1 + ((_RUN_COUNTDOWN_MS - self.run_countdown_elapsed_ms) // 1000)
             self.draw_message(ctx, [str(countdown_val)], [(1,1,0)], twentyfour_pt)
@@ -939,24 +965,20 @@ class Instruction:
 
 
     def directional_power_tuple(self, power):
-        if self._press_type == BUTTON_TYPES["UP"]:
-            return (0, power, 0, power)
+        if   self._press_type == BUTTON_TYPES["UP"]:
+            return ( power,  power)
         elif self._press_type == BUTTON_TYPES["DOWN"]:
-            return (power, 0, power, 0)
+            return (-power, -power)
         elif self._press_type == BUTTON_TYPES["LEFT"]:
-            return (power, 0, 0, power)
+            return (-power,  power)
         elif self._press_type == BUTTON_TYPES["RIGHT"]:
-            return (0, power, power, 0)
+            return ( power, -power)
 
 
     def directional_duration(self, mysettings):
-        if self._press_type == BUTTON_TYPES["UP"]:
-            return (mysettings['drive_step_ms'])
-        elif self._press_type == BUTTON_TYPES["DOWN"]:
+        if   self._press_type == BUTTON_TYPES["UP"] or self._press_type == BUTTON_TYPES["DOWN"]:
             return (mysettings['drive_step_ms'])            
-        elif self._press_type == BUTTON_TYPES["LEFT"]:
-            return (mysettings['turn_step_ms'])
-        elif self._press_type == BUTTON_TYPES["RIGHT"]:
+        elif self._press_type == BUTTON_TYPES["LEFT"] or self._press_type == BUTTON_TYPES["RIGHT"]:
             return (mysettings['turn_step_ms'])
         
 
