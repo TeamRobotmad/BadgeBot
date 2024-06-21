@@ -29,7 +29,7 @@ from .utils import chain, draw_logo_animated
 # Hard coded to talk to EEPROMs on address 0x50 - because we know that is what is on the HexDrive Hexpansion
 # makes it a lot more efficient than scanning the I2C bus for devices and working out what they are
 
-CURRENT_APP_VERSION = 5 # Integer Version Number - checked against the EEPROM app.py version to determine if it needs updating
+CURRENT_APP_VERSION = 4 # Integer Version Number - checked against the EEPROM app.py version to determine if it needs updating
 
 # If you change the URL then you will need to regenerate the QR code
 _QR_CODE = [0x1fcf67f, 
@@ -675,6 +675,16 @@ class BadgeBotApp(app.App):
                             print(f"H:Found app on port {valid_port}")
                             if self.hexdrive_app.get_status():
                                 print(f"H:HexDrive [{valid_port}] OK")
+                                ##########################
+                                # TEST CODE HERE
+                                #self.hexdrive_app.set_freq(5000)
+                                #self.hexdrive_app.set_power(True)
+                                #self.hexdrive_app.set_keep_alive(10000)
+                                #self.hexdrive_app.set_servoposition(0,0)
+                                #self.hexdrive_app.set_servoposition(1,0)
+                                #self.hexdrive_app.set_servocentre(1600)
+                                #self.hexdrive_app.set_servoposition(1,50)
+                                ##########################
                                 self.current_state = STATE_MENU
                                 self.animation_counter = 0
                             else:
