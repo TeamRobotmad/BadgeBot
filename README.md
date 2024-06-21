@@ -26,7 +26,7 @@ This repo contains lots of files that you don't need on your badge to use a HexD
 + utils.py
 
 
-### Usage guide
+### Construction guide & useful documents
 
 https://github.com/TeamRobotmad/BadgeBotParts/tree/main/Docs
 
@@ -42,6 +42,9 @@ The HexDrive incorporates a Switch Mode Power Supply which boosts the 3.3V provi
 ```set_power(True)```
 
 ### Drive
+Call ```set_motors()``` to control the two motors, providing a signed integer from -65555 to +65535 for each in a list.
+
+Alternatively:
 Call ```set_pwm()``` to set the duty cycle of the 4 PWM channels which control the motors. This function takes a tuple of 4 integers, each from 0 to 65535. e.g.
 ```set_pwm((0,1000,1000,0))```
 note the extra set of brackets as the function argument is a single tupple of 4 values rather than being 4 individual values.
@@ -51,6 +54,10 @@ To protect against most badge/software crashes causing the motors to run out of 
 
 You can adjust the PWM frequency, default 20000Hz by calling the ```set_freq()``` function.
 
+### Servos
+You can control 1,2,3 or 4 RC hobby servos (centre pulse width 1500us).  The first time you set a pulse width for a channel using ```set_servo()``` the PWM frequency for that channel will be set to 50Hz.
+Channels 0 & 1 take up signals that would otherwise control Motor 1 and Channels 2 & 3 take up the channels that are used for Motor 2.
+You can use one motor and 1 or 2 servos simultaneously.
 
 ### Developers setup
 ```
