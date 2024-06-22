@@ -11,7 +11,7 @@ from system.scheduler.events import RequestStopAppEvent
 import app
 
 # HexDrive.py App Version - used to check if upgrade is required
-APP_VERSION = 3 
+APP_VERSION = 4 
 
 
 _ENABLE_PIN = 0	  # First LS pin used to enable the SMPSU
@@ -190,29 +190,51 @@ class HexDriveApp(app.App):
     # The position is a signed value from -1000 to 1000 which is scaled to 500-2500us
     # This is a very wide range and may not be suitable for all servos, some will 
     # only be happy with 1000-2000us (i.e. position in the range -500 to 500)
-    def set_servoposition(self, channel=0, position=0) -> bool:
+    def set_servoposition(self, channel=None, position=None) -> bool:
         if self.pwm_setup_failed:
             return False
-        if channel < 0 or channel >= 4:
-            return False
-        if abs(position) > 1000:
-            return False
-        if _MAX_SERVO_FREQ < self.PWMOutput[int(channel)].freq():
-            # Ensure PWM frequency is suitable for use with Servos
-            # otherwise the pulse width will not be accepted
-            if self._logging:
-                print(f"H:{self.config.port}:PWM[{channel}]:Force freq to {_DEFAULT_SERVO_FREQ}Hz for Servo")
-            self.PWMOutput[int(channel)].freq(_DEFAULT_SERVO_FREQ)
-        # Scale servo position to PWM duty cycle (500-2500us)
-        pulse_width = int(self._servo_centre_ns[channel] + (position * 1000))
-        try:
-            if pulse_width != self.PWMOutput[int(channel)].duty_ns():
-                self.PWMOutput[int(channel)].duty_ns(pulse_width)
+        if position is None:
+            # position == None -> Turn off PWM (some servos will then turn off, others will stay in last position)
+            if channel is None:
+                # channel == None -> Turn off all PWM outputs
+                for channel in self.PWMOutput:
+                    try:
+                        channel.duty_ns(0)
+                    except:
+                        pass
                 if self._logging:
-                    print(f"H:{self.config.port}:PWM[{int(channel)}]:{pulse_width//1000}us")
-        except:
-            print(f"H:{self.config.port}:PWM[{int(channel)}]:{position} set failed")
-            return False
+                    print(f"H:{self.config.port}:PWM:All Off")
+                return True
+            elif channel < 0 or channel >= 4:
+                return False
+            try:
+                self.PWMOutput[int(channel)].duty_ns(0)
+                if self._logging:
+                    print(f"H:{self.config.port}:PWM[{int(channel)}]:Off")
+            except:
+                print(f"H:{self.config.port}:PWM[{int(channel)}]:Off failed")
+                return False            
+        else:           
+            if channel < 0 or channel >= 4:
+                return False            
+            if abs(position) > 1000:
+                return False             
+            if _MAX_SERVO_FREQ < self.PWMOutput[int(channel)].freq():
+                # Ensure PWM frequency is suitable for use with Servos
+                # otherwise the pulse width will not be accepted
+                if self._logging:
+                    print(f"H:{self.config.port}:PWM[{channel}]:Force freq to {_DEFAULT_SERVO_FREQ}Hz for Servo")
+                self.PWMOutput[int(channel)].freq(_DEFAULT_SERVO_FREQ)
+            # Scale servo position to PWM duty cycle (500-2500us)
+            pulse_width = int(self._servo_centre_ns[channel] + (position * 1000))
+            try:
+                if pulse_width != self.PWMOutput[int(channel)].duty_ns():
+                    self.PWMOutput[int(channel)].duty_ns(pulse_width)
+                    if self._logging:
+                        print(f"H:{self.config.port}:PWM[{int(channel)}]:{pulse_width//1000}us")
+            except:
+                print(f"H:{self.config.port}:PWM[{int(channel)}]:{position} set failed")
+                return False
         self.time_since_last_update = 0
         return True
 
@@ -234,7 +256,7 @@ class HexDriveApp(app.App):
         return True
     
 
-    # Set all 4 PWM duty cycles in one go using a signed value per motor channel (0-65535)
+    # Set pairs of PWM duty cycles in one go using a signed value per motor channel (0-65535)
     def set_motors(self, outputs) -> bool:
         if self.pwm_setup_failed:
             return False
@@ -293,8 +315,8 @@ class HexDriveApp(app.App):
             output_reg = i2c.readfrom_mem(pin[0], 0x02+pin[1], 1)[0]
             output_reg = (output_reg | pin[2]) if state else (output_reg & ~pin[2])
             i2c.writeto_mem(pin[0], 0x02+pin[1], bytes([output_reg]))
-            if self._logging:
-                print(f"H:{self.config.port}:Write to {hex(pin[0])} address {hex(0x02+pin[1])} value {hex(output_reg)}")
+            #if self._logging:
+            #    print(f"H:{self.config.port}:Write to {hex(pin[0])} address {hex(0x02+pin[1])} value {hex(output_reg)}")
         except Exception as e:
             print(f"H:{self.config.port}:access to I2C(7) failed: {e}")
 
@@ -320,8 +342,8 @@ class HexDriveApp(app.App):
             config_reg = i2c.readfrom_mem(pin[0], 0x04+pin[1], 1)[0]
             config_reg = (config_reg | pin[2]) if (1 == direction) else (config_reg & ~pin[2])
             i2c.writeto_mem(pin[0], 0x04+pin[1], bytes([config_reg]))
-            if self._logging:
-                print(f"H:{self.config.port}:Write to {hex(pin[0])} address {hex(0x04+pin[1])} value {hex(config_reg)}")
+            #if self._logging:
+            #    print(f"H:{self.config.port}:Write to {hex(pin[0])} address {hex(0x04+pin[1])} value {hex(config_reg)}")
         except Exception as e:
             print(f"H:{self.config.port}:access to I2C(7) failed: {e}")
     
