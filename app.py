@@ -756,7 +756,7 @@ class BadgeBotApp(app.App):
                 self._refresh = True
             else:
                 self.menu.update(delta)    
-                if self.menu.is_animating is not "none":
+                if self.menu.is_animating != "none":
                     print("Menu is animating")
                     self._refresh = True
         elif self.button_states.get(BUTTON_TYPES["CANCEL"]) and self.current_state in _MINIMISE_VALID_STATES:
