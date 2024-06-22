@@ -1091,7 +1091,7 @@ class BadgeBotApp(app.App):
 
 ### MENU FUNCTIONALITY ###
 
-    def set_menu(self, menu_name: Literal["main"]):
+    def set_menu(self, menu_name = "main"):  #: Literal["main"]): does it work without the type hint?
         if self.menu is not None:
             self.menu._cleanup()
         self.current_menu = menu_name
