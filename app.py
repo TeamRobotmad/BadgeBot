@@ -108,7 +108,7 @@ STATE_SERVO = 16          # Servo test
 
 # App states where user can minimise app
 _MINIMISE_VALID_STATES = [0, 1, 7, 12, 13, 14, 15]
-_LED_CONTROL_STATES    = [3, 4, 5, 6, 12, 13, 14, 15]
+_LED_CONTROL_STATES    = [0, 3, 4, 5, 6, 12, 13, 14, 15]
 
 # HexDrive Hexpansion constants
 _EEPROM_ADDR  = 0x50
@@ -531,6 +531,7 @@ class BadgeBotApp(app.App):
                 # There are currently no possible HexDrives plugged in
                 self._animation_counter = 0
                 self.current_state = STATE_WARNING
+                eventbus.emit(PatternDisable())                
             else:
                 self.current_state = STATE_WAIT
             return
@@ -546,9 +547,9 @@ class BadgeBotApp(app.App):
                 self.button_states.clear()
                 if self.current_state == STATE_WARNING:
                     self._animation_counter = 0
-                    self.current_state = STATE_LOGO
                 elif self.hexdrive_port is not None:
                     self.current_state = STATE_MENU
+                    eventbus.emit(PatternEnable())                    
                 else:
                     self.current_state = STATE_WARNING    
             else:
@@ -577,6 +578,7 @@ class BadgeBotApp(app.App):
                 self.button_states.clear()
                 self.current_state = STATE_WAIT
                 self.error_message = []
+                eventbus.emit(PatternEnable())                
             else:
                 for i in range(1,13):
                     tildagonos.leds[i] = (0,255,0) if self.current_state == STATE_MESSAGE else (255,0,0)       
@@ -721,10 +723,12 @@ class BadgeBotApp(app.App):
                                 print(f"H:HexDrive {valid_port}: Failed to initialise PWM resources")
                                 self.error_message = [f"HexDrive {valid_port}","PWM Init","Failed","Please","Reboop"]
                                 self.current_state = STATE_ERROR
+                                eventbus.emit(PatternDisable())                    
                         else:
                             print(f"H:HexDrive {valid_port}: App not found, please reboop")
                             self.error_message = [f"HexDrive {valid_port}","App not found.","Please","reboop"]
-                            self.current_state = STATE_ERROR                           
+                            self.current_state = STATE_ERROR
+                            eventbus.emit(PatternDisable())                    
                     else:
                         # Still have hexdrive on original port
                         self.current_state = STATE_MENU        
@@ -732,9 +736,11 @@ class BadgeBotApp(app.App):
                     self.hexdrive_port = None
                     self.hexdrive_app = None                      
                     self.current_state = STATE_REMOVED
+                    eventbus.emit(PatternDisable())                    
                 else:
                     self._animation_counter = 0                   
                     self.current_state = STATE_WARNING
+                    eventbus.emit(PatternDisable())                    
 
 ### END OF UI FOR HEXPANSION INITIALISATION AND UPGRADE ###
 
@@ -771,7 +777,8 @@ class BadgeBotApp(app.App):
                 if self._animation_counter > 10:
                     # after 10 seconds show the logo
                     self._animation_counter = 0
-                    self.current_state = STATE_LOGO                    
+                    self.current_state = STATE_LOGO
+                    eventbus.emit(PatternDisable())
         elif self.current_state == STATE_RECEIVE_INSTR:
             # Enable/disable scrolling and check for long press
             if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
