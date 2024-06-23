@@ -73,11 +73,12 @@ _POWER_STEP_PER_TICK = 7500  # effectively the acceleration
 _SERVO_DEFAULT_STEP    = 10         # us per step    
 _SERVO_DEFAULT_CENTRE  = 1500       # us
 _SERVO_DEFAULT_RANGE   = 500        # +/- 500us from centre
-_SERVO_DEFAULT_RATE    = 250        # us per s
-_SERVO_DEFAULT_MODE    = 0          # Off    
-_SERVO_MAX_RATE        = 10000      # us per s
-_SERVO_MIN_RATE        = 25         # us per s
-_SERVO_RATE_STEP       = 25         # us per s
+_SERVO_DEFAULT_RATE    = 25         # *10us per s
+_SERVO_DEFAULT_MODE    = 0          # Off
+_SERVO_DEFAULT_PERIOD  = 20         # ms    
+_SERVO_MAX_RATE        = 1000       # *10us per s
+_SERVO_MIN_RATE        = 1          # *10us per s
+_SERVO_MAX_TRIM        = 400        # us
 
 # Timings
 _TICK_MS       =  10        # Smallest unit of change for power, in ms
@@ -86,8 +87,9 @@ _USER_TURN_MS  =  20        # User specifed turn durations, in ms
 _LONG_PRESS_MS = 750        # Time for long button press to register, in ms
 _RUN_COUNTDOWN_MS = 5000    # Time after running program until drive starts, in ms
 _AUTO_REPEAT_MS = 200       # Time between auto-repeats, in ms
-_AUTO_REPEAT_COUNT_THRES = 5 # Number of auto-repeats before increasing level
-_AUTO_REPEAT_LEVEL_MAX = 3  # Maximum level of auto-repeat
+_AUTO_REPEAT_COUNT_THRES = 10 # Number of auto-repeats before increasing level
+_AUTO_REPEAT_SPEED_LEVEL_MAX = 4  # Maximum level of auto-repeat speed increases
+_AUTO_REPEAT_LEVEL_MAX = 3  # Maximum level of auto-repeat digit increases
 
 # App states
 STATE_INIT = -1
@@ -128,7 +130,6 @@ _ERASE_EEPROM = 0   # Slot for user to set if they want to erase EEPROMs on HexD
 
 # 
 _main_menu_items = ["Motor Moves", "Servo Test", "Settings", "About"]
-#_settings_menu_items = ["Servo Range"]
 
 class BadgeBotApp(app.App):
     def __init__(self):
@@ -137,6 +138,7 @@ class BadgeBotApp(app.App):
         self.button_states = Buttons(self)
         self.last_press: Button = BUTTON_TYPES["CANCEL"]
         self.long_press_delta = 0
+        self._auto_repeat_intervals = [ _AUTO_REPEAT_MS, _AUTO_REPEAT_MS//2, _AUTO_REPEAT_MS//4, _AUTO_REPEAT_MS//8, _AUTO_REPEAT_MS//16] # at the top end the loop is unlikley to cycle this fast
         self._auto_repeat = 0
         self._auto_repeat_count = 0
         self._auto_repeat_level = 0
@@ -173,7 +175,8 @@ class BadgeBotApp(app.App):
         self._settings['logging']       = MySetting(self._settings, _LOGGING, False, True)
         self._settings['erase_eeprom']  = MySetting(self._settings, _ERASE_EEPROM, False, True)
         self._settings['servo_step']    = MySetting(self._settings, _SERVO_DEFAULT_STEP, 1, 100)
-        self._settings['servo_range']   = MySetting(self._settings, _SERVO_DEFAULT_RANGE, 100, 1000)  # one setting for all servos
+        self._settings['servo_range']   = MySetting(self._settings, _SERVO_DEFAULT_RANGE, 100, 1250)  # one setting for all servos
+        self._settings['servo_period']  = MySetting(self._settings, _SERVO_DEFAULT_PERIOD, 5, 50)
         self._edit_setting = None
         self._edit_setting_value = None       
         self.update_settings()   
@@ -192,14 +195,18 @@ class BadgeBotApp(app.App):
         eventbus.on_async(HexpansionInsertionEvent, self._handle_hexpansion_insertion, self)
         eventbus.on_async(HexpansionRemovalEvent, self._handle_hexpansion_removal, self)
 
+        # Motor Driver
+        self.num_motors   = 2       # Default assumed for a single HexDrive
+
         # Servo Tester
+        self.num_servos   = 4       # Default assumed for a single HexDrive
         self.servo        = [None]*4                    # Servo Positions
         self.servo_centre = [_SERVO_DEFAULT_CENTRE]*4   # Trim Servo Centre
         self.servo_range  = [_SERVO_DEFAULT_RANGE]*4    # Limit Servo Range
         self.servo_rate   = [_SERVO_DEFAULT_RATE]*4     # Servo Rate of Change
         self.servo_mode   = [_SERVO_DEFAULT_MODE]*4     # Servo Mode [0:Position, 1: Scan]
         self.servo_selected = 0
-        self._servo_modes = ['Off','Position','Scanning']
+        self._servo_modes = ['Off','Trim','Position','Scanning']
 
         # Overall app state (controls what is displayed and what user inputs are accepted)
         self.current_state = STATE_INIT
@@ -565,7 +572,7 @@ class BadgeBotApp(app.App):
         
         if self.current_state == STATE_WARNING or self.current_state == STATE_LOGO:
             if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
-                # Warning has been acknowledged by the user - toggle betw
+                # Warning has been acknowledged by the user - toggle between warning and logo
                 self.button_states.clear()
                 if self.current_state == STATE_WARNING:
                     self._animation_counter = 0
@@ -820,15 +827,21 @@ class BadgeBotApp(app.App):
             else:
                 # Confirm is not pressed. Reset long_press state
                 self.long_press_delta = 0
+                if self.button_states.get(BUTTON_TYPES["CANCEL"]):
+                    self.button_states.clear()
+                    self._animation_counter = 0
+                    self.is_scroll = False
+                    self.current_state = STATE_HELP
                 # Manage scrolling
                 if self.is_scroll:
                     if self.button_states.get(BUTTON_TYPES["DOWN"]):
+                        self.button_states.clear()
                         self.scroll_offset -= 1
                         self._refresh = True                            
                     elif self.button_states.get(BUTTON_TYPES["UP"]):
+                        self.button_states.clear()
                         self.scroll_offset += 1
                         self._refresh = True
-                    self.button_states.clear()
                 # Instruction button presses
                 elif self.button_states.get(BUTTON_TYPES["RIGHT"]):
                     self._handle_instruction_press(BUTTON_TYPES["RIGHT"])
@@ -877,96 +890,119 @@ class BadgeBotApp(app.App):
             # Run is primarily managed in the background update
         elif self.current_state == STATE_DONE:
             if self.button_states.get(BUTTON_TYPES["CANCEL"]):
+                self.button_states.clear()
                 if self.hexdrive_app is not None:
                     self.hexdrive_app.set_power(False)
                 self.reset_robot()
-                self.button_states.clear()
             elif self.button_states.get(BUTTON_TYPES["CONFIRM"]):
+                self.button_states.clear()
                 if self.hexdrive_app is not None:
                     self.hexdrive_app.set_power(False)
                 self.run_countdown_elapsed_ms = 1   # avoid "6" appearing on screen at all
                 self.current_power_duration = ((0,0,0,0), 0)
                 self.current_state = STATE_COUNTDOWN
-                self.button_states.clear()
+
         elif self.current_state == STATE_SERVO:
             # Servo Tester:
             # Up/Down to select Servo
             # Left/Right to adjust position
-                # TODO if in Trim mode then adjust the centre position
-                # TODO keep alive
             if self.button_states.get(BUTTON_TYPES["RIGHT"]):
-                if self._auto_repeat_check(delta):
-                    if self.servo_mode[self.servo_selected] == 2:
+                if self._auto_repeat_check(delta, not (self.servo_mode[self.servo_selected] == 3)):
+                    if self.servo_mode[self.servo_selected] == 1:    # Trim mode:
+                        # adjust the servo centre position
+                        self.servo_centre[self.servo_selected] += self._settings['servo_step'].v
+                        if  self.servo_centre[self.servo_selected] > (_SERVO_DEFAULT_CENTRE + _SERVO_MAX_TRIM):
+                            self.servo_centre[self.servo_selected] = _SERVO_DEFAULT_CENTRE + _SERVO_MAX_TRIM
+                        if self.hexdrive_app is not None:
+                            self.hexdrive_app.set_servocentre(self.servo_selected, self.servo_centre[self.servo_selected])
+                    elif self.servo_mode[self.servo_selected] == 3: # Scanning Mode
                         # as the rate changes sign when it reaches the range, we must be careful to modify it in the correct direction
                         if self.servo_rate[self.servo_selected] < 0:
-                            self.servo_rate[self.servo_selected] = self.servo_rate[self.servo_selected] - self._auto_repeat_scaled_value(_SERVO_RATE_STEP)
-                            if -_SERVO_MAX_RATE > self.servo_rate[self.servo_selected]:
-                                self.servo_rate[self.servo_selected] = -_SERVO_MAX_RATE
+                            negative = True    
+                            rate = -self.servo_rate[self.servo_selected]
                         else:
-                            self.servo_rate[self.servo_selected] = self.servo_rate[self.servo_selected] + self._auto_repeat_scaled_value(_SERVO_RATE_STEP)
-                            if _SERVO_MAX_RATE < self.servo_centre[self.servo_selected]:
-                                self.servo_rate[self.servo_selected] = _SERVO_MAX_RATE
-                    else:
-                        if self.servo[self.servo_selected] is None:
+                            negative = False
+                            rate = self.servo_rate[self.servo_selected]
+                        rate = self._inc(rate, self._auto_repeat_level)
+                        if _SERVO_MAX_RATE < rate:
+                            rate = _SERVO_MAX_RATE
+                        if negative:
+                            self.servo_rate[self.servo_selected] = -rate
+                        else:
+                            self.servo_rate[self.servo_selected] = rate
+                    else:                                            # Position Mode
+                        if  self.servo[self.servo_selected] is None:
                             self.servo[self.servo_selected] = 0
-                        self.servo_mode[self.servo_selected] = 1    
-                        self.servo[self.servo_selected] = self.servo[self.servo_selected] + self._settings['servo_step'].v
-                        if self.servo_range[self.servo_selected] < self.servo[self.servo_selected]:
-                            self.servo[self.servo_selected] = self.servo_range[self.servo_selected]
+                        self.servo_mode[self.servo_selected] = 2    
+                        self.servo[self.servo_selected] += self._settings['servo_step'].v
+                        if self.servo_range[self.servo_selected] < self.servo[self.servo_selected] + self.servo_centre[self.servo_selected]:
+                            self.servo[self.servo_selected] = self.servo_range[self.servo_selected] - self.servo_centre[self.servo_selected]
                     self._refresh = True
             elif self.button_states.get(BUTTON_TYPES["LEFT"]):
-                if self._auto_repeat_check(delta):
-                    if self.servo_mode[self.servo_selected] == 2:
+                if self._auto_repeat_check(delta, not (self.servo_mode[self.servo_selected] == 3)):
+                    if self.servo_mode[self.servo_selected] == 1:    # Trim mode:
+                        # adjust the servo centre position
+                        self.servo_centre[self.servo_selected] -= self._settings['servo_step'].v
+                        if  self.servo_centre[self.servo_selected] < (_SERVO_DEFAULT_CENTRE - _SERVO_MAX_TRIM):
+                            self.servo_centre[self.servo_selected] = _SERVO_DEFAULT_CENTRE - _SERVO_MAX_TRIM
+                        if self.hexdrive_app is not None:
+                            self.hexdrive_app.set_servocentre(self.servo_selected, self.servo_centre[self.servo_selected])                            
+                    elif self.servo_mode[self.servo_selected] == 3: # Scanning Mode
                         # as the rate changes sign when it reaches the range, we must be careful to modify it in the correct direction
                         if self.servo_rate[self.servo_selected] < 0:
-                            self.servo_rate[self.servo_selected] = self.servo_rate[self.servo_selected] + self._auto_repeat_scaled_value(_SERVO_RATE_STEP)
-                            if -_SERVO_MIN_RATE < self.servo_rate[self.servo_selected]:
-                                self.servo_rate[self.servo_selected] = -_SERVO_MIN_RATE
+                            negative = True    
+                            rate = -self.servo_rate[self.servo_selected]
                         else:
-                            self.servo_rate[self.servo_selected] = self.servo_rate[self.servo_selected] - self._auto_repeat_scaled_value(_SERVO_RATE_STEP)
-                            if _SERVO_MIN_RATE > self.servo_centre[self.servo_selected]:
-                                self.servo_rate[self.servo_selected] = _SERVO_MIN_RATE
-                    else:
-                        if self.servo[self.servo_selected] is None:
+                            negative = False
+                            rate = self.servo_rate[self.servo_selected]
+                        rate = self._dec(rate, self._auto_repeat_level)
+                        if _SERVO_MIN_RATE > rate:
+                            rate = _SERVO_MIN_RATE
+                        if negative:
+                            self.servo_rate[self.servo_selected] = -rate
+                        else:
+                            self.servo_rate[self.servo_selected] = rate
+                    else:                                           # Position Mode
+                        if  self.servo[self.servo_selected] is None:
                             self.servo[self.servo_selected] = 0                        
-                        self.servo_mode[self.servo_selected] = 1    
-                        self.servo[self.servo_selected] = self.servo[self.servo_selected] - self._settings['servo_step'].v
-                        if -self.servo_range[self.servo_selected] > self.servo[self.servo_selected]:
-                            self.servo[self.servo_selected] = -self.servo_range[self.servo_selected]
+                        self.servo_mode[self.servo_selected] = 2    
+                        self.servo[self.servo_selected] -= self._settings['servo_step'].v
+                        if -self.servo_range[self.servo_selected] > self.servo[self.servo_selected] + self.servo_centre[self.servo_selected]:
+                            self.servo[self.servo_selected] = -self.servo_range[self.servo_selected] - self.servo_centre[self.servo_selected]
                     self._refresh = True
             else:
                 self._auto_repeat_clear()    
                 # non auto-repeating buttons
                 if self.button_states.get(BUTTON_TYPES["UP"]):
-                    self.servo_selected = (self.servo_selected - 1) % 4
-                    self._refresh = True
                     self.button_states.clear()
+                    self.servo_selected = (self.servo_selected - 1) % self.num_servos
+                    self._refresh = True
                 elif self.button_states.get(BUTTON_TYPES["DOWN"]):
-                    self.servo_selected = (self.servo_selected + 1) % 4
-                    self._refresh = True
                     self.button_states.clear()
+                    self.servo_selected = (self.servo_selected + 1) % self.num_servos
+                    self._refresh = True
                 elif self.button_states.get(BUTTON_TYPES["CANCEL"]):
+                    self.button_states.clear()
                     if self.hexdrive_app is not None:
                         self.hexdrive_app.set_power(False)
                         self.hexdrive_app.set_servoposition()   # All Off
                     self.current_state = STATE_MENU
+                elif self.button_states.get(BUTTON_TYPES["CONFIRM"]): #Cycle Through Modes
                     self.button_states.clear()
-                elif self.button_states.get(BUTTON_TYPES["CONFIRM"]): #Toggle Mode
-                    self.servo_mode[self.servo_selected] = (self.servo_mode[self.servo_selected] + 1) % 3
+                    self.servo_mode[self.servo_selected] = (self.servo_mode[self.servo_selected] + 1) % 4
                     if self.servo_mode[self.servo_selected] == 0:
                         if self.hexdrive_app is not None:
                             self.hexdrive_app.set_servoposition(self.servo_selected, None)
                     else:
                         self._refresh = True
-                    self.button_states.clear()
-                    self.notification = Notification(f"Servo {self.servo_selected}:   {self._servo_modes[self.servo_mode[self.servo_selected]]}")
+                    self.notification = Notification(f" Servo {self.servo_selected}:  {self._servo_modes[self.servo_mode[self.servo_selected]]}")
             if self.current_state == STATE_SERVO:   # check we are still acutally in servo mode
                 for i in range(4):
-                    if self.servo_mode[i] == 2:
+                    if self.servo_mode[i] == 3:
                         # for any servo set to Scan mode, update the position
                         if self.servo[self.servo_selected] is None:
                             self.servo[self.servo_selected] = 0                        
-                        self.servo[i] = self.servo[i] + (self.servo_rate[i] * delta / 1000)
+                        self.servo[i] = self.servo[i] + (10 * self.servo_rate[i] * delta / 1000)
                         if self.servo_range[i] < self.servo[i]:
                             # swap direction
                             self.servo_rate[i] = -self.servo_rate[i]
@@ -979,15 +1015,16 @@ class BadgeBotApp(app.App):
                     if self._refresh and self.hexdrive_app is not None and self.servo_mode[i] != 0 and self.servo[i] is not None:
                         # scanning servo or the selected servo
                         self.hexdrive_app.set_servoposition(i, int(self.servo[i]))
+
         elif self.current_state == STATE_SETTINGS:
             if self.button_states.get(BUTTON_TYPES["UP"]):
-                if self._auto_repeat_check(delta):
+                if self._auto_repeat_check(delta, False):
                     self._edit_setting_value = self._settings[self._edit_setting].inc(self._edit_setting_value, self._auto_repeat_level)
                     if self._settings['logging'].v:
                         print(f"Setting: {self._edit_setting} (+) Value: {self._edit_setting_value}")
                     self._refresh = True
             elif self.button_states.get(BUTTON_TYPES["DOWN"]):
-                if self._auto_repeat_check(delta):
+                if self._auto_repeat_check(delta, False):
                     self._edit_setting_value = self._settings[self._edit_setting].dec(self._edit_setting_value, self._auto_repeat_level)  
                     if self._settings['logging'].v:
                         print(f"Setting: {self._edit_setting} (-) Value: {self._edit_setting_value}")
@@ -996,27 +1033,27 @@ class BadgeBotApp(app.App):
                 # non auto-repeating buttons
                 self._auto_repeat_clear()                           
                 if self.button_states.get(BUTTON_TYPES["RIGHT"]) or self.button_states.get(BUTTON_TYPES["LEFT"]):
+                    self.button_states.clear() 
                     # Force default value    
                     self._edit_setting_value = self._settings[self._edit_setting].d
                     if self._settings['logging'].v:
                         print(f"Setting: {self._edit_setting} Default: {self._edit_setting_value}")
                     self._refresh = True
-                    self.button_states.clear() 
                     self.notification = Notification("Default")
                 elif self.button_states.get(BUTTON_TYPES["CANCEL"]):
+                    self.button_states.clear()
                     # leave setting unchanged
                     if self._settings['logging'].v:
                         print(f"Setting: {self._edit_setting} Cancelled")
-                    self.button_states.clear()
                     self.set_menu(_main_menu_items[2])
                     self.current_state = STATE_MENU
                 elif self.button_states.get(BUTTON_TYPES["CONFIRM"]):
+                    self.button_states.clear()
                     # set setting
                     if self._settings['logging'].v:
                         print(f"Setting: {self._edit_setting} = {self._edit_setting_value}")
                     self._settings[self._edit_setting].v = self._edit_setting_value
                     self._settings[self._edit_setting].persist()
-                    self.button_states.clear()
                     self.notification = Notification(f"{self._edit_setting} = {self._edit_setting_value}")
                     self.set_menu(_main_menu_items[2])
                     self.current_state = STATE_MENU
@@ -1104,51 +1141,66 @@ class BadgeBotApp(app.App):
                 #TODO - remember the directon to be shown: direction_str = str(self.current_instruction.press_type)
                 self.draw_message(ctx, ["Running...",power_str], [(1,1,1),(1,1,0)], label_font_size)
             elif self.current_state == STATE_DONE:
-                self.draw_message(ctx, ["Program","complete!","Replay:Press C","Restart:Press F"], [(0,1,0),(0,1,0),(1,1,0),(0,1,1)], label_font_size)
+                #self.draw_message(ctx, ["Program","complete!","Replay:Press C","Restart:Press F"], [(0,1,0),(0,1,0),(1,1,0),(0,1,1)], label_font_size)
+                self.draw_message(ctx, ["Program","complete!"], [(0,1,0),(0,1,0)], label_font_size)
+                button_labels(ctx, confirm_label="Replay", cancel_label="Restart")
+
             elif self.current_state == STATE_SERVO: 
-                servo_text         = ["S"]*5
-                servo_text_colours = [(0.4,0.0,0.0)]*5                # Red
+                servo_text         = ["S"]*(1+self.num_servos)              # Servo Text
+                servo_text_colours = [(0.4,0.0,0.0)]*(1+self.num_servos)    # Red
                 servo_text[0]      = "Servo Test"
                 servo_text_colours[0] = (1,1,1)                       # Title - White
-                for i in range(4):
+                for i in range(self.num_servos):
                     # Select Colour according to mode
                     if self.servo[i] is None or self.servo_mode[i] == 0:
                         body_colour = (0.2,0.2,0.2)                    # Not activated - Grey
                         bar_colour  = (0.4,0.4,0.4)                    # Not activated - Grey
-                    elif self.servo_mode[i] == 1:
-                        body_colour = (0.1,0.1,0.5)                    # Active - Blue                    
-                        bar_colour  = (0.1,0.1,1.0)                    # Active - Blue
-                        servo_text_colours[1+i] = (0.4,0.4,0.0)        # Active - Yellow
-                    else:
+                    elif self.servo_mode[i] == 3:
                         body_colour = (0.1,0.5,0.1)                    # Scanning - Green 
                         bar_colour  = (0.1,1.0,0.1)                    # Scanning - Green
                         servo_text_colours[1+i] = (0.4,0.0,0.4)        # Scanning - Magenta
+                    else:
+                        body_colour = (0.1,0.1,0.5)                    # Active - Blue                    
+                        bar_colour  = (0.1,0.1,1.0)                    # Active - Blue
+                        servo_text_colours[1+i] = (0.4,0.4,0.0)        # Active - Yellow                        
+
                     # draw the servo positions
                     ctx.save()
-                    ctx.translate(0, (i-1.4) * label_font_size)
+                    ctx.translate(0, (i-1.6) * label_font_size)
                     # background for the servo position - grey
                     background_colour = (0.1,0.1,0.1) if i != self.servo_selected else (0.15,0.15,0.15)                        
-                    ctx.rgb(*background_colour).rectangle(-100,1,200,label_font_size-2).fill()                            
+                    ctx.rgb(*background_colour).rectangle(-100,1,200,label_font_size-2).fill() 
+                    c = 100 * (self.servo_centre[i]-_SERVO_DEFAULT_CENTRE) / self.servo_range[i]
                     if self.servo[i] is not None:
                         # draw the servo position
-                        x = 100 * self.servo[i] / self.servo_range[i]
+                        x = 100 * (self.servo[i] + self.servo_centre[i] - _SERVO_DEFAULT_CENTRE) / self.servo_range[i]
                         # vertical bar at servo position
                         ctx.rgb(*bar_colour).rectangle(x-2,1,5,label_font_size-2).fill()
                         # horizontal bar from 0 to servo position, not covering the centre marker or the servo position bar
                         ctx.rgb(*body_colour)                        
-                        if   x >  4:
-                            ctx.rectangle(1,3,x-4,label_font_size-6).fill()
-                        elif x < -4:
-                            ctx.rectangle(x+4,3,-x-4,label_font_size-6).fill()
+                        if   x > (c+4):
+                            ctx.rectangle(c+1, 3, x-c-4, label_font_size-6).fill()
+                        elif x < (c-4):
+                            ctx.rectangle(x+4, 3, c-x-4, label_font_size-6).fill()
                     # marker for the centre - black (drawn last as it may have to go through the servo position bar)
-                    x = 100 * (self.servo_centre[i]-_SERVO_DEFAULT_CENTRE) / self.servo_range[i]
-                    ctx.rgb(0,0,0).move_to(x,0).line_to(x,label_font_size).stroke()                            
+                    ctx.rgb(0,0,0).move_to(c,0).line_to(c,label_font_size).stroke()                            
                     ctx.restore()
-                    servo_text[i+1] = "Off" if (self.servo[i] is None or self.servo_mode[i] == 0) else f"{int(self.servo[i]):+5} "
+                    if self.servo_mode[i] == 3:
+                        servo_text[i+1] = f"{int(abs(self.servo_rate[i])):4}/s"   # Scanning Rate
+                    else:                                                   # Position
+                        servo_text[i+1] = "Off" if (self.servo[i] is None or self.servo_mode[i] == 0) else f"{int(self.servo[i]):+5} "
                 # Selected Servo - Brighter Text
                 servo_text_colours[1+self.servo_selected] = tuple(int(j * 2.5) for j in servo_text_colours[1+self.servo_selected])                            
                 self.draw_message(ctx, servo_text, servo_text_colours, label_font_size)
-                button_labels(ctx, up_label="^", down_label="\u25BC", confirm_label="Mode", cancel_label="Cancel", left_label="<-", right_label="->")
+                if self.servo_mode[self.servo_selected] == 3:
+                    # Scanning mode
+                    button_labels(ctx, up_label="^", down_label="\u25BC", confirm_label="Mode", cancel_label="Exit", left_label="Slower", right_label="Faster")
+                elif self.servo_mode[self.servo_selected] == 1:
+                    button_labels(ctx, up_label="^", down_label="\u25BC", confirm_label="Mode", cancel_label="Exit", left_label="Trim-", right_label="+Trim")
+                else:
+                    #Position mode
+                    button_labels(ctx, up_label="^", down_label="\u25BC", confirm_label="Mode", cancel_label="Exit", left_label="<--", right_label="-->")
+                # NB characters \u25B2, \u25C0, \u25BA, \u21A9, \u2611 do not exist, so ii seems \u25BC has been included as a special case
             elif self.current_state == STATE_SETTINGS:
                 self.draw_message(ctx, ["Edit Setting",f"{self._edit_setting}:",f"{self._edit_setting_value}"], [(1,1,1),(0,0,1),(0,1,0)], label_font_size)
                 button_labels(ctx, up_label="+", down_label="-", confirm_label="Set", cancel_label="Cancel", right_label="Default")
@@ -1161,6 +1213,23 @@ class BadgeBotApp(app.App):
 
         if self.notification:
             self.notification.draw(ctx)
+
+    # Value increment/decrement functions for positive integers only
+    def _inc(self, v, l):
+        if l==0:
+            return v+1
+        else:
+            d = 10**l
+            v = ((v // d) + 1) * d   # round up to the next multiple of 10^l
+            return v
+    
+    def _dec(self, v, l):
+        if l==0:
+            return v-1
+        else:
+            d = 10**l
+            v = (((v+(9*(10**(l-1)))) // d) - 1) * d   # round down to the next multiple of 10^l
+            return v
 
 
     def clear_leds(self):
@@ -1181,8 +1250,9 @@ class BadgeBotApp(app.App):
             if colour is None:
                 colour = (1,1,1)
             # Font is not central in the height allocated to it due to space for descenders etc...
-            # this is most obvious when there is only one line of text        
-            y_position = int(0.35 * ctx.font_size) if num_lines == 1 else int((i_num-((num_lines-2)/2)) * ctx.font_size)
+            # this is most obvious when there is only one line of text
+            # # position fine tuned to fit around button labels when showing 5 lines of text        
+            y_position = int(0.35 * ctx.font_size) if num_lines == 1 else int((i_num-((num_lines-2)/2)) * ctx.font_size - 2)
             ctx.rgb(*colour).move_to(-width//2, y_position).text(text_line)
 
 
@@ -1190,8 +1260,11 @@ class BadgeBotApp(app.App):
         # re-initialise the servo range for the servos
         if self.hexdrive_app is not None:
             self.hexdrive_app.set_power(True)
+            self.hexdrive_app.set_freq(1000 // self._settings['servo_period'].v)
         # initialise the 4 servos
         for i in range(4):
+            if self.hexdrive_app is not None:    # Apply Trim
+                self.hexdrive_app.set_servocentre(self.servo_selected, self.servo_centre[self.servo_selected])                            
             # update the servo range in case settigns have changed
             self.servo_range[i] = self._settings['servo_range'].v     # only 1 setting actually for all servos at present
             # check that the current position is within the new range
@@ -1226,7 +1299,7 @@ class BadgeBotApp(app.App):
         elif menu_name == "Settings":
             # construct the settings menu
             _settings_menu_items = ["SAVE ALL", "DEFAULT ALL"]
-            for i, setting in enumerate(self._settings):
+            for _, setting in enumerate(self._settings):
                 _settings_menu_items.append(f"{setting}")
             self.menu = Menu(
                 self,
@@ -1240,18 +1313,24 @@ class BadgeBotApp(app.App):
         if self._settings['logging'].v:
             print(f"H:Main Menu {item} at index {idx}")
         if   idx == 0: # Motor Test - Turtle/Logo mode
-            self.set_menu(None)
-            self.button_states.clear()
-            self._animation_counter = 0
-            self.current_state = STATE_HELP
-            self._refresh = True
+            if self.num_motors == 0:
+                self.notification = Notification("No Motors")
+            else:
+                self.set_menu(None)
+                self.button_states.clear()
+                self._animation_counter = 0
+                self.current_state = STATE_HELP
+                self._refresh = True
         elif idx == 1: # Servo Test
-            self.set_menu(None)
-            self.button_states.clear()
-            self.reset_servo()
-            self.current_state = STATE_SERVO
-            self._refresh = True
-            self._auto_repeat_clear()
+            if self.num_servos == 0:
+                self.notification = Notification("No Servos")
+            else:
+                self.set_menu(None)
+                self.button_states.clear()
+                self.reset_servo()
+                self.current_state = STATE_SERVO
+                self._refresh = True
+                self._auto_repeat_clear()
         elif idx == 2: # Settings
             self.set_menu(_main_menu_items[idx])
         elif idx == 3: # About
@@ -1270,7 +1349,7 @@ class BadgeBotApp(app.App):
             if self._settings['logging'].v:
                 print("H:Settings Save All")
             settings.save()
-            self.notification = Notification(" Settings     Saved")
+            self.notification = Notification("  Settings   Saved")
             self.set_menu("main")
         elif idx == 1: #Default
             if self._settings['logging'].v:
@@ -1308,20 +1387,19 @@ class BadgeBotApp(app.App):
         self.last_press = press_type
 
 
-
-    def _auto_repeat_scaled_value(self, value):
-        return value * (5 ** self._auto_repeat_level)
-
     # multi level auto repeat
-    def _auto_repeat_check(self, delta) -> bool:                
+    # if speed_up is True, the auto repeat gets faster the longer the button is held
+    # otherwise it is a fixed rate, but the level is used to determine the scale of the increase in the setttings inc() and dec() functions
+    def _auto_repeat_check(self, delta, speed_up = True) -> bool:                
         self._auto_repeat += delta
-        # multi stage auto repeat
-        if self._auto_repeat > _AUTO_REPEAT_MS:
+        # multi stage auto repeat - the repeat gets faster the longer the button is held
+        if self._auto_repeat > self._auto_repeat_intervals[self._auto_repeat_level if speed_up else 0]:
             self._auto_repeat = 0
             self._auto_repeat_count += 1
-            if self._auto_repeat_count > _AUTO_REPEAT_COUNT_THRES:
+            # variable threshold to count to increase level so that it is not too easy to get to the highest level as the auto repeat period is reduced
+            if self._auto_repeat_count > ((_AUTO_REPEAT_COUNT_THRES*_AUTO_REPEAT_MS) // self._auto_repeat_intervals[self._auto_repeat_level if speed_up else 0]):
                 self._auto_repeat_count = 0
-                if self._auto_repeat_level < _AUTO_REPEAT_LEVEL_MAX:
+                if self._auto_repeat_level < (_AUTO_REPEAT_SPEED_LEVEL_MAX if speed_up else _AUTO_REPEAT_LEVEL_MAX):
                     self._auto_repeat_level += 1
                     if self._settings['logging'].v:
                         print(f"Auto Repeat Level: {self._auto_repeat_level}")
@@ -1330,7 +1408,7 @@ class BadgeBotApp(app.App):
 
 
     def _auto_repeat_clear(self):                
-        self._auto_repeat = 0 
+        self._auto_repeat = 1+ self._auto_repeat_intervals[0] # so that we trigger immediately on next press 
         self._auto_repeat_count = 0 
         self._auto_repeat_level = 0
 
@@ -1408,7 +1486,11 @@ class MySetting:
         if isinstance(self.v, bool):
             v = not v
         elif isinstance(self.v, int):
-            v += (4 ** l)            
+            if l==0:
+                v += 1
+            else:
+                d = 10**l
+                v = ((v // d) + 1) * d   # round up to the next multiple of 10^l, being very careful not to cause big jumps when value was nearly at the next multiple 
             if v > self._max:
                 v = self._max
         elif isinstance(self.v, float):
@@ -1417,7 +1499,7 @@ class MySetting:
             if v > self._max:
                 v = self._max  
         elif self._container['logging'].v:
-                print(f"H:inc type: {type(self.v)}")                               
+            print(f"H:inc type: {type(self.v)}")                               
         return v
 
     # This returns a decrease in the value passed in - subject to min and with scale of increase depending on level
@@ -1427,7 +1509,11 @@ class MySetting:
         if isinstance(self.v, bool):
             v = not v
         elif isinstance(self.v, int):
-            v -= (4 ** l)            
+            if l==0:
+                v -= 1
+            else:
+                d = 10**l
+                v = (((v+(9*(10**(l-1)))) // d) - 1) * d   # round down to the next multiple of 10^l
             if v < self._min:
                 v = self._min       
         elif isinstance(self.v, float):
@@ -1439,6 +1525,7 @@ class MySetting:
             print(f"H: dec type: {type(self.v)}") 
         return v
     
+
     def persist(self):
         # only save non-default settings to the settings store
         try:
