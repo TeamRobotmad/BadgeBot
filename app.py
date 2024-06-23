@@ -6,7 +6,7 @@ from math import cos, pi
 import settings
 import vfs
 from app_components.notification import Notification
-from app_components.tokens import label_font_size, twentyfour_pt, clear_background
+from app_components.tokens import label_font_size, twentyfour_pt, clear_background, button_labels
 from app_components import Menu
 from events.input import BUTTON_TYPES, Button, Buttons, ButtonUpEvent
 from frontboards.twentyfour import BUTTONS
@@ -535,7 +535,7 @@ class BadgeBotApp(app.App):
         previous_state = self.current_state
 
         # manage PatternEnable/Disable for all states
-        if self.current_state in _LED_CONTROL_STATES
+        if self.current_state in _LED_CONTROL_STATES:
             if self._pattern_status:
                 eventbus.emit(PatternDisable())
                 self._pattern_status = False
@@ -1036,10 +1036,13 @@ class BadgeBotApp(app.App):
                 self.draw_message(ctx, ["HexDrive","removed","Please reinsert"], [(1,1,0),(1,1,1),(1,1,1)], label_font_size)      
             elif self.current_state == STATE_DETECTED:
                 self.draw_message(ctx, ["Hexpansion","detected in",f"Slot {self.detected_port}","Init EEPROM","as HexDrive?"], [(1,1,1),(1,1,1),(0,0,1),(1,1,1),(1,1,0)], label_font_size)
+                button_labels(ctx, confirm_label="Yes", cancel_label="No")
             elif self.current_state == STATE_ERASE:
-                self.draw_message(ctx, ["HexDrive","detected in",f"Slot {self.erase_port}","Erase","EEPROM?"], [(1,1,0),(1,1,1),(0,0,1),(1,0,0),(1,0,0)], label_font_size)             
+                self.draw_message(ctx, ["HexDrive","detected in",f"Slot {self.erase_port}","Erase","EEPROM?"], [(1,1,0),(1,1,1),(0,0,1),(1,0,0),(1,0,0)], label_font_size)
+                button_labels(ctx, confirm_label="Yes", cancel_label="No")
             elif self.current_state == STATE_UPGRADE:
                 self.draw_message(ctx, ["HexDrive","detected in",f"Slot {self.upgrade_port}","Upgrade","HexDrive app?"], [(1,1,0),(1,1,1),(0,0,1),(1,1,1),(1,1,1)], label_font_size)             
+                button_labels(ctx, confirm_label="Yes", cancel_label="No")
             elif self.current_state == STATE_PROGRAMMING:
                 self.draw_message(ctx, ["HexDrive:","Programming","EEPROM","Please wait..."], [(1,1,0),(1,1,1),(1,1,1),(1,1,1)], label_font_size)            
             elif self.current_state == STATE_HELP:                
@@ -1123,6 +1126,7 @@ class BadgeBotApp(app.App):
                 self.draw_message(ctx, servo_text, servo_text_colours, label_font_size)
             elif self.current_state == STATE_SETTINGS:
                 self.draw_message(ctx, ["Edit Setting",f"{self._edit_setting}:",f"{self._edit_setting_value}"], [(1,1,1),(0,0,1),(0,1,0)], label_font_size)
+                button_labels(ctx, up_label="+", down_label="-", confirm_label="Yes", cancel_label="Cancel", right_label="Default")
             ctx.restore()
 
         # These need to be drawn every frame as they contain animations
