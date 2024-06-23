@@ -146,6 +146,7 @@ class BadgeBotApp(app.App):
         self._refresh = True
         self.rpm = 5                    # logo rotation speed in RPM
         self._animation_counter = 0
+        self._pattern_status = True     # True = Pattern Enabled, False = Pattern Disabled
         self.qr_code = _QR_CODE
         self.b_msg = f"BadgeBot V{_APP_VERSION}"
         self.t_msg = "RobotMad"
@@ -255,10 +256,12 @@ class BadgeBotApp(app.App):
     async def _gain_focus(self, event: RequestForegroundPushEvent):
         if event.app is self and self.current_state in _LED_CONTROL_STATES:
             eventbus.emit(PatternDisable())
+            self._pattern_status = False
 
     async def _lose_focus(self, event: RequestForegroundPopEvent):
         if event.app is self:
             eventbus.emit(PatternEnable())
+            self._pattern_status = True
 
     async def _handle_button_up(self, event: ButtonUpEvent):
         if self.current_state == STATE_RECEIVE_INSTR and event.button == BUTTONS["C"]:
@@ -531,6 +534,16 @@ class BadgeBotApp(app.App):
 
         previous_state = self.current_state
 
+        # manage PatternEnable/Disable for all states
+        if self.current_state in _LED_CONTROL_STATES
+            if self._pattern_status:
+                eventbus.emit(PatternDisable())
+                self._pattern_status = False
+        elif self.current_state not in _LED_CONTROL_STATES and not self._pattern_status:
+            eventbus.emit(PatternEnable())
+            self._pattern_status = True
+
+
         ### START UI FOR HEXPANSION INITIALISATION AND UPGRADE ###
         if self.current_state == STATE_INIT:
             # One Time initialisation      
@@ -539,7 +552,6 @@ class BadgeBotApp(app.App):
                 # There are currently no possible HexDrives plugged in
                 self._animation_counter = 0
                 self.current_state = STATE_WARNING
-                eventbus.emit(PatternDisable())                
             else:
                 self.current_state = STATE_WAIT
             return
@@ -551,13 +563,13 @@ class BadgeBotApp(app.App):
         
         if self.current_state == STATE_WARNING or self.current_state == STATE_LOGO:
             if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
-                # Warning has been acknowledged by the user
+                # Warning has been acknowledged by the user - toggle betw
                 self.button_states.clear()
                 if self.current_state == STATE_WARNING:
                     self._animation_counter = 0
+                    self.current_state = STATE_LOGO
                 elif self.hexdrive_port is not None:
                     self.current_state = STATE_MENU
-                    eventbus.emit(PatternEnable())                    
                 else:
                     self.current_state = STATE_WARNING    
             else:
@@ -586,7 +598,6 @@ class BadgeBotApp(app.App):
                 self.button_states.clear()
                 self.current_state = STATE_WAIT
                 self.error_message = []
-                eventbus.emit(PatternEnable())                
             else:
                 for i in range(1,13):
                     tildagonos.leds[i] = (0,255,0) if self.current_state == STATE_MESSAGE else (255,0,0)       
@@ -731,12 +742,10 @@ class BadgeBotApp(app.App):
                                 print(f"H:HexDrive {valid_port}: Failed to initialise PWM resources")
                                 self.error_message = [f"HexDrive {valid_port}","PWM Init","Failed","Please","Reboop"]
                                 self.current_state = STATE_ERROR
-                                eventbus.emit(PatternDisable())                    
                         else:
                             print(f"H:HexDrive {valid_port}: App not found, please reboop")
                             self.error_message = [f"HexDrive {valid_port}","App not found.","Please","reboop"]
                             self.current_state = STATE_ERROR
-                            eventbus.emit(PatternDisable())                    
                     else:
                         # Still have hexdrive on original port
                         self.current_state = STATE_MENU        
@@ -744,11 +753,9 @@ class BadgeBotApp(app.App):
                     self.hexdrive_port = None
                     self.hexdrive_app = None                      
                     self.current_state = STATE_REMOVED
-                    eventbus.emit(PatternDisable())                    
                 else:
                     self._animation_counter = 0                   
                     self.current_state = STATE_WARNING
-                    eventbus.emit(PatternDisable())                    
 
 ### END OF UI FOR HEXPANSION INITIALISATION AND UPGRADE ###
 
@@ -778,7 +785,6 @@ class BadgeBotApp(app.App):
             elif self.button_states.get(BUTTON_TYPES["CONFIRM"]):
                 self.is_scroll = True   # so that release of this button will CLEAR Scroll mode
                 self.current_state = STATE_RECEIVE_INSTR
-                eventbus.emit(PatternDisable())
                 self.button_states.clear()
             else:            
                 # Show the help for 10 seconds
@@ -787,7 +793,6 @@ class BadgeBotApp(app.App):
                     # after 10 seconds show the logo
                     self._animation_counter = 0
                     self.current_state = STATE_LOGO
-                    eventbus.emit(PatternDisable())
         elif self.current_state == STATE_RECEIVE_INSTR:
             # Enable/disable scrolling and check for long press
             if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
@@ -859,7 +864,6 @@ class BadgeBotApp(app.App):
                 if self.hexdrive_app is not None:
                     self.hexdrive_app.set_power(False)
                 self.reset_robot()
-                eventbus.emit(PatternEnable())
                 self.button_states.clear()
             elif self.button_states.get(BUTTON_TYPES["CONFIRM"]):
                 if self.hexdrive_app is not None:
@@ -1014,6 +1018,8 @@ class BadgeBotApp(app.App):
             clear_background(ctx)   
             ctx.save()
             ctx.font_size = label_font_size
+            ctx.text_align = ctx.LEFT
+            ctx.text_baseline = ctx.MIDDLE            
             if self.current_state == STATE_LOGO:
                 draw_logo_animated(ctx, self.rpm, self._animation_counter, [self.b_msg, self.t_msg], self.qr_code)
             # Scroll mode indicator
