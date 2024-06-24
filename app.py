@@ -914,8 +914,8 @@ class BadgeBotApp(app.App):
                         if  self.servo_centre[self.servo_selected] > (_SERVO_DEFAULT_CENTRE + _SERVO_MAX_TRIM):
                             self.servo_centre[self.servo_selected] = _SERVO_DEFAULT_CENTRE + _SERVO_MAX_TRIM
                         if self.hexdrive_app is not None:
-                            self.hexdrive_app.set_servocentre(self.servo_selected, self.servo_centre[self.servo_selected])
-                            self._refresh = True
+                            if not self.hexdrive_app.set_servocentre(self.servo_centre[self.servo_selected], self.servo_selected):
+                                print("H:Failed to set servo centre")
                     elif self.servo_mode[self.servo_selected] == 3: # Scanning Mode
                         # as the rate changes sign when it reaches the range, we must be careful to modify it in the correct direction
                         if self.servo_rate[self.servo_selected] < 0:
@@ -936,8 +936,8 @@ class BadgeBotApp(app.App):
                             self.servo[self.servo_selected] = 0
                         self.servo_mode[self.servo_selected] = 2    
                         self.servo[self.servo_selected] += self._settings['servo_step'].v
-                        if self.servo_range[self.servo_selected] < (self.servo[self.servo_selected] + (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)):
-                            self.servo[self.servo_selected] = self.servo_range[self.servo_selected] - (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)
+                    if self.servo_range[self.servo_selected] < (self.servo[self.servo_selected] + (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)):
+                        self.servo[self.servo_selected] = self.servo_range[self.servo_selected] - (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)
                     self._refresh = True
             elif self.button_states.get(BUTTON_TYPES["LEFT"]):
                 if self._auto_repeat_check(delta, not (self.servo_mode[self.servo_selected] == 3)):
@@ -947,8 +947,8 @@ class BadgeBotApp(app.App):
                         if  self.servo_centre[self.servo_selected] < (_SERVO_DEFAULT_CENTRE - _SERVO_MAX_TRIM):
                             self.servo_centre[self.servo_selected] = _SERVO_DEFAULT_CENTRE - _SERVO_MAX_TRIM
                         if self.hexdrive_app is not None:
-                            self.hexdrive_app.set_servocentre(self.servo_selected, self.servo_centre[self.servo_selected])
-                            self._refresh = True                            
+                            if not self.hexdrive_app.set_servocentre(self.servo_centre[self.servo_selected], self.servo_selected):
+                                print("H:Failed to set servo centre")
                     elif self.servo_mode[self.servo_selected] == 3: # Scanning Mode
                         # as the rate changes sign when it reaches the range, we must be careful to modify it in the correct direction
                         if self.servo_rate[self.servo_selected] < 0:
@@ -969,8 +969,8 @@ class BadgeBotApp(app.App):
                             self.servo[self.servo_selected] = 0                        
                         self.servo_mode[self.servo_selected] = 2    
                         self.servo[self.servo_selected] -= self._settings['servo_step'].v
-                        if -self.servo_range[self.servo_selected] > (self.servo[self.servo_selected] + (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)):
-                            self.servo[self.servo_selected] = -self.servo_range[self.servo_selected] - (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)
+                    if -self.servo_range[self.servo_selected] > (self.servo[self.servo_selected] + (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)):
+                        self.servo[self.servo_selected] = -self.servo_range[self.servo_selected] - (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)
                     self._refresh = True
             else:
                 self._auto_repeat_clear()    
@@ -1005,14 +1005,14 @@ class BadgeBotApp(app.App):
                         if self.servo[self.servo_selected] is None:
                             self.servo[self.servo_selected] = 0                        
                         self.servo[i] = self.servo[i] + (10 * self.servo_rate[i] * delta / 1000)
-                        if self.servo_range[i] < self.servo[i]:
+                        if self.servo_range[i] < (self.servo[i] + (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE)):
                             # swap direction
                             self.servo_rate[i] = -self.servo_rate[i]
-                            self.servo[i] = self.servo_range[i]
-                        elif -self.servo_range[i] > self.servo[i]:
+                            self.servo[i] = self.servo_range[i] - (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE)
+                        elif -self.servo_range[i] > (self.servo[i] + (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE)):
                             # swap direction
                             self.servo_rate[i] = -self.servo_rate[i]
-                            self.servo[i] = -self.servo_range[i]
+                            self.servo[i] = -self.servo_range[i] - (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE)
                         self._refresh = True
                     if self._refresh and self.hexdrive_app is not None and self.servo_mode[i] != 0 and self.servo[i] is not None:
                         # scanning servo or the selected servo
@@ -1168,7 +1168,7 @@ class BadgeBotApp(app.App):
 
                     # draw the servo positions
                     ctx.save()
-                    ctx.translate(0, (i-1.6) * label_font_size)
+                    ctx.translate(0, (i-1.5) * label_font_size)
                     # background for the servo position - grey
                     background_colour = (0.1,0.1,0.1) if i != self.servo_selected else (0.15,0.15,0.15)                        
                     ctx.rgb(*background_colour).rectangle(-100,1,200,label_font_size-2).fill() 
@@ -1266,7 +1266,7 @@ class BadgeBotApp(app.App):
         # initialise the 4 servos
         for i in range(4):
             if self.hexdrive_app is not None:    # Apply Trim
-                self.hexdrive_app.set_servocentre(self.servo_selected, self.servo_centre[self.servo_selected])                            
+                self.hexdrive_app.set_servocentre(self.servo_centre[self.servo_selected], self.servo_selected)                            
             # update the servo range in case settigns have changed
             self.servo_range[i] = self._settings['servo_range'].v     # only 1 setting actually for all servos at present
             # check that the current position is within the new range
