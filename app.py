@@ -915,6 +915,7 @@ class BadgeBotApp(app.App):
                             self.servo_centre[self.servo_selected] = _SERVO_DEFAULT_CENTRE + _SERVO_MAX_TRIM
                         if self.hexdrive_app is not None:
                             self.hexdrive_app.set_servocentre(self.servo_selected, self.servo_centre[self.servo_selected])
+                            self._refresh = True
                     elif self.servo_mode[self.servo_selected] == 3: # Scanning Mode
                         # as the rate changes sign when it reaches the range, we must be careful to modify it in the correct direction
                         if self.servo_rate[self.servo_selected] < 0:
@@ -946,7 +947,8 @@ class BadgeBotApp(app.App):
                         if  self.servo_centre[self.servo_selected] < (_SERVO_DEFAULT_CENTRE - _SERVO_MAX_TRIM):
                             self.servo_centre[self.servo_selected] = _SERVO_DEFAULT_CENTRE - _SERVO_MAX_TRIM
                         if self.hexdrive_app is not None:
-                            self.hexdrive_app.set_servocentre(self.servo_selected, self.servo_centre[self.servo_selected])                            
+                            self.hexdrive_app.set_servocentre(self.servo_selected, self.servo_centre[self.servo_selected])
+                            self._refresh = True                            
                     elif self.servo_mode[self.servo_selected] == 3: # Scanning Mode
                         # as the rate changes sign when it reaches the range, we must be careful to modify it in the correct direction
                         if self.servo_rate[self.servo_selected] < 0:
