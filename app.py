@@ -72,13 +72,13 @@ _POWER_STEP_PER_TICK = 7500  # effectively the acceleration
 # Servo Tester - Defaults
 _SERVO_DEFAULT_STEP    = 10         # us per step    
 _SERVO_DEFAULT_CENTRE  = 1500       # us
-_SERVO_DEFAULT_RANGE   = 500        # +/- 500us from centre
+_SERVO_DEFAULT_RANGE   = 1000       # +/- 500us from centre
 _SERVO_DEFAULT_RATE    = 25         # *10us per s
 _SERVO_DEFAULT_MODE    = 0          # Off
 _SERVO_DEFAULT_PERIOD  = 20         # ms    
 _SERVO_MAX_RATE        = 1000       # *10us per s
 _SERVO_MIN_RATE        = 1          # *10us per s
-_SERVO_MAX_TRIM        = 400        # us
+_SERVO_MAX_TRIM        = 1000       # us
 
 # Timings
 _TICK_MS       =  10        # Smallest unit of change for power, in ms
@@ -171,12 +171,13 @@ class BadgeBotApp(app.App):
         self._settings['max_power']     = MySetting(self._settings, _MAX_POWER, 1000, 65535)
         self._settings['drive_step_ms'] = MySetting(self._settings, _USER_DRIVE_MS, 5, 200)
         self._settings['turn_step_ms']  = MySetting(self._settings, _USER_TURN_MS, 5, 200)
+        self._settings['servo_step']    = MySetting(self._settings, _SERVO_DEFAULT_STEP, 1, 100)
+        self._settings['servo_range']   = MySetting(self._settings, _SERVO_DEFAULT_RANGE, 100, 1400)  # one setting for all servos
+        self._settings['servo_period']  = MySetting(self._settings, _SERVO_DEFAULT_PERIOD, 5, 50)
         self._settings['brightness']    = MySetting(self._settings, _BRIGHTNESS, 0.1, 1.0)
         self._settings['logging']       = MySetting(self._settings, _LOGGING, False, True)
         self._settings['erase_eeprom']  = MySetting(self._settings, _ERASE_EEPROM, False, True)
-        self._settings['servo_step']    = MySetting(self._settings, _SERVO_DEFAULT_STEP, 1, 100)
-        self._settings['servo_range']   = MySetting(self._settings, _SERVO_DEFAULT_RANGE, 100, 1250)  # one setting for all servos
-        self._settings['servo_period']  = MySetting(self._settings, _SERVO_DEFAULT_PERIOD, 5, 50)
+
         self._edit_setting = None
         self._edit_setting_value = None       
         self.update_settings()   
