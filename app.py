@@ -936,7 +936,7 @@ class BadgeBotApp(app.App):
                             self.servo[self.servo_selected] = 0
                         self.servo_mode[self.servo_selected] = 2    
                         self.servo[self.servo_selected] += self._settings['servo_step'].v
-                    if self.servo[self.servo_selected] in not None:
+                    if self.servo[self.servo_selected] is not None:
                         if self.servo_range[self.servo_selected] < (self.servo[self.servo_selected] + (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)):
                             self.servo[self.servo_selected] = self.servo_range[self.servo_selected] - (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)
                     self._refresh = True
