@@ -935,8 +935,8 @@ class BadgeBotApp(app.App):
                             self.servo[self.servo_selected] = 0
                         self.servo_mode[self.servo_selected] = 2    
                         self.servo[self.servo_selected] += self._settings['servo_step'].v
-                        if self.servo_range[self.servo_selected] < self.servo[self.servo_selected] + self.servo_centre[self.servo_selected]:
-                            self.servo[self.servo_selected] = self.servo_range[self.servo_selected] - self.servo_centre[self.servo_selected]
+                        if self.servo_range[self.servo_selected] < (self.servo[self.servo_selected] + (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)):
+                            self.servo[self.servo_selected] = self.servo_range[self.servo_selected] - (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)
                     self._refresh = True
             elif self.button_states.get(BUTTON_TYPES["LEFT"]):
                 if self._auto_repeat_check(delta, not (self.servo_mode[self.servo_selected] == 3)):
@@ -967,8 +967,8 @@ class BadgeBotApp(app.App):
                             self.servo[self.servo_selected] = 0                        
                         self.servo_mode[self.servo_selected] = 2    
                         self.servo[self.servo_selected] -= self._settings['servo_step'].v
-                        if -self.servo_range[self.servo_selected] > self.servo[self.servo_selected] + self.servo_centre[self.servo_selected]:
-                            self.servo[self.servo_selected] = -self.servo_range[self.servo_selected] - self.servo_centre[self.servo_selected]
+                        if -self.servo_range[self.servo_selected] > (self.servo[self.servo_selected] + (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)):
+                            self.servo[self.servo_selected] = -self.servo_range[self.servo_selected] - (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)
                     self._refresh = True
             else:
                 self._auto_repeat_clear()    
