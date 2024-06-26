@@ -123,17 +123,6 @@ _EEPROM_ADDR  = 0x50
 _EEPROM_NUM_ADDRESS_BYTES = 2
 _EEPROM_PAGE_SIZE = 32
 _EEPROM_TOTAL_SIZE = 64 * 1024 // 8
-_HEXDRIVE_VID = 0xCAFE
-_HEXDRIVE_PID = 0xCBCB
-
-#create a const static python structure to remember 4 differnt types of HEXDRIVE, each with a unique ID and, friendly name and definition of the number of motors ands servos that it has
-# this will allow the app to know what to do with the HexDrive when it is plugged in and to intialise the correct number of motors and servos
-# 0xCBCB has 2 motors and 4 servos (really is has either motors or servos, we just don't knwo which)
-# 0xCBCA has 2 motors and 0 servos
-# 0xCBCC has 0 motors and 4 servos 
-# 0xCDCD has 1 motor  and 2 servos
-
-
 
 
 #Misceallaneous Settings
@@ -690,14 +679,13 @@ class BadgeBotApp(app.App):
 
     def _update_state_warning(self, delta):
         if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
-            # Warning has been acknowledged by the user - toggle between warning and logo
             self.button_states.clear()
-            if self.current_state == STATE_WARNING:
+            if self.current_state == STATE_WARNING or self.hexdrive_port is not None:
+                # Warning has been acknowledged by the user
                 self._animation_counter = 0
-                self.current_state = STATE_LOGO
-            elif self.hexdrive_port is not None:
-                self.current_state = STATE_MENU
+                self.current_state = STATE_MENU # allow access to settings and About
             else:
+                # Return to Warning screen from Logo when no HexDrive is present
                 self.current_state = STATE_WARNING    
         else:
             # "CANCEL" button is handled below in common for all MINIMISE_VALID_STATES 
