@@ -218,13 +218,17 @@ class HexDriveApp(app.App):
             if channel < 0 or channel >= 4:
                 return False            
             if abs(position) > 1000:
-                return False             
-            if _MAX_SERVO_FREQ < self.PWMOutput[int(channel)].freq():
-                # Ensure PWM frequency is suitable for use with Servos
-                # otherwise the pulse width will not be accepted
-                if self._logging:
-                    print(f"H:{self.config.port}:PWM[{channel}]:Force freq to {_DEFAULT_SERVO_FREQ}Hz for Servo")
-                self.PWMOutput[int(channel)].freq(_DEFAULT_SERVO_FREQ)
+                return False
+            try:             
+                if _MAX_SERVO_FREQ < self.PWMOutput[int(channel)].freq():
+                    # Ensure PWM frequency is suitable for use with Servos
+                    # otherwise the pulse width will not be accepted
+                    self.PWMOutput[int(channel)].freq(_DEFAULT_SERVO_FREQ)
+                    if self._logging:
+                        print(f"H:{self.config.port}:PWM[{channel}]:Force freq to {_DEFAULT_SERVO_FREQ}Hz for Servo")                    
+            except:
+                print(f"H:{self.config.port}:PWM[{channel}]:freq set to {_DEFAULT_SERVO_FREQ} failed")
+                return False
             # Scale servo position to PWM duty cycle (500-2500us)
             pulse_width = int(self._servo_centre_ns[channel] + (position * 1000))
             try:
