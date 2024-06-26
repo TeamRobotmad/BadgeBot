@@ -61,7 +61,7 @@ _QR_CODE = [0x1fcf67f,
             0x18bbd7f]
 
 # Screen positioning for movement sequence text
-H_START = -78
+H_START = -63
 V_START = -58
 _BRIGHTNESS = 1.0
 
@@ -102,7 +102,7 @@ STATE_RECEIVE_INSTR = 3
 STATE_COUNTDOWN = 4
 STATE_RUN = 5
 STATE_DONE = 6
-STATE_WAIT = 7            # Between Hexpansion initialisation and upgrade steps  
+STATE_CHECK = 7           # Checks for EEPROMs and HexDrives
 STATE_DETECTED = 8        # Hexpansion ready for EEPROM initialisation
 STATE_UPGRADE = 9         # Hexpansion ready for EEPROM upgrade
 STATE_ERASE = 10          # Hexpansion ready for EEPROM erase
@@ -126,9 +126,19 @@ _EEPROM_TOTAL_SIZE = 64 * 1024 // 8
 _HEXDRIVE_VID = 0xCAFE
 _HEXDRIVE_PID = 0xCBCB
 
+#create a const static python structure to remember 4 differnt types of HEXDRIVE, each with a unique ID and, friendly name and definition of the number of motors ands servos that it has
+# this will allow the app to know what to do with the HexDrive when it is plugged in and to intialise the correct number of motors and servos
+# 0xCBCB has 2 motors and 4 servos (really is has either motors or servos, we just don't knwo which)
+# 0xCBCA has 2 motors and 0 servos
+# 0xCBCC has 0 motors and 4 servos 
+# 0xCDCD has 1 motor  and 2 servos
+
+
+
+
 #Misceallaneous Settings
 _LOGGING = False
-_ERASE_EEPROM = 0   # Slot for user to set if they want to erase EEPROMs on HexDrives
+_ERASE_SLOT = 0   # Slot for user to set if they want to erase EEPROMs on HexDrives
 
 # 
 _main_menu_items = ["Motor Moves", "Servo Test", "Settings", "About"]
@@ -179,13 +189,19 @@ class BadgeBotApp(app.App):
         self._settings['servo_period']  = MySetting(self._settings, _SERVO_DEFAULT_PERIOD, 5, 50)
         self._settings['brightness']    = MySetting(self._settings, _BRIGHTNESS, 0.1, 1.0)
         self._settings['logging']       = MySetting(self._settings, _LOGGING, False, True)
-        self._settings['erase_eeprom']  = MySetting(self._settings, _ERASE_EEPROM, False, True)
+        self._settings['erase_slot']    = MySetting(self._settings, _ERASE_SLOT, 0, 6)
 
         self._edit_setting = None
         self._edit_setting_value = None       
         self.update_settings()   
 
         # Hexpansion related
+        self._HEXDRIVE_TYPES = [HexDriveType(0xCBCB, motors=2, servos=4), 
+                                HexDriveType(0xCBCA, motors=2, name="2 Motor"), 
+                                HexDriveType(0xCBCC, servos=4, name="4 Servo"), 
+                                HexDriveType(0xCDCD, motors=1, servos=2, name = "1 Mot 2 Srvo")]  
+        self.hexpansion_type = None
+        self.hexpansion_init_type = 0
         self.detected_port = None
         self.waiting_app_port = None
         self.erase_port = None
@@ -214,6 +230,8 @@ class BadgeBotApp(app.App):
 
         # Overall app state (controls what is displayed and what user inputs are accepted)
         self.current_state = STATE_INIT
+        self.previous_state = self.current_state
+
 
         eventbus.on_async(RequestForegroundPushEvent, self._gain_focus, self)
         eventbus.on_async(RequestForegroundPopEvent, self._lose_focus, self)
@@ -236,7 +254,7 @@ class BadgeBotApp(app.App):
             self.ports_with_hexdrive.remove(event.port)
         if event.port in self.ports_with_latest_hexdrive:
             if self._settings['logging'].v:
-                print(f"H:HexDrive removed from port {event.port}")
+                print(f"H:HexDrive V{_APP_VERSION} removed from port {event.port}")
             self.ports_with_latest_hexdrive.remove(event.port)
         if self.current_state == STATE_DETECTED and event.port == self.detected_port:
             self.hexpansion_update_required = True
@@ -256,7 +274,6 @@ class BadgeBotApp(app.App):
     async def _gain_focus(self, event: RequestForegroundPushEvent):
         if event.app is self and self.current_state in _LED_CONTROL_STATES:
             eventbus.emit(PatternDisable())
-            self._pattern_status = False
 
     async def _lose_focus(self, event: RequestForegroundPopEvent):
         if event.app is self:
@@ -276,8 +293,8 @@ class BadgeBotApp(app.App):
             cur_time = time.ticks_ms()
             delta_ticks = time.ticks_diff(cur_time, last_time)
             self.background_update(delta_ticks)
-            s = 0.01 if self.current_state == STATE_RUN else 0.05
-            await asyncio.sleep(s)
+            s = 10 if self.current_state == STATE_RUN else 50
+            await asyncio.sleep_ms(s)
             last_time = cur_time
 
 
@@ -338,11 +355,16 @@ class BadgeBotApp(app.App):
                 print(f"H:Found EEPROM on port {port}")
             self.ports_with_blank_eeprom.add(port)
             return True
-        if read_header.vid == _HEXDRIVE_VID and read_header.pid == _HEXDRIVE_PID:
-            if self._settings['logging'].v:
-                print(f"H:Found HexDrive on port {port}")
-            self.ports_with_hexdrive.add(port)
-            return True
+        # check is this is a HexDrive header by scanning the _HEXDRIVE_TYPES list
+        for hexpansion_type in self._HEXDRIVE_TYPES:
+            if read_header.vid == hexpansion_type.vid and read_header.pid == hexpansion_type.pid:
+                if self._settings['logging'].v:
+                    print(f"H:Found '{hexpansion_type.name}' HexDrive on port {port}")
+                self.ports_with_hexdrive.add(port)
+                self.hexpansion_type = hexpansion_type
+                self.num_motors = hexpansion_type.motors
+                self.num_servos = hexpansion_type.servos
+                return True
         # we are not interested in this type of hexpansion
         return False
 
@@ -434,8 +456,8 @@ class BadgeBotApp(app.App):
             fs_offset=32,
             eeprom_page_size=_EEPROM_PAGE_SIZE,
             eeprom_total_size=_EEPROM_TOTAL_SIZE,
-            vid=_HEXDRIVE_VID,
-            pid=_HEXDRIVE_PID,
+            vid=self._HEXDRIVE_TYPES[self.hexpansion_init_type].vid,
+            pid=self._HEXDRIVE_TYPES[self.hexpansion_init_type].pid,
             unique_id=0x0,
             friendly_name="HexDrive",
         )        
@@ -540,25 +562,50 @@ class BadgeBotApp(app.App):
             self._settings[s].v = settings.get(f"badgebot.{s}", self._settings[s].d)
 
 
+    def _pattern_management(self):        
+        if self.current_state in _LED_CONTROL_STATES:
+            if self._pattern_status:
+                eventbus.emit(PatternDisable())
+                self._pattern_status = False
+                # delay enough to allow the pattern to stop
+                time.sleep_ms(500)
+        elif self.current_state not in _LED_CONTROL_STATES and not self._pattern_status:
+            eventbus.emit(PatternEnable())
+            self._pattern_status = True
+
+
     ### MAIN APP CONTROL FUNCTIONS ###
 
     def update(self, delta):
         if self.notification:
             self.notification.update(delta)
 
-        previous_state = self.current_state
-
         # manage PatternEnable/Disable for all states
+        self._pattern_management()
+        
+        self._update_hexpansion_management(delta)
+        self._update_main_application(delta)
+
+        if self.current_state != self.previous_state:
+            if self._settings['logging'].v:
+                print(f"State: {self.previous_state} -> {self.current_state}")
+            self.previous_state = self.current_state
+            # manage PatternEnable/Disable for all states
+            self._pattern_management()
+            # something has changed - so worth redrawing
+            self._refresh = True
+
         if self.current_state in _LED_CONTROL_STATES:
-            if self._pattern_status:
-                eventbus.emit(PatternDisable())
-                self._pattern_status = False
-        elif self.current_state not in _LED_CONTROL_STATES and not self._pattern_status:
-            eventbus.emit(PatternEnable())
-            self._pattern_status = True
+            if self._settings['brightness'].v < 1.0:
+                # Scale brightness
+                for i in range(1,13):
+                    tildagonos.leds[i] = tuple(int(j * self._settings['brightness'].v) for j in tildagonos.leds[i])                            
+            tildagonos.leds.write()
 
 
-        ### START UI FOR HEXPANSION INITIALISATION AND UPGRADE ###
+    ### START UI FOR HEXPANSION INITIALISATION AND UPGRADE ###
+
+    def _update_hexpansion_management(self, delta):
         if self.current_state == STATE_INIT:
             # One Time initialisation      
             self.scan_ports()
@@ -567,234 +614,45 @@ class BadgeBotApp(app.App):
                 self._animation_counter = 0
                 self.current_state = STATE_WARNING
             else:
-                self.current_state = STATE_WAIT
+                self.current_state = STATE_CHECK
             return
         
         if self.hexpansion_update_required:
             # something has changed in the hexpansion ports            
             self.hexpansion_update_required = False
-            self.current_state = STATE_WAIT
+            if self.current_state != STATE_CHECK:
+                print("H:Hexpansion Check")
+                self.set_menu(None)
+                self.current_state = STATE_CHECK
         
         if self.current_state == STATE_WARNING or self.current_state == STATE_LOGO:
-            if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
-                # Warning has been acknowledged by the user - toggle between warning and logo
-                self.button_states.clear()
-                if self.current_state == STATE_WARNING:
-                    self._animation_counter = 0
-                    self.current_state = STATE_LOGO
-                elif self.hexdrive_port is not None:
-                    self.current_state = STATE_MENU
-                else:
-                    self.current_state = STATE_WARNING    
-            else:
-                # "CANCEL" button is handled below in common for all MINIMISE_VALID_STATES 
-                # Show the warning screen for 10 seconds
-                self._animation_counter += delta/1000
-                self._refresh = True
-                if self.current_state == STATE_WARNING and self._animation_counter > 10:
-                    # after 10 seconds show the logo
-                    self._animation_counter = 0
-                    self.current_state = STATE_LOGO
-                elif self.current_state == STATE_LOGO:
-                    # LED management - to match rotating logo:
-                    for i in range(1,13):
-                        colour = (255, 241, 0)      # custom Robotmad shade of yellow                                
-                        # raised cosine cubed wave
-                        wave = self._settings['brightness'].v * pow((1.0 + cos(((i) *  pi / 1.5) - (self.rpm * self._animation_counter * pi / 7.5)))/2.0, 3)    
-                        # 4 sides each projecting a pattern of 3 LEDs (12 LEDs in total)
-                        tildagonos.leds[i] = tuple(int(wave * j) for j in colour)                                                     
-                else: # STATE_WARNING
-                    for i in range(1,13):
-                        tildagonos.leds[i] = (255,0,0)                       
+            self._update_state_warning(delta)                    
         elif self.current_state == STATE_ERROR or self.current_state == STATE_MESSAGE or self.current_state == STATE_REMOVED: 
-            if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
-                # Error has been acknowledged by the user
-                self.button_states.clear()
-                self.current_state = STATE_WAIT
-                self.error_message = []
-            else:
-                for i in range(1,13):
-                    tildagonos.leds[i] = (0,255,0) if self.current_state == STATE_MESSAGE else (255,0,0)       
+            self._update_state_error(delta)
         elif self.current_state == STATE_PROGRAMMING:
-            if self.upgrade_port is not None:
-                if self.update_app_in_eeprom(self.upgrade_port, _EEPROM_ADDR):
-                    self.notification = Notification("Upgraded", port = self.upgrade_port)
-                    self.ports_with_latest_hexdrive.add(self.upgrade_port)
-                    self.error_message = ["Upgraded:","Please","reboop"]
-                    self.current_state = STATE_MESSAGE                                     
-                    if self._settings['logging'].v:
-                        print(f"H:HexDrive on port {self.upgrade_port} upgraded please reboop")
-                else:
-                    self.notification = Notification("Failed", port = self.upgrade_port)
-                    self.error_message = ["HexDrive","programming","failed"]
-                    self.current_state = STATE_ERROR
-                self.upgrade_port = None
-            elif self.detected_port is not None:
-                if self.prepare_eeprom(self.detected_port, _EEPROM_ADDR):
-                    self.notification = Notification("Initialised", port = self.detected_port)
-                    self.upgrade_port = self.detected_port
-                    self.current_state = STATE_UPGRADE                      
-                else:
-                    self.notification = Notification("Failed", port = self.detected_port)
-                    self.error_message = ["EEPROM","initialisation","failed"]
-                    self.current_state = STATE_ERROR
-                self.detected_port = None
-            elif self._settings['logging'].v:
-                print("H:Error - no port to program")    
-       
+            # Programming the Hexpansion
+            self._update_state_programming(delta)      
         elif self.current_state == STATE_DETECTED:
-            # We are currently asking the user if they want hexpansion EEPROM initialising
-            if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
-                # Yes
-                self.button_states.clear()
-                self.current_state = STATE_PROGRAMMING        
-            elif self.button_states.get(BUTTON_TYPES["CANCEL"]):
-                # No
-                if self._settings['logging'].v:
-                    print("H:Initialise Cancelled")
-                self.button_states.clear()
-                self.detected_port = None
-                self.current_state = STATE_WAIT
+            # We have detected a Hexpansion with a blank EEPROM - asking the user if they want to initialise it
+            self._update_state_detected(delta)
         elif self.current_state == STATE_ERASE:
-            # We are currently asking the user if they want hexpansion EEPROM Erased                
-            if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
-                # Yes
-                self.button_states.clear()
-                if self.erase_eeprom(self.erase_port, _EEPROM_ADDR):
-                    self.error_message = ["Erased:","Please","reboop"]
-                    self.notification = Notification("Erased", port = self.erase_port)
-                    self.erase_port = None
-                    self.current_state = STATE_MESSAGE                  
-                else:
-                    self.notification = Notification("Failed", port = self.erase_port)
-                    self.error_message = ["EEPROM","erasure","failed"]
-                    self.current_state = STATE_ERROR                       
-            elif self.button_states.get(BUTTON_TYPES["CANCEL"]):
-                # No
-                if self._settings['logging'].v:
-                    print("H:Erase Cancelled")
-                self.button_states.clear()
-                self.erase_port = None
-                self.current_state = STATE_WAIT                        
+            self._update_state_erase(delta)                      
         elif self.current_state == STATE_UPGRADE:
-            # We are currently asking the user if they want hexpansion App upgrading with latest App.mpy                
-            if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
-                # Yes
-                self.button_states.clear()
-                self.current_state = STATE_PROGRAMMING
-            elif self.button_states.get(BUTTON_TYPES["CANCEL"]):
-                # No
-                if self._settings['logging'].v:
-                    print("H:Upgrade Cancelled")
-                self.button_states.clear()
-                self.upgrade_port = None
-                self.current_state = STATE_WAIT
-        elif self.current_state in _MINIMISE_VALID_STATES:                                        
-            if 0 < len(self.ports_with_blank_eeprom):
-                # if there are any ports with blank eeproms
-                # Show the UI prompt and wait for button press
-                self.detected_port = self.ports_with_blank_eeprom.pop()
-                self.notification = Notification("Initialise?", port = self.detected_port)
-                self.current_state = STATE_DETECTED          
-            elif self.waiting_app_port is not None or (0 < len(self.ports_with_hexdrive)):
-                # if there are any ports with HexDrives - check if they need upgrading/erasing
-                if self.waiting_app_port is None:
-                    self.waiting_app_port = self.ports_with_hexdrive.pop()
-                    self._animation_counter = 0  #timeout
-                if self._settings['erase_eeprom'].v == self.waiting_app_port:
-                    # if the user has set a port to erase EEPROMs on
-                    # Show the UI prompt and wait for button press
-                    if self._settings['logging'].v:
-                        print(f"H:HexDrive on port {self.waiting_app_port} Erase?")
-                    self.erase_port = self.waiting_app_port
-                    self.notification = Notification("Erase?", port = self.erase_port)
-                    self.current_state = STATE_ERASE
-                else:                           
-                    hexdrive_app = self.find_hexdrive_app(self.waiting_app_port)
-                    # the scheduler is updated asynchronously from hexpansion insertion so we may not find the app immediately
-                    if hexdrive_app is not None:
-                        try:
-                            hexdrive_app_version = hexdrive_app.get_version()
-                        except Exception as e:
-                            hexdrive_app_version = 0
-                            print(f"H:Error getting HexDrive app version - assume old: {e}")
-                    elif 5.0 < self._animation_counter:
-                        if self._settings['logging'].v:
-                            print("H:Timeout waiting for HexDrive app to be started - assume it needs upgrading")
-                        hexdrive_app_version = 0
-                    else:
-                        if 0 == self._animation_counter:
-                            if self._settings['logging'].v:
-                                print(f"H:No app found on port {self.waiting_app_port} - WAITING for app to appear in Scheduler")
-                        self._animation_counter += delta/1000
-                        return                     
-                    if hexdrive_app_version == CURRENT_APP_VERSION:    
-                        if self._settings['logging'].v:
-                            print(f"H:HexDrive on port {self.waiting_app_port} has latest App")
-                        self.ports_with_latest_hexdrive.add(self.waiting_app_port)
-                        self.current_state = STATE_WAIT
-                    else:    
-                        # Show the UI prompt and wait for button press
-                        if self._settings['logging'].v:
-                            print(f"H:HexDrive on port {self.waiting_app_port} needs upgrading from version {hexdrive_app_version}")
-                        self.upgrade_port = self.waiting_app_port
-                        self.notification = Notification("Upgrade?", port = self.upgrade_port)
-                        self.current_state = STATE_UPGRADE                             
-                self.waiting_app_port = None
-                self._animation_counter = 0
-            elif self.current_state == STATE_WAIT: 
-                if 0 < len(self.ports_with_latest_hexdrive):
-                    # We have at least one HexDrive with the latest App.mpy
-                    if self.hexdrive_port not in self.ports_with_latest_hexdrive:
-                        self.hexdrive_port = None
-                        self.hexdrive_app = None
-                    if self.hexdrive_port is None:
-                        valid_port = next(iter(self.ports_with_latest_hexdrive))
-                        # Find our running hexdrive app
-                        hexdrive_app = self.find_hexdrive_app(valid_port)
-                        if hexdrive_app is not None:
-                            self.hexdrive_port = valid_port
-                            self.hexdrive_app = hexdrive_app
-                            # only inteneded for use with a single active HexDrive at once at present
-                            if self._settings['logging'].v:
-                                print(f"H:Found app on port {valid_port}")
-                            if self.hexdrive_app.get_status():
-                                if self._settings['logging'].v:
-                                    print(f"H:HexDrive [{valid_port}] OK")
-                                self.current_state = STATE_MENU
-                                self._animation_counter = 0
-                            else:
-                                if self._settings['logging'].v:    
-                                    print(f"H:HexDrive {valid_port}: Failed to initialise PWM resources")
-                                self.error_message = [f"HexDrive {valid_port}","PWM Init","Failed","Please","Reboop"]
-                                self.current_state = STATE_ERROR
-                        else:
-                            if self._settings['logging'].v:
-                                print(f"H:HexDrive {valid_port}: App not found, please reboop")
-                            self.error_message = [f"HexDrive {valid_port}","App not found.","Please","reboop"]
-                            self.current_state = STATE_ERROR
-                    else:
-                        # Still have hexdrive on original port
-                        self.current_state = STATE_MENU        
-                elif self.hexdrive_port is not None:
-                    self.hexdrive_port = None
-                    self.hexdrive_app = None                      
-                    self.current_state = STATE_REMOVED
-                else:
-                    self._animation_counter = 0                   
-                    self.current_state = STATE_WARNING
+            # We are currently asking the user if they want hexpansion App upgrading with latest App.mpy
+            self._update_state_upgrade(delta)
+        elif self.current_state in _MINIMISE_VALID_STATES:                          
+            if self._check_hexpansion_ports(delta):
+                pass     
+            elif self._check_hexdrive_ports(delta):
+                pass
+            elif self.current_state == STATE_CHECK:
+                self._update_state_check(delta)
 
-### END OF UI FOR HEXPANSION INITIALISATION AND UPGRADE ###
 
+    def _update_main_application(self, delta):
         if self.current_state == STATE_MENU:
             if self.current_menu is None:
-                self.current_menu = "main"
-                self.menu = Menu(
-                    self,
-                    _main_menu_items,
-                    select_handler=self._main_menu_select_handler,
-                    back_handler=self._menu_back_handler,
-                )
+                self.set_menu("main")
                 self._refresh = True
             else:
                 self.menu.update(delta)    
@@ -806,319 +664,558 @@ class BadgeBotApp(app.App):
             self.button_states.clear()
             self.is_scroll = False
             self.minimise()
+
+    ### Motor Moves Application ###            
         elif self.current_state == STATE_HELP:
-            if self.button_states.get(BUTTON_TYPES["CANCEL"]):
-                self.current_state = STATE_MENU
-                self.button_states.clear()
-            elif self.button_states.get(BUTTON_TYPES["CONFIRM"]):
-                self.is_scroll = True   # so that release of this button will CLEAR Scroll mode
-                self.current_state = STATE_RECEIVE_INSTR
-                self.button_states.clear()
-            else:            
-                # Show the help for 10 seconds
-                self._animation_counter += delta/1000
-                if self._animation_counter > 10:
-                    # after 10 seconds show the logo
-                    self._animation_counter = 0
-                    self.current_state = STATE_LOGO
+            self._update_state_help(delta)
         elif self.current_state == STATE_RECEIVE_INSTR:
-            # Enable/disable scrolling and check for long press
-            if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
-                self.long_press_delta += delta
-                if self.long_press_delta >= _LONG_PRESS_MS:
-                    self.finalize_instruction()
-                    self.is_scroll = False
-                    self.current_state = STATE_COUNTDOWN
-            else:
-                # Confirm is not pressed. Reset long_press state
-                self.long_press_delta = 0
-                if self.button_states.get(BUTTON_TYPES["CANCEL"]):
-                    self.button_states.clear()
-                    self._animation_counter = 0
-                    self.is_scroll = False
-                    self.current_state = STATE_HELP
-                # Manage scrolling
-                if self.is_scroll:
-                    if self.button_states.get(BUTTON_TYPES["DOWN"]):
-                        self.button_states.clear()
-                        self.scroll_offset -= 1
-                        self._refresh = True                            
-                    elif self.button_states.get(BUTTON_TYPES["UP"]):
-                        self.button_states.clear()
-                        self.scroll_offset += 1
-                        self._refresh = True
-                # Instruction button presses
-                elif self.button_states.get(BUTTON_TYPES["RIGHT"]):
-                    self._handle_instruction_press(BUTTON_TYPES["RIGHT"])
-                    self.button_states.clear()
-                    self._refresh = True
-                elif self.button_states.get(BUTTON_TYPES["LEFT"]):
-                    self._handle_instruction_press(BUTTON_TYPES["LEFT"])
-                    self.button_states.clear()
-                    self._refresh = True
-                elif self.button_states.get(BUTTON_TYPES["UP"]):
-                    self._handle_instruction_press(BUTTON_TYPES["UP"])
-                    self.button_states.clear()
-                    self._refresh = True
-                elif self.button_states.get(BUTTON_TYPES["DOWN"]):
-                    self._handle_instruction_press(BUTTON_TYPES["DOWN"])
-                    self.button_states.clear()
-                    self._refresh = True
-            # LED management
-            self.clear_leds()
-            if self.last_press == BUTTON_TYPES["RIGHT"]:
-                # Green = Starboard = Right
-                tildagonos.leds[2]  = (0, 255, 0)
-                tildagonos.leds[3]  = (0, 255, 0)
-            elif self.last_press == BUTTON_TYPES["LEFT"]:
-                # Red = Port = Left
-                tildagonos.leds[8]  = (255, 0, 0)
-                tildagonos.leds[9]  = (255, 0, 0)
-            elif self.last_press == BUTTON_TYPES["UP"]:
-                # Cyan
-                tildagonos.leds[12] = (0, 255, 255)
-                tildagonos.leds[1]  = (0, 255, 255)
-            elif self.last_press == BUTTON_TYPES["DOWN"]:
-                # Magenta
-                tildagonos.leds[6]  = (255, 0, 255)
-                tildagonos.leds[7]  = (255, 0, 255)
+            self._update_state_receive_instr(delta)
         elif self.current_state == STATE_COUNTDOWN:
-            self.clear_leds()
-            self.run_countdown_elapsed_ms += delta
-            if self.run_countdown_elapsed_ms >= _RUN_COUNTDOWN_MS:
-                self.power_plan_iter = chain(*(instr.power_plan for instr in self.instructions))
-                if self.hexdrive_app is not None:
-                    self.hexdrive_app.set_power(True)
-                self.current_state = STATE_RUN
+            self._update_state_countdown(delta)
         elif self.current_state == STATE_RUN:
             self.clear_leds()
             # Run is primarily managed in the background update
         elif self.current_state == STATE_DONE:
-            if self.button_states.get(BUTTON_TYPES["CANCEL"]):
-                self.button_states.clear()
-                if self.hexdrive_app is not None:
-                    self.hexdrive_app.set_power(False)
-                self.reset_robot()
-            elif self.button_states.get(BUTTON_TYPES["CONFIRM"]):
-                self.button_states.clear()
-                if self.hexdrive_app is not None:
-                    self.hexdrive_app.set_power(False)
-                self.run_countdown_elapsed_ms = 1   # avoid "6" appearing on screen at all
-                self.current_power_duration = ((0,0,0,0), 0)
-                self.current_state = STATE_COUNTDOWN
+            self._update_state_done(delta)
 
+    ### Servo Tester Application ###
         elif self.current_state == STATE_SERVO:
-            # Servo Tester:
-            # Up/Down to select Servo
-            # Left/Right to adjust position
-            if self.button_states.get(BUTTON_TYPES["RIGHT"]):
-                if self._auto_repeat_check(delta, not (self.servo_mode[self.servo_selected] == 3)):
-                    if self.servo_mode[self.servo_selected] == 1:    # Trim mode:
-                        # adjust the servo centre position
-                        self.servo_centre[self.servo_selected] += self._settings['servo_step'].v
-                        if  self.servo_centre[self.servo_selected] > (_SERVO_DEFAULT_CENTRE + _SERVO_MAX_TRIM):
-                            self.servo_centre[self.servo_selected] = _SERVO_DEFAULT_CENTRE + _SERVO_MAX_TRIM
-                        if self.hexdrive_app is not None:
-                            if not self.hexdrive_app.set_servocentre(self.servo_centre[self.servo_selected], self.servo_selected):
-                                print("H:Failed to set servo centre")
-                    elif self.servo_mode[self.servo_selected] == 3: # Scanning Mode
-                        # as the rate changes sign when it reaches the range, we must be careful to modify it in the correct direction
-                        if self.servo_rate[self.servo_selected] < 0:
-                            negative = True    
-                            rate = -self.servo_rate[self.servo_selected]
-                        else:
-                            negative = False
-                            rate = self.servo_rate[self.servo_selected]
-                        rate = self._inc(rate, self._auto_repeat_level)
-                        if _SERVO_MAX_RATE < rate:
-                            rate = _SERVO_MAX_RATE
-                        if negative:
-                            self.servo_rate[self.servo_selected] = -rate
-                        else:
-                            self.servo_rate[self.servo_selected] = rate
-                    else:                                            # Position Mode
-                        if  self.servo[self.servo_selected] is None:
-                            self.servo[self.servo_selected] = 0
-                        self.servo_mode[self.servo_selected] = 2    
-                        self.servo[self.servo_selected] += self._settings['servo_step'].v
-                    if self.servo[self.servo_selected] is not None:
-                        if self.servo_range[self.servo_selected] < (self.servo[self.servo_selected] + (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)):
-                            self.servo[self.servo_selected] = self.servo_range[self.servo_selected] - (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)
+            self._update_state_servo(delta)
 
-                    self._refresh = True
-            elif self.button_states.get(BUTTON_TYPES["LEFT"]):
-                if self._auto_repeat_check(delta, not (self.servo_mode[self.servo_selected] == 3)):
-                    if self.servo_mode[self.servo_selected] == 1:    # Trim mode:
-                        # adjust the servo centre position
-                        self.servo_centre[self.servo_selected] -= self._settings['servo_step'].v
-                        if  self.servo_centre[self.servo_selected] < (_SERVO_DEFAULT_CENTRE - _SERVO_MAX_TRIM):
-                            self.servo_centre[self.servo_selected] = _SERVO_DEFAULT_CENTRE - _SERVO_MAX_TRIM
-                        if self.hexdrive_app is not None:
-                            if not self.hexdrive_app.set_servocentre(self.servo_centre[self.servo_selected], self.servo_selected):
-                                print("H:Failed to set servo centre")
-                    elif self.servo_mode[self.servo_selected] == 3: # Scanning Mode
-                        # as the rate changes sign when it reaches the range, we must be careful to modify it in the correct direction
-                        if self.servo_rate[self.servo_selected] < 0:
-                            negative = True    
-                            rate = -self.servo_rate[self.servo_selected]
-                        else:
-                            negative = False
-                            rate = self.servo_rate[self.servo_selected]
-                        rate = self._dec(rate, self._auto_repeat_level)
-                        if _SERVO_MIN_RATE > rate:
-                            rate = _SERVO_MIN_RATE
-                        if negative:
-                            self.servo_rate[self.servo_selected] = -rate
-                        else:
-                            self.servo_rate[self.servo_selected] = rate
-                    else:                                           # Position Mode
-                        if  self.servo[self.servo_selected] is None:
-                            self.servo[self.servo_selected] = 0                        
-                        self.servo_mode[self.servo_selected] = 2    
-                        self.servo[self.servo_selected] -= self._settings['servo_step'].v
-                    if self.servo[self.servo_selected] is not None:
-                        if -self.servo_range[self.servo_selected] > (self.servo[self.servo_selected] + (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)):
-                            self.servo[self.servo_selected] = -self.servo_range[self.servo_selected] - (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)
-
-                    self._refresh = True
-            else:
-                self._auto_repeat_clear()    
-                # non auto-repeating buttons
-                if self.button_states.get(BUTTON_TYPES["UP"]):
-                    self.button_states.clear()
-                    self.servo_selected = (self.servo_selected - 1) % self.num_servos
-                    self._refresh = True
-                elif self.button_states.get(BUTTON_TYPES["DOWN"]):
-                    self.button_states.clear()
-                    self.servo_selected = (self.servo_selected + 1) % self.num_servos
-                    self._refresh = True
-                elif self.button_states.get(BUTTON_TYPES["CANCEL"]):
-                    self.button_states.clear()
-
-                    if self.hexdrive_app is not None:
-                        self.hexdrive_app.set_power(False)
-                        self.hexdrive_app.set_servoposition()   # All Off
-                    self.current_state = STATE_MENU
-                elif self.button_states.get(BUTTON_TYPES["CONFIRM"]): #Cycle Through Modes
-                    self.button_states.clear()
-                    self.servo_mode[self.servo_selected] = (self.servo_mode[self.servo_selected] + 1) % 4
-                    if self.servo_mode[self.servo_selected] == 0:
-                        if self.hexdrive_app is not None:
-                            self.hexdrive_app.set_servoposition(self.servo_selected, None)
-                    else:
-                        self._refresh = True
-                    self.notification = Notification(f" Servo {self.servo_selected}:  {self._servo_modes[self.servo_mode[self.servo_selected]]}")
-
-            if self.current_state == STATE_SERVO:   # check we are still acutally in servo mode
-                for i in range(4):
-                    if self.servo_mode[i] == 3:
-                        # for any servo set to Scan mode, update the position
-                        if self.servo[self.servo_selected] is None:
-                            self.servo[self.servo_selected] = 0                        
-                        self.servo[i] = self.servo[i] + (10 * self.servo_rate[i] * delta / 1000)
-                        if self.servo_range[i] < (self.servo[i] + (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE)):
-                            # swap direction
-                            self.servo_rate[i] = -self.servo_rate[i]
-                            self.servo[i] = self.servo_range[i] - (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE)
-                        elif -self.servo_range[i] > (self.servo[i] + (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE)):
-                            # swap direction
-                            self.servo_rate[i] = -self.servo_rate[i]
-                            self.servo[i] = -self.servo_range[i] - (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE)
-                        self._refresh = True
-                    if self._refresh and self.hexdrive_app is not None and self.servo_mode[i] != 0 and self.servo[i] is not None:
-                        # scanning servo or the selected servo
-                        self.hexdrive_app.set_servoposition(i, int(self.servo[i]))
+    ### Settings Capability ###
         elif self.current_state == STATE_SETTINGS:
-            if self.button_states.get(BUTTON_TYPES["UP"]):
-                if self._auto_repeat_check(delta):
-                    self._edit_setting_value = self._settings[self._edit_setting].inc(self._edit_setting_value, self._auto_repeat_level)
-                    print(f"Setting: {self._edit_setting} (+) Value: {self._edit_setting_value}")
-                    self._refresh = True
-            elif self.button_states.get(BUTTON_TYPES["DOWN"]):
-                if self._auto_repeat_check(delta):
-                    self._edit_setting_value = self._settings[self._edit_setting].dec(self._edit_setting_value, self._auto_repeat_level)                                        
-                    print(f"Setting: {self._edit_setting} (-) Value: {self._edit_setting_value}")
-                    self._refresh = True            
-            else:
-                # non auto-repeating buttons
-                self._auto_repeat_clear()                           
-                if self.button_states.get(BUTTON_TYPES["RIGHT"]) or self.button_states.get(BUTTON_TYPES["LEFT"]):
-                    # Force default value    
-                    self._edit_setting_value = self._settings[self._edit_setting].d
-                    print(f"Setting: {self._edit_setting} Default: {self._edit_setting_value}")
-                    self._refresh = True
-                    self.button_states.clear() 
-                    self.notification = Notification("Default")
-                elif self.button_states.get(BUTTON_TYPES["CANCEL"]):
-                    # leave setting unchanged
-                    print(f"Setting: {self._edit_setting} Cancelled")
-                    self.button_states.clear()
-                    self.set_menu(_main_menu_items[2])
-                    self.current_state = STATE_MENU
-                elif self.button_states.get(BUTTON_TYPES["CONFIRM"]):
-                    # set setting
-                    print(f"Setting: {self._edit_setting} = {self._edit_setting_value}")
-                    self._settings[self._edit_setting].v = self._edit_setting_value
-                    self._settings[self._edit_setting].persist()
-                    self.button_states.clear()
-                    self.notification = Notification(f"{self._edit_setting} = {self._edit_setting_value}")
-                    self.set_menu(_main_menu_items[2])
-                    self.current_state = STATE_MENU
+            self._update_state_settings(delta)
+    ### End of Update ###
 
-        elif self.current_state == STATE_SETTINGS:
-            if self.button_states.get(BUTTON_TYPES["UP"]):
-                if self._auto_repeat_check(delta, False):
-                    self._edit_setting_value = self._settings[self._edit_setting].inc(self._edit_setting_value, self._auto_repeat_level)
-                    if self._settings['logging'].v:
-                        print(f"Setting: {self._edit_setting} (+) Value: {self._edit_setting_value}")
-                    self._refresh = True
-            elif self.button_states.get(BUTTON_TYPES["DOWN"]):
-                if self._auto_repeat_check(delta, False):
-                    self._edit_setting_value = self._settings[self._edit_setting].dec(self._edit_setting_value, self._auto_repeat_level)  
-                    if self._settings['logging'].v:
-                        print(f"Setting: {self._edit_setting} (-) Value: {self._edit_setting_value}")
-                    self._refresh = True            
-            else:
-                # non auto-repeating buttons
-                self._auto_repeat_clear()                           
-                if self.button_states.get(BUTTON_TYPES["RIGHT"]) or self.button_states.get(BUTTON_TYPES["LEFT"]):
-                    self.button_states.clear() 
-                    # Force default value    
-                    self._edit_setting_value = self._settings[self._edit_setting].d
-                    if self._settings['logging'].v:
-                        print(f"Setting: {self._edit_setting} Default: {self._edit_setting_value}")
-                    self._refresh = True
-                    self.notification = Notification("Default")
-                elif self.button_states.get(BUTTON_TYPES["CANCEL"]):
-                    self.button_states.clear()
-                    # leave setting unchanged
-                    if self._settings['logging'].v:
-                        print(f"Setting: {self._edit_setting} Cancelled")
-                    self.set_menu(_main_menu_items[2])
-                    self.current_state = STATE_MENU
-                elif self.button_states.get(BUTTON_TYPES["CONFIRM"]):
-                    self.button_states.clear()
-                    # set setting
-                    if self._settings['logging'].v:
-                        print(f"Setting: {self._edit_setting} = {self._edit_setting_value}")
-                    self._settings[self._edit_setting].v = self._edit_setting_value
-                    self._settings[self._edit_setting].persist()
-                    self.notification = Notification(f"{self._edit_setting} = {self._edit_setting_value}")
-                    self.set_menu(_main_menu_items[2])
-                    self.current_state = STATE_MENU
 
-        if self.current_state != previous_state:
-            # something has changed - so worth redrawing
+    def _update_state_warning(self, delta):
+        if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
+            # Warning has been acknowledged by the user - toggle between warning and logo
+            self.button_states.clear()
+            if self.current_state == STATE_WARNING:
+                self._animation_counter = 0
+                self.current_state = STATE_LOGO
+            elif self.hexdrive_port is not None:
+                self.current_state = STATE_MENU
+            else:
+                self.current_state = STATE_WARNING    
+        else:
+            # "CANCEL" button is handled below in common for all MINIMISE_VALID_STATES 
+            # Show the warning screen for 10 seconds
+            self._animation_counter += delta/1000
+            self._refresh = True
+            if self.current_state == STATE_WARNING and self._animation_counter > 10:
+                # after 10 seconds show the logo
+                self._animation_counter = 0
+                self.current_state = STATE_LOGO
+            elif self.current_state == STATE_LOGO:
+                # LED management - to match rotating logo:
+                for i in range(1,13):
+                    colour = (255, 241, 0)      # custom Robotmad shade of yellow                                
+                    # raised cosine cubed wave
+                    wave = self._settings['brightness'].v * pow((1.0 + cos(((i) *  pi / 1.5) - (self.rpm * self._animation_counter * pi / 7.5)))/2.0, 3)    
+                    # 4 sides each projecting a pattern of 3 LEDs (12 LEDs in total)
+                    tildagonos.leds[i] = tuple(int(wave * j) for j in colour)                                                     
+            else: # STATE_WARNING
+                for i in range(1,13):
+                    tildagonos.leds[i] = (255,0,0)   
+
+
+    def _update_state_error(self, delta):                
+        if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
+            # Error has been acknowledged by the user
+            self.button_states.clear()
+            self.current_state = STATE_CHECK
+            self.error_message = []
+        else:
+            for i in range(1,13):
+                tildagonos.leds[i] = (0,255,0) if self.current_state == STATE_MESSAGE else (255,0,0)       
+
+
+    def _update_state_programming(self, delta):        
+        if self.upgrade_port is not None:
+            if self.update_app_in_eeprom(self.upgrade_port, _EEPROM_ADDR):
+                self.notification = Notification("Upgraded", port = self.upgrade_port)
+                self.ports_with_latest_hexdrive.add(self.upgrade_port)
+                self.error_message = ["Upgraded:","Please","reboop"]
+                self.current_state = STATE_MESSAGE                                     
+                if self._settings['logging'].v:
+                    print(f"H:HexDrive on port {self.upgrade_port} upgraded please reboop")
+            else:
+                self.notification = Notification("Failed", port = self.upgrade_port)
+                self.error_message = ["HexDrive","programming","failed"]
+                self.current_state = STATE_ERROR
+            self.upgrade_port = None
+        elif self.detected_port is not None:
+            if self.prepare_eeprom(self.detected_port, _EEPROM_ADDR):
+                self.notification = Notification("Initialised", port = self.detected_port)
+                self.upgrade_port = self.detected_port
+                self.current_state = STATE_UPGRADE                      
+            else:
+                self.notification = Notification("Failed", port = self.detected_port)
+                self.error_message = ["EEPROM","initialisation","failed"]
+                self.current_state = STATE_ERROR
+            self.detected_port = None
+        elif self._settings['logging'].v:
+            print("H:Error - no port to program")    
+
+
+    def _update_state_detected(self, delta):            
+        # We are currently asking the user if they want hexpansion EEPROM initialising
+        if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
+            self.button_states.clear()
+            self.current_state = STATE_PROGRAMMING        
+        elif self.button_states.get(BUTTON_TYPES["CANCEL"]):
+            self.button_states.clear()
             if self._settings['logging'].v:
-                print(f"State: {previous_state} -> {self.current_state}")
+                print("H:Initialise Cancelled")
+            self.detected_port = None
+            self.current_state = STATE_CHECK
+        elif self.button_states.get(BUTTON_TYPES["UP"]):
+            self.button_states.clear()
+            self.hexpansion_init_type = (self.hexpansion_init_type + 1) % len(self._HEXDRIVE_TYPES)
+            self._refresh = True
+        elif self.button_states.get(BUTTON_TYPES["DOWN"]):
+            self.button_states.clear()
+            self.hexpansion_init_type = (self.hexpansion_init_type - 1) % len(self._HEXDRIVE_TYPES)
+            self._refresh = True
+        elif self.button_states.get(BUTTON_TYPES["LEFT"]):
+            self.button_states.clear()
+            self.hexpansion_init_type = 1
+            self._refresh = True
+        elif self.button_states.get(BUTTON_TYPES["RIGHT"]):
+            self.button_states.clear()
+            self.hexpansion_init_type = 2
             self._refresh = True
 
-        if self.current_state in _LED_CONTROL_STATES:
-            if self._settings['brightness'].v < 1.0:
-                # Scale brightness
-                for i in range(1,13):
-                    tildagonos.leds[i] = tuple(int(j * self._settings['brightness'].v) for j in tildagonos.leds[i])                            
-            tildagonos.leds.write()
+
+    def _update_state_erase(self, delta):
+        # We are currently asking the user if they want hexpansion EEPROM Erased                
+        if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
+            # Yes
+            self.button_states.clear()
+            if self.erase_eeprom(self.erase_port, _EEPROM_ADDR):
+                self.error_message = ["Erased:","Please","reboop"]
+                self.notification = Notification("Erased", port = self.erase_port)
+                self.erase_port = None
+                self.current_state = STATE_MESSAGE                  
+            else:
+                self.notification = Notification("Failed", port = self.erase_port)
+                self.error_message = ["EEPROM","erasure","failed"]
+                self.current_state = STATE_ERROR                       
+        elif self.button_states.get(BUTTON_TYPES["CANCEL"]):
+            # No
+            if self._settings['logging'].v:
+                print("H:Erase Cancelled")
+            self.button_states.clear()
+            self.erase_port = None
+            self.current_state = STATE_CHECK  
+
+
+    def _update_state_upgrade(self, delta):                
+        if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
+            # Yes
+            self.button_states.clear()
+            self.notification = Notification("Upgrading", port = self.upgrade_port)
+            self.current_state = STATE_PROGRAMMING
+        elif self.button_states.get(BUTTON_TYPES["CANCEL"]):
+            # No
+            if self._settings['logging'].v:
+                print("H:Upgrade Cancelled")
+            self.button_states.clear()
+            self.upgrade_port = None
+            self.current_state = STATE_CHECK
+
+
+    def _update_state_check(self, delta):
+        #print(f"Check: {self.ports_with_latest_hexdrive}")
+        if 0 < len(self.ports_with_latest_hexdrive):
+            # We have at least one HexDrive with the latest App.mpy
+            if self.hexdrive_port is not None and self.hexdrive_port not in self.ports_with_latest_hexdrive:
+                print(f"Check: {self.hexdrive_port} lost")
+                self.hexdrive_port = None
+                self.hexdrive_app = None
+            if self.hexdrive_port is None:
+                valid_port = next(iter(self.ports_with_latest_hexdrive))
+                # Find our running hexdrive app
+                hexdrive_app = self.find_hexdrive_app(valid_port)
+                if hexdrive_app is not None:
+                    self.hexdrive_port = valid_port
+                    self.hexdrive_app = hexdrive_app
+                    # only intended for use with a single active HexDrive at once at present
+                    if self.hexdrive_app.get_status():
+                        if self._settings['logging'].v:
+                            print(f"H:HexDrive [{valid_port}] OK")
+                        self.current_state = STATE_MENU
+                        self._animation_counter = 0
+                    else:
+                        if self._settings['logging'].v:    
+                            print(f"H:HexDrive {valid_port}: Failed to initialise PWM resources")
+                        self.error_message = [f"HexDrive {valid_port}","PWM Init","Failed","Please","Reboop"]
+                        self.current_state = STATE_ERROR
+                else:
+                    if self._settings['logging'].v:
+                        print(f"H:HexDrive {valid_port}: App not found, please reboop")
+                    self.error_message = [f"HexDrive {valid_port}","App not found.","Please","reboop"]
+                    self.current_state = STATE_ERROR
+            else:
+                # Still have hexdrive on original port
+                self.current_state = STATE_MENU        
+        elif self.hexdrive_port is not None:
+            print(f"Check: {self.hexdrive_port} lost")
+            self.hexdrive_port = None
+            self.hexdrive_app = None                      
+            self.current_state = STATE_REMOVED
+        else:
+            self._animation_counter = 0                   
+            self.current_state = STATE_WARNING
+
+
+    def _check_hexpansion_ports(self, delta) -> bool:
+        if 0 < len(self.ports_with_blank_eeprom):
+            # if there are any ports with blank eeproms
+            # Show the UI prompt and wait for button press
+            self.detected_port = self.ports_with_blank_eeprom.pop()
+            self.notification = Notification("Initialise?", port = self.detected_port)
+            self.current_state = STATE_DETECTED
+            return True     
+        return False
+
+
+    def _check_hexdrive_ports(self, delta) -> bool:
+        #print(f"Check HexDrive Ports: {self.waiting_app_port} {self.ports_with_hexdrive}")   
+        if self.waiting_app_port is not None or (0 < len(self.ports_with_hexdrive)):
+            # if there are any ports with HexDrives - check if they need upgrading/erasing
+            if self.waiting_app_port is None:
+                self.waiting_app_port = self.ports_with_hexdrive.pop()
+                self._animation_counter = 0  #timeout
+            if self._settings['erase_slot'].v == self.waiting_app_port:
+                # if the user has set a port to erase EEPROMs on
+                # Show the UI prompt and wait for button press
+                if self._settings['logging'].v:
+                    print(f"H:HexDrive on port {self.waiting_app_port} Erase?")
+                self.erase_port = self.waiting_app_port
+                self.notification = Notification("Erase?", port = self.erase_port)
+                self.current_state = STATE_ERASE
+            else:                           
+                hexdrive_app = self.find_hexdrive_app(self.waiting_app_port)
+                # the scheduler is updated asynchronously from hexpansion insertion so we may not find the app immediately
+                if hexdrive_app is not None:
+                    try:
+                        hexdrive_app_version = hexdrive_app.get_version()
+                    except Exception as e:
+                        hexdrive_app_version = 0
+                        print(f"H:Error getting HexDrive app version - assume old: {e}")
+                elif 5.0 < self._animation_counter:
+                    if self._settings['logging'].v:
+                        print("H:Timeout waiting for HexDrive app to be started - assume it needs upgrading")
+                    hexdrive_app_version = 0
+                else:
+                    if 0 == self._animation_counter:
+                        if self._settings['logging'].v:
+                            print(f"H:No app found on port {self.waiting_app_port} - WAITING for app to appear in Scheduler")
+                    self._animation_counter += delta/1000
+                    return True                    
+                if hexdrive_app_version == CURRENT_APP_VERSION:    
+                    if self._settings['logging'].v:
+                        print(f"H:HexDrive on port {self.waiting_app_port} has latest App")
+                    self.ports_with_latest_hexdrive.add(self.waiting_app_port)
+                    self.current_state = STATE_CHECK
+                else:    
+                    # Show the UI prompt and wait for button press
+                    if self._settings['logging'].v:
+                        print(f"H:HexDrive on port {self.waiting_app_port} needs upgrading from version {hexdrive_app_version}")
+                    self.upgrade_port = self.waiting_app_port
+                    self.notification = Notification("Upgrade?", port = self.upgrade_port)
+                    self.current_state = STATE_UPGRADE                             
+            self.waiting_app_port = None
+            self._animation_counter = 0
+            return True
+        return False
+
+
+    def _update_state_help(self, delta):            
+        if self.button_states.get(BUTTON_TYPES["CANCEL"]):
+            self.button_states.clear()
+            self.current_state = STATE_MENU
+        elif self.button_states.get(BUTTON_TYPES["CONFIRM"]):
+            self.button_states.clear()
+            self.is_scroll = True   # so that release of this button will CLEAR Scroll mode
+            self.current_state = STATE_RECEIVE_INSTR
+        else:            
+            # Show the help for 10 seconds
+            self._animation_counter += delta/1000
+            if self._animation_counter > 10:
+                # after 10 seconds show the logo
+                self._animation_counter = 0
+                self.current_state = STATE_LOGO
+
+
+    def _update_state_receive_instr(self, delta):            
+        # Enable/disable scrolling and check for long press
+        if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
+            self.long_press_delta += delta
+            if self.long_press_delta >= _LONG_PRESS_MS:
+                # if there are no steps saved in the power plan then return to HELP, otherwise go to COUNTDOWN
+                if self.power_plan_iter is None:
+                    self.current_state = STATE_HELP
+                else:                            
+                    self.finalize_instruction()
+                    self.current_state = STATE_COUNTDOWN
+                self.is_scroll = False
+        else:
+            # Confirm is not pressed. Reset long_press state
+            self.long_press_delta = 0
+            if self.button_states.get(BUTTON_TYPES["CANCEL"]):
+                self.button_states.clear()
+                self._animation_counter = 0
+                self.is_scroll = False
+                self.current_state = STATE_HELP
+                return
+            # Manage scrolling
+            if self.is_scroll:
+                if self.button_states.get(BUTTON_TYPES["DOWN"]):
+                    self.button_states.clear()
+                    self.scroll_offset -= 1
+                    self._refresh = True                            
+                elif self.button_states.get(BUTTON_TYPES["UP"]):
+                    self.button_states.clear()
+                    self.scroll_offset += 1
+                    self._refresh = True
+            # Instruction button presses
+            elif self.button_states.get(BUTTON_TYPES["RIGHT"]):
+                self._handle_instruction_press(BUTTON_TYPES["RIGHT"])
+                self.button_states.clear()
+                self._set_direction_leds(BUTTON_TYPES["RIGHT"])              
+                self._refresh = True
+            elif self.button_states.get(BUTTON_TYPES["LEFT"]):
+                self._handle_instruction_press(BUTTON_TYPES["LEFT"])
+                self.button_states.clear()
+                self._set_direction_leds(BUTTON_TYPES["LEFT"])            
+                self._refresh = True
+            elif self.button_states.get(BUTTON_TYPES["UP"]):
+                self._handle_instruction_press(BUTTON_TYPES["UP"])
+                self.button_states.clear()
+                self._set_direction_leds(BUTTON_TYPES["UP"])               
+                self._refresh = True
+            elif self.button_states.get(BUTTON_TYPES["DOWN"]):
+                self._handle_instruction_press(BUTTON_TYPES["DOWN"])
+                self.button_states.clear()
+                self._set_direction_leds(BUTTON_TYPES["DOWN"])                 
+                self._refresh = True
+            else:
+                self._set_direction_leds(self.last_press)
+
+
+    def _set_direction_leds(self, direction):
+        if direction == BUTTON_TYPES["RIGHT"]:
+            # Green = Starboard = Right
+            self.clear_leds()
+            tildagonos.leds[2]  = (0, 255, 0)
+            tildagonos.leds[3]  = (0, 255, 0)                
+        elif direction ==BUTTON_TYPES["LEFT"]:
+            # Red = Port = Left
+            self.clear_leds()
+            tildagonos.leds[8]  = (255, 0, 0)
+            tildagonos.leds[9]  = (255, 0, 0)                
+        elif direction == BUTTON_TYPES["UP"]:
+            # Cyan
+            self.clear_leds()
+            tildagonos.leds[12] = (0, 255, 255)
+            tildagonos.leds[1]  = (0, 255, 255)                
+        elif direction == BUTTON_TYPES["DOWN"]:
+            # Magenta
+            self.clear_leds()
+            tildagonos.leds[6]  = (255, 0, 255)
+            tildagonos.leds[7]  = (255, 0, 255)                
+
+
+    def _update_state_countdown(self, delta):            
+        self.clear_leds()
+        self.run_countdown_elapsed_ms += delta
+        if self.run_countdown_elapsed_ms >= _RUN_COUNTDOWN_MS:
+            self.power_plan_iter = chain(*(instr.power_plan for instr in self.instructions))
+            if self.hexdrive_app is not None:
+                self.hexdrive_app.set_power(True)
+            self.current_state = STATE_RUN
+
+
+    def _update_state_done(self, delta):
+        if self.button_states.get(BUTTON_TYPES["CANCEL"]):
+            self.button_states.clear()
+            if self.hexdrive_app is not None:
+                self.hexdrive_app.set_power(False)
+            self.reset_robot()
+        elif self.button_states.get(BUTTON_TYPES["CONFIRM"]):
+            self.button_states.clear()
+            if self.hexdrive_app is not None:
+                self.hexdrive_app.set_power(False)
+            self.run_countdown_elapsed_ms = 1   # avoid "6" appearing on screen at all
+            self.current_power_duration = ((0,0,0,0), 0)
+            self.current_state = STATE_COUNTDOWN
+
+
+    def _update_state_servo(self, delta):            
+        # Servo Tester:
+        # Up/Down to select Servo
+        # Left/Right to adjust position
+        if self.button_states.get(BUTTON_TYPES["RIGHT"]):
+            if self._auto_repeat_check(delta, not (self.servo_mode[self.servo_selected] == 3)):
+                if self.servo_mode[self.servo_selected] == 1:    # Trim mode:
+                    # adjust the servo centre position
+                    self.servo_centre[self.servo_selected] += self._settings['servo_step'].v
+                    if  self.servo_centre[self.servo_selected] > (_SERVO_DEFAULT_CENTRE + _SERVO_MAX_TRIM):
+                        self.servo_centre[self.servo_selected] = _SERVO_DEFAULT_CENTRE + _SERVO_MAX_TRIM
+                    if self.hexdrive_app is not None:
+                        if not self.hexdrive_app.set_servocentre(self.servo_centre[self.servo_selected], self.servo_selected):
+                            print("H:Failed to set servo centre")
+                elif self.servo_mode[self.servo_selected] == 3: # Scanning Mode
+                    # as the rate changes sign when it reaches the range, we must be careful to modify it in the correct direction
+                    if self.servo_rate[self.servo_selected] < 0:
+                        negative = True    
+                        rate = -self.servo_rate[self.servo_selected]
+                    else:
+                        negative = False
+                        rate = self.servo_rate[self.servo_selected]
+                    rate = self._inc(rate, self._auto_repeat_level)
+                    if _SERVO_MAX_RATE < rate:
+                        rate = _SERVO_MAX_RATE
+                    if negative:
+                        self.servo_rate[self.servo_selected] = -rate
+                    else:
+                        self.servo_rate[self.servo_selected] = rate
+                else:                                            # Position Mode
+                    if  self.servo[self.servo_selected] is None:
+                        self.servo[self.servo_selected] = 0
+                    self.servo_mode[self.servo_selected] = 2    
+                    self.servo[self.servo_selected] += self._settings['servo_step'].v
+                if self.servo[self.servo_selected] is not None:
+                    if self.servo_range[self.servo_selected] < (self.servo[self.servo_selected] + (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)):
+                        self.servo[self.servo_selected] = self.servo_range[self.servo_selected] - (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)
+                self._refresh = True
+        elif self.button_states.get(BUTTON_TYPES["LEFT"]):
+            if self._auto_repeat_check(delta, not (self.servo_mode[self.servo_selected] == 3)):
+                if self.servo_mode[self.servo_selected] == 1:    # Trim mode:
+                    # adjust the servo centre position
+                    self.servo_centre[self.servo_selected] -= self._settings['servo_step'].v
+                    if  self.servo_centre[self.servo_selected] < (_SERVO_DEFAULT_CENTRE - _SERVO_MAX_TRIM):
+                        self.servo_centre[self.servo_selected] = _SERVO_DEFAULT_CENTRE - _SERVO_MAX_TRIM
+                    if self.hexdrive_app is not None:
+                        if not self.hexdrive_app.set_servocentre(self.servo_centre[self.servo_selected], self.servo_selected):
+                            print("H:Failed to set servo centre")
+                elif self.servo_mode[self.servo_selected] == 3: # Scanning Mode
+                    # as the rate changes sign when it reaches the range, we must be careful to modify it in the correct direction
+                    if self.servo_rate[self.servo_selected] < 0:
+                        negative = True    
+                        rate = -self.servo_rate[self.servo_selected]
+                    else:
+                        negative = False
+                        rate = self.servo_rate[self.servo_selected]
+                    rate = self._dec(rate, self._auto_repeat_level)
+                    if _SERVO_MIN_RATE > rate:
+                        rate = _SERVO_MIN_RATE
+                    if negative:
+                        self.servo_rate[self.servo_selected] = -rate
+                    else:
+                        self.servo_rate[self.servo_selected] = rate
+                else:                                           # Position Mode
+                    if  self.servo[self.servo_selected] is None:
+                        self.servo[self.servo_selected] = 0                        
+                    self.servo_mode[self.servo_selected] = 2    
+                    self.servo[self.servo_selected] -= self._settings['servo_step'].v
+                if self.servo[self.servo_selected] is not None:
+                    if -self.servo_range[self.servo_selected] > (self.servo[self.servo_selected] + (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)):
+                        self.servo[self.servo_selected] = -self.servo_range[self.servo_selected] - (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)
+                self._refresh = True
+        else:
+            self._auto_repeat_clear()    
+            # non auto-repeating buttons
+            if self.button_states.get(BUTTON_TYPES["UP"]):
+                self.button_states.clear()
+                self.servo_selected = (self.servo_selected - 1) % self.num_servos
+                self._refresh = True
+            elif self.button_states.get(BUTTON_TYPES["DOWN"]):
+                self.button_states.clear()
+                self.servo_selected = (self.servo_selected + 1) % self.num_servos
+                self._refresh = True
+            elif self.button_states.get(BUTTON_TYPES["CANCEL"]):
+                self.button_states.clear()
+                if self.hexdrive_app is not None:
+                    self.hexdrive_app.set_power(False)
+                    self.hexdrive_app.set_servoposition()   # All Off
+                self.current_state = STATE_MENU
+                return
+            elif self.button_states.get(BUTTON_TYPES["CONFIRM"]): #Cycle Through Modes
+                self.button_states.clear()
+                self.servo_mode[self.servo_selected] = (self.servo_mode[self.servo_selected] + 1) % 4
+                if self.servo_mode[self.servo_selected] == 0:
+                    if self.hexdrive_app is not None:
+                        self.hexdrive_app.set_servoposition(self.servo_selected, None)
+                else:
+                    self._refresh = True
+                self.notification = Notification(f"  Servo {self.servo_selected}:\n {self._servo_modes[self.servo_mode[self.servo_selected]]}")
+
+        for i in range(self.num_servos):
+            if self.servo_mode[i] == 3:
+                # for any servo set to Scan mode, update the position
+                if self.servo[self.servo_selected] is None:
+                    self.servo[self.servo_selected] = 0                        
+                self.servo[i] = self.servo[i] + (10 * self.servo_rate[i] * delta / 1000)
+                if self.servo_range[i] < (self.servo[i] + (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE)):
+                    # swap direction
+                    self.servo_rate[i] = -self.servo_rate[i]
+                    self.servo[i] = self.servo_range[i] - (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE)
+                elif -self.servo_range[i] > (self.servo[i] + (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE)):
+                    # swap direction
+                    self.servo_rate[i] = -self.servo_rate[i]
+                    self.servo[i] = -self.servo_range[i] - (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE)
+                self._refresh = True
+            if self._refresh and self.hexdrive_app is not None and self.servo_mode[i] != 0 and self.servo[i] is not None:
+                # scanning servo or the selected servo
+                self.hexdrive_app.set_servoposition(i, int(self.servo[i]))
+
+
+    def _update_state_settings(self, delta):    
+        if self.button_states.get(BUTTON_TYPES["UP"]):
+            if self._auto_repeat_check(delta, False):
+                self._edit_setting_value = self._settings[self._edit_setting].inc(self._edit_setting_value, self._auto_repeat_level)
+                if self._settings['logging'].v:
+                    print(f"Setting: {self._edit_setting} (+) Value: {self._edit_setting_value}")
+                self._refresh = True
+        elif self.button_states.get(BUTTON_TYPES["DOWN"]):
+            if self._auto_repeat_check(delta, False):
+                self._edit_setting_value = self._settings[self._edit_setting].dec(self._edit_setting_value, self._auto_repeat_level)  
+                if self._settings['logging'].v:
+                    print(f"Setting: {self._edit_setting} (-) Value: {self._edit_setting_value}")
+                self._refresh = True            
+        else:
+            # non auto-repeating buttons
+            self._auto_repeat_clear()                           
+            if self.button_states.get(BUTTON_TYPES["RIGHT"]) or self.button_states.get(BUTTON_TYPES["LEFT"]):
+                self.button_states.clear() 
+                # Force default value    
+                self._edit_setting_value = self._settings[self._edit_setting].d
+                if self._settings['logging'].v:
+                    print(f"Setting: {self._edit_setting} Default: {self._edit_setting_value}")
+                self._refresh = True
+                self.notification = Notification("Default")
+            elif self.button_states.get(BUTTON_TYPES["CANCEL"]):
+                self.button_states.clear()
+                # leave setting unchanged
+                if self._settings['logging'].v:
+                    print(f"Setting: {self._edit_setting} Cancelled")
+                self.set_menu(_main_menu_items[2])
+                self.current_state = STATE_MENU
+            elif self.button_states.get(BUTTON_TYPES["CONFIRM"]):
+                self.button_states.clear()
+                # set setting
+                if self._settings['logging'].v:
+                    print(f"Setting: {self._edit_setting} = {self._edit_setting_value}")
+                self._settings[self._edit_setting].v = self._edit_setting_value
+                self._settings[self._edit_setting].persist()
+                self.notification = Notification(f"  Setting:   {self._edit_setting}={self._edit_setting_value}")
+                self.set_menu(_main_menu_items[2])
+                self.current_state = STATE_MENU
 
 
     def draw(self, ctx):
@@ -1142,44 +1239,29 @@ class BadgeBotApp(app.App):
             if   self.current_state == STATE_WARNING:
                 self.draw_message(ctx, ["BadgeBot requires","HexDrive hexpansion","from RobotMad","github.com","/TeamRobotmad","/BadgeBot"], [(1,1,1),(1,1,0),(1,1,0),(1,1,1),(1,1,1),(1,1,1)], label_font_size)
             elif self.current_state == STATE_REMOVED:
-                self.draw_message(ctx, ["HexDrive","removed","Please reinsert"], [(1,1,0),(1,1,1),(1,1,1)], label_font_size)      
+                self.draw_message(ctx, ["HexDrive","removed.","Please reinsert"], [(1,1,0),(1,1,1),(1,1,1)], label_font_size)      
             elif self.current_state == STATE_DETECTED:
-                self.draw_message(ctx, ["Hexpansion","detected in",f"Slot {self.detected_port}","Init EEPROM","as HexDrive?"], [(1,1,1),(1,1,1),(0,0,1),(1,1,1),(1,1,0)], label_font_size)
-                button_labels(ctx, confirm_label="Yes", cancel_label="No")
+                hexdrive_type = self._HEXDRIVE_TYPES[self.hexpansion_init_type].name
+                self.draw_message(ctx, ["Hexpansion",f"in slot {self.detected_port}:","Init EEPROM as",hexdrive_type,"HexDrive?"], [(1,1,1),(1,1,1),(1,1,1),(0,0,1),(1,1,0)], label_font_size)
+                button_labels(ctx, confirm_label="Yes", up_label="^", down_label="\u25BC", left_label=self._HEXDRIVE_TYPES[1].name, right_label=self._HEXDRIVE_TYPES[2].name,  cancel_label="No")
             elif self.current_state == STATE_ERASE:
-                self.draw_message(ctx, ["HexDrive","detected in",f"Slot {self.erase_port}","Erase EEPROM?"], [(1,1,0),(1,1,1),(0,0,1),(1,0,0)], label_font_size)
+                self.draw_message(ctx, ["HexDrive",f"in slot {self.erase_port}:","Erase EEPROM?"], [(1,1,0),(1,1,1),(1,0,0)], label_font_size)
                 button_labels(ctx, confirm_label="Yes", cancel_label="No")
             elif self.current_state == STATE_UPGRADE:
-                self.draw_message(ctx, ["HexDrive","detected in",f"Slot {self.upgrade_port}","Upgrade","HexDrive app?"], [(1,1,0),(1,1,1),(0,0,1),(1,1,1),(1,1,1)], label_font_size)             
+                self.draw_message(ctx, ["HexDrive",f"in slot {self.upgrade_port}:","Upgrade","HexDrive app?"], [(1,1,0),(1,1,1),(1,1,1),(1,1,1)], label_font_size)             
                 button_labels(ctx, confirm_label="Yes", cancel_label="No")
             elif self.current_state == STATE_PROGRAMMING:
                 self.draw_message(ctx, ["HexDrive:","Programming","EEPROM","Please wait..."], [(1,1,0),(1,1,1),(1,1,1),(1,1,1)], label_font_size)            
             elif self.current_state == STATE_HELP:                
-                self.draw_message(ctx, ["BadgeBot","To Program:","Press C","When finished:","Long press C"], [(1,1,0),(1,1,1),(1,1,1),(1,1,1),(1,1,1)], label_font_size)
+                self.draw_message(ctx, ["BadgeBot","To program:","Press C","When finished:","Long press C"], [(1,1,0),(1,1,1),(1,1,1),(1,1,1),(1,1,1)], label_font_size)
             elif self.current_state == STATE_ERROR:
                 self.draw_message(ctx, self.error_message, [(1,0,0)]*len(self.error_message), label_font_size)
             elif self.current_state == STATE_MESSAGE:
                 self.draw_message(ctx, self.error_message, [(0,1,0)]*len(self.error_message), label_font_size)            
             elif self.current_state == STATE_RECEIVE_INSTR:
-                # Display list of movements
-                for i_num, instr in enumerate(["START"] + self.instructions + [self.current_instruction, "END"]):
-                    # map the instruction to a colour & change language from up/down to fwd/rev
-                    colour = (1,1,1)
-                    if instr is not None:
-                        direction = str(instr).split()[0]
-                        if self._settings['logging'].v:
-                            print(direction)
-                        if   direction == "UP":
-                            instr = "FWD " + str(instr).split()[1]
-                            colour = (0,1,1)
-                        elif direction == "DOWN":
-                            instr = "REV " + str(instr).split()[1]
-                            colour = (1,0,1)
-                        elif direction == "LEFT":
-                            colour = (1,0,0)
-                        elif direction == "RIGHT":
-                            colour = (0,1,0)            
-                    ctx.rgb(*colour).move_to(H_START, V_START + label_font_size * (self.scroll_offset + i_num)).text(str(instr))
+                self._draw_receive_instr(ctx)
+                # button labels clash with the instruction list - so not shown
+                #button_labels(ctx, confirm_label="Scroll", up_label="Fwd", down_label="Rev", left_label="Left", right_label="Right",  cancel_label="Cancel")
             elif self.current_state == STATE_COUNTDOWN:
                 countdown_val = 1 + ((_RUN_COUNTDOWN_MS - self.run_countdown_elapsed_ms) // 1000)
                 self.draw_message(ctx, [str(countdown_val)], [(1,1,0)], twentyfour_pt)
@@ -1193,69 +1275,11 @@ class BadgeBotApp(app.App):
                 #self.draw_message(ctx, ["Program","complete!","Replay:Press C","Restart:Press F"], [(0,1,0),(0,1,0),(1,1,0),(0,1,1)], label_font_size)
                 self.draw_message(ctx, ["Program","complete!"], [(0,1,0),(0,1,0)], label_font_size)
                 button_labels(ctx, confirm_label="Replay", cancel_label="Restart")
-
-            elif self.current_state == STATE_SERVO: 
-                servo_text         = ["S"]*(1+self.num_servos)              # Servo Text
-                servo_text_colours = [(0.4,0.0,0.0)]*(1+self.num_servos)    # Red
-                servo_text[0]      = "Servo Test"
-                servo_text_colours[0] = (1,1,1)                       # Title - White
-                for i in range(self.num_servos):
-
-                    # Select Colour according to mode
-                    if self.servo[i] is None or self.servo_mode[i] == 0:
-                        body_colour = (0.2,0.2,0.2)                    # Not activated - Grey
-                        bar_colour  = (0.4,0.4,0.4)                    # Not activated - Grey
-                    elif self.servo_mode[i] == 3:
-                        body_colour = (0.1,0.5,0.1)                    # Scanning - Green 
-                        bar_colour  = (0.1,1.0,0.1)                    # Scanning - Green
-                        servo_text_colours[1+i] = (0.4,0.0,0.4)        # Scanning - Magenta
-                    else:
-                        body_colour = (0.1,0.1,0.5)                    # Active - Blue                    
-                        bar_colour  = (0.1,0.1,1.0)                    # Active - Blue
-                        servo_text_colours[1+i] = (0.4,0.4,0.0)        # Active - Yellow                        
-
-                    # draw the servo positions
-                    ctx.save()
-                    ctx.translate(0, (i-1.5) * label_font_size)
-                    # background for the servo position - grey
-                    background_colour = (0.1,0.1,0.1) if i != self.servo_selected else (0.15,0.15,0.15)                        
-                    ctx.rgb(*background_colour).rectangle(-100,1,200,label_font_size-2).fill() 
-                    c = 100 * (self.servo_centre[i]-_SERVO_DEFAULT_CENTRE) / self.servo_range[i]
-                    if self.servo[i] is not None:
-                        # draw the servo position
-                        x = 100 * (self.servo[i] + self.servo_centre[i] - _SERVO_DEFAULT_CENTRE) / self.servo_range[i]
-
-                        # vertical bar at servo position
-                        ctx.rgb(*bar_colour).rectangle(x-2,1,5,label_font_size-2).fill()
-                        # horizontal bar from 0 to servo position, not covering the centre marker or the servo position bar
-                        ctx.rgb(*body_colour)                        
-                        if   x > (c+4):
-                            ctx.rectangle(c+1, 3, x-c-4, label_font_size-6).fill()
-                        elif x < (c-4):
-                            ctx.rectangle(x+4, 3, c-x-4, label_font_size-6).fill()
-                    # marker for the centre - black (drawn last as it may have to go through the servo position bar)
-                    ctx.rgb(0,0,0).move_to(c,0).line_to(c,label_font_size).stroke()                            
-                    ctx.restore()
-                    if self.servo_mode[i] == 3:
-                        servo_text[i+1] = f"{int(abs(self.servo_rate[i])):4}/s"   # Scanning Rate
-                    else:                                                   # Position
-                        servo_text[i+1] = "Off" if (self.servo[i] is None or self.servo_mode[i] == 0) else f"{int(self.servo[i]):+5} "
-                # Selected Servo - Brighter Text
-                servo_text_colours[1+self.servo_selected] = tuple(int(j * 2.5) for j in servo_text_colours[1+self.servo_selected])                            
-                self.draw_message(ctx, servo_text, servo_text_colours, label_font_size)
-                if self.servo_mode[self.servo_selected] == 3:
-                    # Scanning mode
-                    button_labels(ctx, up_label="^", down_label="\u25BC", confirm_label="Mode", cancel_label="Exit", left_label="Slower", right_label="Faster")
-                elif self.servo_mode[self.servo_selected] == 1:
-                    button_labels(ctx, up_label="^", down_label="\u25BC", confirm_label="Mode", cancel_label="Exit", left_label="Trim-", right_label="+Trim")
-                else:
-                    #Position mode
-                    button_labels(ctx, up_label="^", down_label="\u25BC", confirm_label="Mode", cancel_label="Exit", left_label="<--", right_label="-->")
-                # NB characters \u25B2, \u25C0, \u25BA, \u21A9, \u2611 do not exist, so ii seems \u25BC has been included as a special case
+            elif self.current_state == STATE_SERVO:
+                self._draw_state_servo(ctx)
             elif self.current_state == STATE_SETTINGS:
                 self.draw_message(ctx, ["Edit Setting",f"{self._edit_setting}:",f"{self._edit_setting_value}"], [(1,1,1),(0,0,1),(0,1,0)], label_font_size)
                 button_labels(ctx, up_label="+", down_label="-", confirm_label="Set", cancel_label="Cancel", right_label="Default")
-
             ctx.restore()
 
         # These need to be drawn every frame as they contain animations
@@ -1265,6 +1289,93 @@ class BadgeBotApp(app.App):
 
         if self.notification:
             self.notification.draw(ctx)
+
+
+    def _draw_receive_instr(self, ctx):                
+        # Display list of movements
+        for i_num, instr in enumerate(["START"] + self.instructions + [self.current_instruction, "END"]):
+            # map the instruction to a colour & change language from up/down to fwd/rev
+            colour = (1,1,1)
+            if instr is not None:
+                direction = str(instr).split()[0]
+                #if self._settings['logging'].v:
+                #    print(direction)
+                if   direction == "UP":
+                    instr = "FWD " + str(instr).split()[1]
+                    colour = (0,1,1)
+                elif direction == "DOWN":
+                    instr = "REV " + str(instr).split()[1]
+                    colour = (1,0,1)
+                elif direction == "LEFT":
+                    colour = (1,0,0)
+                elif direction == "RIGHT":
+                    colour = (0,1,0)
+                elif direction == "START" or direction == "END":
+                    colour = (0.5,0.5,0.5)            
+            ctx.rgb(*colour).move_to(H_START, V_START + label_font_size * (self.scroll_offset + i_num)).text(str(instr))
+
+
+    def _draw_state_servo(self, ctx):                 
+        servo_text         = ["S"]*(1+self.num_servos)              # Servo Text
+        servo_text_colours = [(0.4,0.0,0.0)]*(1+self.num_servos)    # Red
+        servo_text[0]      = "Servo Test"
+        servo_text_colours[0] = (1,1,1)                       # Title - White
+        for i in range(self.num_servos):
+
+            # Select Colour according to mode
+            if self.servo[i] is None or self.servo_mode[i] == 0:
+                body_colour = (0.2,0.2,0.2)                    # Not activated - Grey
+                bar_colour  = (0.4,0.4,0.4)                    # Not activated - Grey
+            elif self.servo_mode[i] == 3:
+                body_colour = (0.1,0.5,0.1)                    # Scanning - Green 
+                bar_colour  = (0.1,1.0,0.1)                    # Scanning - Green
+                servo_text_colours[1+i] = (0.4,0.0,0.4)        # Scanning - Magenta
+            else:
+                body_colour = (0.1,0.1,0.5)                    # Active - Blue                    
+                bar_colour  = (0.1,0.1,1.0)                    # Active - Blue
+                servo_text_colours[1+i] = (0.4,0.4,0.0)        # Active - Yellow                        
+
+            # draw the servo positions
+            ctx.save()
+            # y = i-1.5 for 4 servos, y = i-0.5 for 2 servos
+            ctx.translate(0, (i-(self.num_servos/2)+0.5) * label_font_size)
+            # background for the servo position - grey
+            background_colour = (0.1,0.1,0.1) if i != self.servo_selected else (0.15,0.15,0.15)                        
+            ctx.rgb(*background_colour).rectangle(-100,1,200,label_font_size-2).fill() 
+            c = 100 * (self.servo_centre[i]-_SERVO_DEFAULT_CENTRE) / self.servo_range[i]
+            if self.servo[i] is not None:
+                #TODO refactor this into a reusable function for drawing sliders
+                # draw the servo position
+                x = 100 * (self.servo[i] + self.servo_centre[i] - _SERVO_DEFAULT_CENTRE) / self.servo_range[i]
+
+                # vertical bar at servo position
+                ctx.rgb(*bar_colour).rectangle(x-2,1,5,label_font_size-2).fill()
+                # horizontal bar from 0 to servo position, not covering the centre marker or the servo position bar
+                ctx.rgb(*body_colour)                        
+                if   x > (c+4):
+                    ctx.rectangle(c+1, 3, x-c-4, label_font_size-6).fill()
+                elif x < (c-4):
+                    ctx.rectangle(x+4, 3, c-x-4, label_font_size-6).fill()
+            # marker for the centre - black (drawn last as it may have to go through the servo position bar)
+            ctx.rgb(0,0,0).move_to(c,0).line_to(c,label_font_size).stroke()                            
+            ctx.restore()
+            if self.servo_mode[i] == 3:
+                servo_text[i+1] = f"{int(abs(self.servo_rate[i])):4}/s"   # Scanning Rate
+            else:                                                   # Position
+                servo_text[i+1] = "Off" if (self.servo[i] is None or self.servo_mode[i] == 0) else f"{int(self.servo[i]):+5} "
+        # Selected Servo - Brighter Text
+        servo_text_colours[1+self.servo_selected] = tuple(int(j * 2.5) for j in servo_text_colours[1+self.servo_selected])                            
+        self.draw_message(ctx, servo_text, servo_text_colours, label_font_size)
+        if self.servo_mode[self.servo_selected] == 3:
+            # Scanning mode
+            button_labels(ctx, up_label="^", down_label="\u25BC", confirm_label="Mode", cancel_label="Exit", left_label="Slower", right_label="Faster")
+        elif self.servo_mode[self.servo_selected] == 1:
+            button_labels(ctx, up_label="^", down_label="\u25BC", confirm_label="Mode", cancel_label="Exit", left_label="Trim-", right_label="+Trim")
+        else:
+            #Position mode
+            button_labels(ctx, up_label="^", down_label="\u25BC", confirm_label="Mode", cancel_label="Exit", left_label="<--", right_label="-->")
+        # NB characters \u25B2, \u25C0, \u25BA, \u21A9, \u2611 do not exist, so ii seems \u25BC has been included as a special case
+
 
     # Value increment/decrement functions for positive integers only
     def _inc(self, v, l):
@@ -1338,22 +1449,27 @@ class BadgeBotApp(app.App):
 
     def set_menu(self, menu_name = "main"):  #: Literal["main"]): does it work without the type hint?
         if self._settings['logging'].v:
-            print(f"H:Setting Menu to {menu_name}")
+            print(f"H:Set Menu {menu_name}")
         if self.menu is not None:
             self.menu._cleanup()
         self.current_menu = menu_name
         if menu_name == "main":
+            # construct the main menu based on template
+            menu_items = _main_menu_items.copy()
+            if self.num_servos == 0:
+                menu_items.remove("Servo Test")   
+            if self.num_motors == 0:
+                menu_items.remove("Motor Moves")
             self.menu = Menu(
-                self,
-                _main_menu_items,
-                select_handler=self._main_menu_select_handler,
-                back_handler=self._menu_back_handler,
-                )
+                    self,
+                    menu_items,
+                    select_handler=self._main_menu_select_handler,
+                    back_handler=self._menu_back_handler,
+                )            
         elif menu_name == "Settings":
             # construct the settings menu
             _settings_menu_items = ["SAVE ALL", "DEFAULT ALL"]
             for _, setting in enumerate(self._settings):
-
                 _settings_menu_items.append(f"{setting}")
             self.menu = Menu(
                 self,
@@ -1363,19 +1479,22 @@ class BadgeBotApp(app.App):
                 )
 
 
+    # this appears to be able to be called at any time
     def _main_menu_select_handler(self, item, idx):
         if self._settings['logging'].v:
             print(f"H:Main Menu {item} at index {idx}")
-        if   idx == 0: # Motor Test - Turtle/Logo mode
+        if   item == _main_menu_items[0]: # Motor Test - Turtle/Logo mode
             if self.num_motors == 0:
                 self.notification = Notification("No Motors")
+            elif self.num_motors == 1:
+                self.notification = Notification(" 2 Motors  Required")
             else:
                 self.set_menu(None)
                 self.button_states.clear()
                 self._animation_counter = 0
                 self.current_state = STATE_HELP
                 self._refresh = True
-        elif idx == 1: # Servo Test
+        elif item == _main_menu_items[1]: # Servo Test
             if self.num_servos == 0:
                 self.notification = Notification("No Servos")
             else:
@@ -1385,15 +1504,14 @@ class BadgeBotApp(app.App):
                 self.current_state = STATE_SERVO
                 self._refresh = True
                 self._auto_repeat_clear()
-        elif idx == 2: # Settings
-            self.set_menu(_main_menu_items[idx])
-        elif idx == 3: # About
+        elif item == _main_menu_items[2]: # Settings
+            self.set_menu(_main_menu_items[2])
+        elif item == _main_menu_items[3]: # About
             self.set_menu(None)
             self.button_states.clear()
             self._animation_counter = 0
-            eventbus.emit(PatternDisable())                    
             self.current_state = STATE_LOGO
-            self._refresh = True
+            self._refresh = True   
 
 
     def _settings_menu_select_handler(self, item, idx):
@@ -1403,7 +1521,7 @@ class BadgeBotApp(app.App):
             if self._settings['logging'].v:
                 print("H:Settings Save All")
             settings.save()
-            self.notification = Notification("  Settings   Saved")
+            self.notification = Notification("  Settings  Saved")
             self.set_menu("main")
         elif idx == 1: #Default
             if self._settings['logging'].v:
@@ -1411,7 +1529,7 @@ class BadgeBotApp(app.App):
             for s in self._settings:
                 self._settings[s].v = self._settings[s].d
                 self._settings[s].persist()
-            self.notification = Notification(" Settings  Defaulted")
+            self.notification = Notification("  Settings Defaulted")
 
             self.set_menu("main")
         else:
@@ -1514,6 +1632,15 @@ class BadgeBotApp(app.App):
             if len(self.instructions) >= 5:
                 self.scroll_offset -= 1
             self.current_instruction = None
+
+
+class HexDriveType:
+    def __init__(self, pid, vid=0xCAFE, motors=0, servos=0, name="Unknown"):
+        self.vid = vid
+        self.pid = pid
+        self.name = name
+        self.motors = motors
+        self.servos = servos
 
 
 class MySetting:
