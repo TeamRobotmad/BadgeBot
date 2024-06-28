@@ -627,15 +627,7 @@ class BadgeBotApp(app.App):
                 # There are currently no possible HexDrives plugged in
                 self._animation_counter = 0
                 self.current_state = STATE_WARNING
-            else:
-            try:
-
-                    self.error_message = ["Please update","Hexdrive(s)","before updating","badge OTA"]
-                    self.current_state = STATE_MESSAGE                                     
-                    if self._settings['logging'].v:
-                        print(f"H:HexDrive on port {self.upgrade_port} upgraded please reboop")                    
-            except:
-                pass                
+            else:      
                 self.current_state = STATE_CHECK
             return
         
