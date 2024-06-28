@@ -203,7 +203,7 @@ class BadgeBotApp(app.App):
                                 HexDriveType(0xCBCA, motors=2, name="2 Motor"), 
                                 HexDriveType(0xCBCC, servos=4, name="4 Servo"), 
                                 HexDriveType(0xCBCD, motors=1, servos=2, name = "1 Mot 2 Srvo")]  
-        self.hexpansion_type = None
+        self.hexpansion_slot_type = [None]*6
         self.hexpansion_init_type = 0
         self.detected_port = None
         self.waiting_app_port = None
@@ -248,6 +248,7 @@ class BadgeBotApp(app.App):
     ### ASYNC EVENT HANDLERS ###
 
     async def _handle_hexpansion_removal(self, event: HexpansionRemovalEvent):
+        self.hexpansion_slot_type[event.port-1] = None
         if event.port in self.ports_with_blank_eeprom:
             if self._settinfs['logging'].v:
                 print(f"H:EEPROM removed from port {event.port}")
@@ -373,14 +374,13 @@ class BadgeBotApp(app.App):
             self.ports_with_blank_eeprom.add(port)
             return True
         # check is this is a HexDrive header by scanning the _HEXDRIVE_TYPES list
-        for hexpansion_type in self._HEXDRIVE_TYPES:
+        for index, hexpansion_type in enumerate(self._HEXDRIVE_TYPES):
             if read_header.vid == hexpansion_type.vid and read_header.pid == hexpansion_type.pid:
                 if self._settings['logging'].v:
                     print(f"H:Found '{hexpansion_type.name}' HexDrive on port {port}")
-                self.ports_with_hexdrive.add(port)
-                self.hexpansion_type = hexpansion_type
-                self.num_motors = hexpansion_type.motors
-                self.num_servos = hexpansion_type.servos
+                if port not in self.ports_with_latest_hexdrive:
+                    self.ports_with_hexdrive.add(port)
+                self.hexpansion_slot_type[port-1] = index
                 return True
         # we are not interested in this type of hexpansion
         return False
@@ -765,11 +765,14 @@ class BadgeBotApp(app.App):
         if self.upgrade_port is not None:
             if self.update_app_in_eeprom(self.upgrade_port, _EEPROM_ADDR):
                 self.notification = Notification("Upgraded", port = self.upgrade_port)
-                self.ports_with_latest_hexdrive.add(self.upgrade_port)
+                #self.ports_with_latest_hexdrive.add(self.upgrade_port)
+                # Try to trigger hexpansion managment app to restart the HexDrive
+                # by emit hexpansion insertion event
+                eventbus.emit(HexpansionInsertionEvent(self.upgrade_port))
                 self.error_message = ["Upgraded:","Please","reboop"]
                 self.current_state = STATE_MESSAGE                                     
                 if self._settings['logging'].v:
-                    print(f"H:HexDrive on port {self.upgrade_port} upgraded please reboop")
+                    print(f"H:HexDrive on port {self.upgrade_port} upgraded")
             else:
                 self.notification = Notification("Failed", port = self.upgrade_port)
                 self.error_message = ["HexDrive","programming","failed"]
@@ -871,6 +874,9 @@ class BadgeBotApp(app.App):
                 if hexdrive_app is not None:
                     self.hexdrive_port = valid_port
                     self.hexdrive_app = hexdrive_app
+                    if self.hexpansion_slot_type[valid_port-1] is not None:
+                        self.num_motors = self._HEXDRIVE_TYPES[self.hexpansion_slot_type[valid_port-1]].motors
+                        self.num_servos = self._HEXDRIVE_TYPES[self.hexpansion_slot_type[valid_port-1]].servos
                     # only intended for use with a single active HexDrive at once at present
                     if self.hexdrive_app.get_status():
                         if self._settings['logging'].v:
