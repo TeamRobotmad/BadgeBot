@@ -1285,7 +1285,7 @@ class BadgeBotApp(app.App):
             elif self.current_state == STATE_RUN:
                 # convert current_power_duration to string, dividing all four values down by 655 (to get a value from 0-100)
                 current_power, _ = self.current_power_duration
-                power_str = str(tuple([max(-100, x//(self._settings['max_power']//100) for x in current_power]))
+                power_str = str(tuple([max(-100, x//(self._settings['max_power']//100)) for x in current_power]))
                 self.draw_message(ctx, ["Running...",power_str], [(1,1,1),(1,1,0)], label_font_size)
             elif self.current_state == STATE_DONE:
                 #self.draw_message(ctx, ["Program","complete!","Replay:Press C","Restart:Press F"], [(0,1,0),(0,1,0),(1,1,0),(0,1,1)], label_font_size)
