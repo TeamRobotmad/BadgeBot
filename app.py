@@ -187,13 +187,16 @@ class BadgeBotApp(app.App):
         self._edit_setting_value = None       
         self.update_settings()   
 
-        ver = parse_version(ota.version())
-        if ver is not None:
-            if self._settings['logging'].v:
-                print(f"BadgeSW V{ver}")
-            # Potential to do things differently based on badge s/w version
-            # if ver < [1, 9, 0]:
-                
+        # Check what version of the Badge s/w we are running on
+        try:
+            ver = parse_version(ota.get_version())
+            if ver is not None:
+                if self._settings['logging'].v:
+                    print(f"BadgeSW V{ver}")
+                # Potential to do things differently based on badge s/w version
+                # e.g. if ver < [1, 9, 0]:
+        except:
+            pass
 
         # Hexpansion related
         self._HEXDRIVE_TYPES = [HexDriveType(0xCBCB, motors=2, servos=4), 
@@ -275,18 +278,19 @@ class BadgeBotApp(app.App):
 
 
     async def _gain_focus(self, event: RequestForegroundPushEvent):
-        if event.app is self and self.current_state in _LED_CONTROL_STATES:
-            eventbus.emit(PatternDisable())
-        if self.current_state == STATE_RECEIVE_INSTR:
-            eventbus.on_async(ButtonUpEvent, self._handle_button_up, self)
+        if event.app is self:
+            if self.current_state in _LED_CONTROL_STATES:
+                eventbus.emit(PatternDisable())
+            elif self.current_state == STATE_RECEIVE_INSTR:
+                eventbus.on_async(ButtonUpEvent, self._handle_button_up, self)
 
 
     async def _lose_focus(self, event: RequestForegroundPopEvent):
         if event.app is self:
             eventbus.emit(PatternEnable())
             self._pattern_status = True
-        if self.current_state == STATE_RECEIVE_INSTR:
-            eventbus.remove(ButtonUpEvent, self._handle_button_up, self)            
+            if self.current_state == STATE_RECEIVE_INSTR:
+                eventbus.remove(ButtonUpEvent, self._handle_button_up, self)            
 
 
     async def _handle_button_up(self, event: ButtonUpEvent):
@@ -1285,7 +1289,7 @@ class BadgeBotApp(app.App):
             elif self.current_state == STATE_RUN:
                 # convert current_power_duration to string, dividing all four values down by 655 (to get a value from 0-100)
                 current_power, _ = self.current_power_duration
-                power_str = str(tuple([max(-100, x//(self._settings['max_power']//100)) for x in current_power]))
+                power_str = str(tuple([int(x/(self._settings['max_power'].v//100)) for x in current_power]))
                 self.draw_message(ctx, ["Running...",power_str], [(1,1,1),(1,1,0)], label_font_size)
             elif self.current_state == STATE_DONE:
                 #self.draw_message(ctx, ["Program","complete!","Replay:Press C","Restart:Press F"], [(0,1,0),(0,1,0),(1,1,0),(0,1,1)], label_font_size)
@@ -1529,8 +1533,11 @@ class BadgeBotApp(app.App):
             self.current_state = STATE_LOGO
             self._refresh = True   
         elif item == _main_menu_items[4]: # Exit
+            eventbus.remove(HexpansionInsertionEvent, self._handle_hexpansion_insertion, self)
+            eventbus.remove(HexpansionRemovalEvent, self._handle_hexpansion_removal, self)
+            eventbus.remove(RequestForegroundPushEvent, self._gain_focus, self)
+            eventbus.remove(RequestForegroundPopEvent, self._lose_focus, self)
             eventbus.emit(RequestStopAppEvent(self))
-
 
     def _settings_menu_select_handler(self, item, idx):
         if self._settings['logging'].v:
