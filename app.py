@@ -357,9 +357,10 @@ class BadgeBotApp(app.App):
         if port not in range(1, 7):
             return False
         try:
-            i2c = I2C(port)
-            i2c.writeto(_EEPROM_ADDR, bytes([0]*_EEPROM_NUM_ADDRESS_BYTES))  # Read header @ address 0                
-            header_bytes = i2c.readfrom(_EEPROM_ADDR, 32)
+            #i2c = I2C(port)
+            #i2c.writeto(_EEPROM_ADDR, bytes([0]*_EEPROM_NUM_ADDRESS_BYTES))  # Read header @ address 0                
+            #header_bytes = i2c.readfrom(_EEPROM_ADDR, 32)
+            header_bytes = I2C(port).readfrom_mem(_EEPROM_ADDR, 0, 32, addrsize = (8*_EEPROM_NUM_ADDRESS_BYTES))
         except OSError:
             # no EEPROM on this port
             return False
@@ -496,8 +497,9 @@ class BadgeBotApp(app.App):
             finally:
                 time.sleep_ms(1)
         try:
-            i2c.writeto(addr, bytes([0]*_EEPROM_NUM_ADDRESS_BYTES))  # Read header @ address 0                
-            header_bytes = i2c.readfrom(addr, 32)
+            #i2c.writeto(addr, bytes([0]*_EEPROM_NUM_ADDRESS_BYTES))  # Read header @ address 0                
+            #header_bytes = i2c.readfrom(addr, 32)
+            header_bytes = i2c.readfrom_mem(addr, 0, 32, addrsize = (8*_EEPROM_NUM_ADDRESS_BYTES))
         except Exception as e:
             print(f"H:Error reading header back: {e}")
             return False
@@ -526,10 +528,19 @@ class BadgeBotApp(app.App):
             vfs.mount(partition, mountpoint, readonly=False)
             if self._settings['logging'].v:
                 print("H:EEPROM initialised")
+        except OSError as e:
+            if e.args[0] == 1:
+                #already_mounted
+                if self._settings['logging'].v:
+                    print("H:EEPROM initialised")                
+            else:
+                print(f"H:Error mounting: {e}")
+                return False
         except Exception as e:
-            print(f"H:Error mounting: {e}")
+            print(f"H:Error mounting: {e}")                
             return False
         return True 
+
 
     def erase_eeprom(self, port, addr) -> bool:
         if self._settings['logging'].v:
@@ -561,8 +572,9 @@ class BadgeBotApp(app.App):
                 if port is None:
                     return None
                 i2c = I2C(port)
-            i2c.writeto(_EEPROM_ADDR, bytes([0]*_EEPROM_NUM_ADDRESS_BYTES))  # Read header @ address 0                
-            header_bytes = i2c.readfrom(_EEPROM_ADDR, 32)
+            #i2c.writeto(_EEPROM_ADDR, bytes([0]*_EEPROM_NUM_ADDRESS_BYTES))  # Read header @ address 0                
+            #header_bytes = i2c.readfrom(_EEPROM_ADDR, 32)
+            header_bytes = i2c.readfrom_mem(_EEPROM_ADDR, 0, 32, addrsize = (8*_EEPROM_NUM_ADDRESS_BYTES))
             return HexpansionHeader.from_bytes(header_bytes)
         except OSError:     
             return None   

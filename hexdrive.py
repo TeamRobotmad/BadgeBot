@@ -459,8 +459,9 @@ class HexDriveApp(app.App):
     def _check_port_for_hexdrive(self, port) -> int:
         #just read the part of the header which contains the PID
         try:
-            self.config.i2c.writeto(_EEPROM_ADDR, bytes([_PID_ADDR >> 8, _PID_ADDR & 0xFF]))
-            pid_bytes = self.config.i2c.readfrom(_EEPROM_ADDR, 2)
+            #self.config.i2c.writeto(_EEPROM_ADDR, bytes([_PID_ADDR >> 8, _PID_ADDR & 0xFF]))
+            #pid_bytes = self.config.i2c.readfrom(_EEPROM_ADDR, 2)
+            pid_bytes = self.config.i2c.readfrom_mem(_EEPROM_ADDR, _PID_ADDR, 2, addrsize = (8*_EEPROM_NUM_ADDRESS_BYTES))
         except OSError as e:
             # no EEPROM on this port
             print(f"H:{port}:EEPROM error: {e}")
