@@ -82,7 +82,7 @@ def draw_QRCode(ctx, qr_code, size=240, colour=(1,1,1)):
                 ctx.rectangle(x, y, pixel_size+1, pixel_size).fill()  
 
 
-def parse_version(self, version):
+def parse_version(version):
     #pre_components = ["final"]
     #build_components = ["0", "000000z"]
     #build = ""
