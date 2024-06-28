@@ -26,7 +26,7 @@ from tildagonos import tildagonos
 
 import app
 
-from .utils import chain, draw_logo_animated
+from .utils import chain, draw_logo_animated, parse_version
 
 # Hard coded to talk to EEPROMs on address 0x50 - because we know that is what is on the HexDrive Hexpansion
 # makes it a lot more efficient than scanning the I2C bus for devices and working out what they are
