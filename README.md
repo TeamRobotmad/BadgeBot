@@ -25,9 +25,31 @@ The main menu will present options for a demonstration for motors "Motor Moves" 
 ### Settings ###
 
 The main menu includes a sub-menu of Settings which can be adjusted.
-TBA
+#### Motor Moves SETTINGS ####
+| Setting          | Description                               | Default        | Min    | Max    |
+|------------------|-------------------------------------------|----------------|--------|--------|
+| acceleration     | Limits the change in motor drive per tick | 7500           | 1      | 65535  |
+| max_power        | Maximum Motor power level                 | 65536          | 1000   | 65535  |
+| drive_step_ms    | Step duration for driving in ms           | 50             | 5      | 200    |
+| turn_step_ms     | Step duration for turning in ms           | 20             | 5      | 200    |
+#### Servo Test Settings ####
+| Setting          | Description                               | Default        | Min    | Max    |
+|------------------|-------------------------------------------|----------------|--------|--------|
+| servo_step       | Servo pulse step value in us              | 10             | 1      | 100    |
+| servo_range      | Range of servo motion in us               | 1000           | 100    | 1400   |
+| servo_period     | Servo period duration in ms               | 20             | 5      | 50     |
+#### Other Settings ####
+| Setting          | Description                               | Default        | Min    | Max    |
+|------------------|-------------------------------------------|----------------|--------|--------|
+| brightness       | LED brightness                            | 1.0            | 0.1    | 1.0    |
+| logging          | Enable or disable logging                 | False          | False  | True   |
+| erase_slot       | Slot to offer erase function              | 0 (i.e. none)  | 0      | 6      |
 
 ### Limitations ###
+
+When running from badge power the current available is limited - the best way to cope with this is to use low power motors and most importantly to limit the rate of change of the PWM signal, particularly avoiding rapid change of direction. The ```acceleration``` setting provides control of this in the BadgeBot application.
+
+The maximum allowed servo range is VERY WIDE - most Servos will not be able to cope with this, so you probably want to reduce the ```servo_range``` setting to suit your servos.
 
 Each Servo or Motor driver requires a PWM signals to control it, so a single HexDrive takes up four PWM resources on the ESP32.  As there are 8 such resources, the 'flavour' of your HexDrives will determine how many you can run simultaneously as long as you don't have any other hexpansions or applications using PWM resources. Two '4 Servo' or 'Unknown' flavour HexDrives will use up all the available PWM channels, whereas you can run up to 4 HexDrives in '2 Motor' flavour. (While each motor driver does actually require two PWM signals we have been able to reduce this to one by swapping it between the active signal when the motor direction changes.)
 
