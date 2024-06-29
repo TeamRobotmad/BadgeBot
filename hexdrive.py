@@ -145,11 +145,12 @@ class HexDriveApp(app.App):
         # Turn off all PWM outputs & release resources
         self.set_power(False)
         for channel, pwm in enumerate(self.PWMOutput):
-            try:
-                pwm.deinit()    
-            except:
-                pass
-            self.PWMOutput[channel] = None
+            if self.PWMOutput[channel] is not None:
+                try:
+                    self.PWMOutput[channel].deinit()    
+                except:
+                    pass
+                self.PWMOutput[channel] = None
             self._freq[channel] = 0
             self._motor_output[(channel>>1)] = 0            
         for hs_pin in self.config.pin:
@@ -176,11 +177,12 @@ class HexDriveApp(app.App):
         self._time_since_last_update += delta
         if self._time_since_last_update > self._keep_alive_period:
             self._time_since_last_update = 0
-            for pwm in enumerate(self.PWMOutput):
-                try:
-                    pwm.duty_u16(0)
-                except:
-                    pass
+            for channel,pwm in enumerate(self.PWMOutput):
+                if self.PWMOutput[channel] is not None:
+                    try:
+                        self.PWMOutput[channel].duty_u16(0)
+                    except Exception as e:
+                        print(f"H:{self.config.port}:PWM[{pwm}]:Off failed {e}")
             if self._outputs_energised:
                 self._outputs_energised = False
                 # First time the keep alive period has expired so report it
@@ -376,7 +378,6 @@ class HexDriveApp(app.App):
     def set_motors(self, outputs) -> bool:
         if self._pwm_setup_failed:
             return False
-        self._outputs_energised = any(outputs)
         for motor, output in enumerate(outputs):
             if abs(output) > 65535:
                 return False
@@ -433,7 +434,8 @@ class HexDriveApp(app.App):
                 if 0 < channel.duty_ns():
                     energised_output = True
                     break
-            except:
+            except Exception as e:
+                print(f"H:{self.config.port}:PWM:Check failed {e}")
                 pass
         if self._outputs_energised != energised_output:
             if self._logging:
