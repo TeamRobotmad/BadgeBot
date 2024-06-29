@@ -1263,7 +1263,9 @@ class BadgeBotApp(app.App):
             clear_background(ctx)   
             ctx.save()
             ctx.font_size = label_font_size
-            ctx.text_align = ctx.LEFT
+            if ctx.text_align != ctx.LEFT:             
+                print(f"H:Font alignment {ctx.text_align}!")
+                ctx.text_align = ctx.LEFT
             ctx.text_baseline = ctx.BOTTOM            
             if self.current_state == STATE_LOGO:
                 draw_logo_animated(ctx, self.rpm, self._animation_counter, [self.b_msg, self.t_msg], self.qr_code)
