@@ -222,6 +222,8 @@ class BadgeBotApp(app.App):
         self.num_motors   = 2       # Default assumed for a single HexDrive
 
         # Servo Tester
+        self._time_since_last_update = 0
+        self._keep_alive_period      = 500              # ms (half the value used in hexdrive.py)  
         self.num_servos   = 4       # Default assumed for a single HexDrive
         self.servo        = [None]*4                    # Servo Positions
         self.servo_centre = [_SERVO_DEFAULT_CENTRE]*4   # Trim Servo Centre
@@ -1185,8 +1187,14 @@ class BadgeBotApp(app.App):
                 else:
                     self._refresh = True
                 self.notification = Notification(f"  Servo {self.servo_selected}:\n {self._servo_modes[self.servo_mode[self.servo_selected]]}")
+        
+        self._time_since_last_update += delta
+        if self._time_since_last_update > self._keep_alive_period:
+            self._time_since_last_update = 0
+            self._refresh = True
 
         for i in range(self.num_servos):
+            _refresh = self._refreah
             if self.servo_mode[i] == 3:
                 # for any servo set to Scan mode, update the position
                 if self.servo[self.servo_selected] is None:
@@ -1200,8 +1208,8 @@ class BadgeBotApp(app.App):
                     # swap direction
                     self.servo_rate[i] = -self.servo_rate[i]
                     self.servo[i] = -self.servo_range[i] - (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE)
-                self._refresh = True
-            if self._refresh and self.hexdrive_app is not None and self.servo_mode[i] != 0 and self.servo[i] is not None:
+                _refresh = True
+            if _refresh and self.hexdrive_app is not None and self.servo_mode[i] != 0 and self.servo[i] is not None:
                 # scanning servo or the selected servo
                 self.hexdrive_app.set_servoposition(i, int(self.servo[i]))
 
@@ -1472,6 +1480,8 @@ class BadgeBotApp(app.App):
                     self.hexdrive_app.set_servoposition(i, int(self.servo[i]))
             # leave the servo modes as they are
         self.servo_selected = 0
+        self._time_since_last_update = 0
+
 
 
 ### MENU FUNCTIONALITY ###
