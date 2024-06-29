@@ -69,11 +69,11 @@ This repo contains lots of files that you don't need on your badge to use a HexD
 
 ### Hexpansion Recovery ###
 
-If you have issues with a HexDrive, or for that matter any hexpaions fitted with an EEPROM, e.g. a software incompatibility with a particualr badge software version, you can reset the EEPROM back to blank as follows:
+If you have issues with a HexDrive, or for that matter any hexpansion fitted with an EEPROM, e.g. a software incompatibility with a particular badge software version, you can reset the EEPROM back to blank as follows:
 1) Plug in the hexpansion to Slot 1 (will work with any slot but you have to change the "1" below to the slot number.
 2) Connect your favourite Terminal program to the COM port presented by the Badge over USB.
 3) Press "Ctrl" & "C" simultaneously. i.e. "Ctrl-C" 
-4) You should now be presented with a prompt ">>>" which is called the python REPL. At this type in the following lines (the HExDrive EEPROM is 8kbytes so requires 16 bit addressing, hence the ```addrsize=16``` other hexpansions may use smaller EEPROMS where this is not required):
+4) You should now be presented with a prompt ">>>" which is called the python REPL. At this type in the following lines (the HexDrive EEPROM is 8kbytes so requires 16 bit addressing, hence the ```addrsize=16``` other hexpansions may use smaller EEPROMS where this is not required):
    ```
 		from machine import I2C
 		i = I2C(1)
