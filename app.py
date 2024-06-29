@@ -1491,7 +1491,13 @@ class BadgeBotApp(app.App):
         if self._settings['logging'].v:
             print(f"H:Set Menu {menu_name}")
         if self.menu is not None:
-            self.menu._cleanup()
+            try:
+                self.menu._cleanup()
+            except:
+                # See badge-2024-software PR#168
+                # in case badge s/w changes and this is done within the menu s/w
+                # and then access to this function is removed
+                pass
         self.current_menu = menu_name
         if menu_name == "main":
             # construct the main menu based on template
