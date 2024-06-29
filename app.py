@@ -2,7 +2,7 @@ import asyncio
 import os
 import time
 from math import cos, pi
-
+import ota
 import settings
 import vfs
 from app_components.notification import Notification
@@ -19,12 +19,14 @@ from system.hexpansion.util import get_hexpansion_block_devices
 from system.patterndisplay.events import PatternDisable, PatternEnable
 from system.scheduler import scheduler
 from system.scheduler.events import (RequestForegroundPopEvent,
-                                     RequestForegroundPushEvent)
+                                     RequestForegroundPushEvent,
+                                     RequestStopAppEvent)
+
 from tildagonos import tildagonos
 
 import app
 
-from .utils import chain, draw_logo_animated
+from .utils import chain, draw_logo_animated, parse_version
 
 # Hard coded to talk to EEPROMs on address 0x50 - because we know that is what is on the HexDrive Hexpansion
 # makes it a lot more efficient than scanning the I2C bus for devices and working out what they are
@@ -79,6 +81,7 @@ _SERVO_DEFAULT_PERIOD  = 20         # ms
 _SERVO_MAX_RATE        = 1000       # *10us per s
 _SERVO_MIN_RATE        = 1          # *10us per s
 _SERVO_MAX_TRIM        = 1000       # us
+_MAX_SERVO_RANGE       = 1400       # 1400us either side of centre (VERY WIDE)
 
 
 # Timings
@@ -123,17 +126,6 @@ _EEPROM_ADDR  = 0x50
 _EEPROM_NUM_ADDRESS_BYTES = 2
 _EEPROM_PAGE_SIZE = 32
 _EEPROM_TOTAL_SIZE = 64 * 1024 // 8
-_HEXDRIVE_VID = 0xCAFE
-_HEXDRIVE_PID = 0xCBCB
-
-#create a const static python structure to remember 4 differnt types of HEXDRIVE, each with a unique ID and, friendly name and definition of the number of motors ands servos that it has
-# this will allow the app to know what to do with the HexDrive when it is plugged in and to intialise the correct number of motors and servos
-# 0xCBCB has 2 motors and 4 servos (really is has either motors or servos, we just don't knwo which)
-# 0xCBCA has 2 motors and 0 servos
-# 0xCBCC has 0 motors and 4 servos 
-# 0xCDCD has 1 motor  and 2 servos
-
-
 
 
 #Misceallaneous Settings
@@ -141,7 +133,7 @@ _LOGGING = False
 _ERASE_SLOT = 0   # Slot for user to set if they want to erase EEPROMs on HexDrives
 
 # 
-_main_menu_items = ["Motor Moves", "Servo Test", "Settings", "About"]
+_main_menu_items = ["Motor Moves", "Servo Test", "Settings", "About","Exit"]
 
 
 class BadgeBotApp(app.App):
@@ -185,7 +177,7 @@ class BadgeBotApp(app.App):
         self._settings['drive_step_ms'] = MySetting(self._settings, _USER_DRIVE_MS, 5, 200)
         self._settings['turn_step_ms']  = MySetting(self._settings, _USER_TURN_MS, 5, 200)
         self._settings['servo_step']    = MySetting(self._settings, _SERVO_DEFAULT_STEP, 1, 100)
-        self._settings['servo_range']   = MySetting(self._settings, _SERVO_DEFAULT_RANGE, 100, 1400)  # one setting for all servos
+        self._settings['servo_range']   = MySetting(self._settings, _SERVO_DEFAULT_RANGE, 100, _MAX_SERVO_RANGE)  # one setting for all servos
         self._settings['servo_period']  = MySetting(self._settings, _SERVO_DEFAULT_PERIOD, 5, 50)
         self._settings['brightness']    = MySetting(self._settings, _BRIGHTNESS, 0.1, 1.0)
         self._settings['logging']       = MySetting(self._settings, _LOGGING, False, True)
@@ -195,12 +187,23 @@ class BadgeBotApp(app.App):
         self._edit_setting_value = None       
         self.update_settings()   
 
+        # Check what version of the Badge s/w we are running on
+        try:
+            ver = parse_version(ota.get_version())
+            if ver is not None:
+                if self._settings['logging'].v:
+                    print(f"BadgeSW V{ver}")
+                # Potential to do things differently based on badge s/w version
+                # e.g. if ver < [1, 9, 0]:
+        except:
+            pass
+
         # Hexpansion related
         self._HEXDRIVE_TYPES = [HexDriveType(0xCBCB, motors=2, servos=4), 
                                 HexDriveType(0xCBCA, motors=2, name="2 Motor"), 
                                 HexDriveType(0xCBCC, servos=4, name="4 Servo"), 
-                                HexDriveType(0xCDCD, motors=1, servos=2, name = "1 Mot 2 Srvo")]  
-        self.hexpansion_type = None
+                                HexDriveType(0xCBCD, motors=1, servos=2, name = "1 Mot 2 Srvo")]  
+        self.hexpansion_slot_type = [None]*6
         self.hexpansion_init_type = 0
         self.detected_port = None
         self.waiting_app_port = None
@@ -219,6 +222,8 @@ class BadgeBotApp(app.App):
         self.num_motors   = 2       # Default assumed for a single HexDrive
 
         # Servo Tester
+        self._time_since_last_update = 0
+        self._keep_alive_period      = 500              # ms (half the value used in hexdrive.py)  
         self.num_servos   = 4       # Default assumed for a single HexDrive
         self.servo        = [None]*4                    # Servo Positions
         self.servo_centre = [_SERVO_DEFAULT_CENTRE]*4   # Trim Servo Centre
@@ -235,15 +240,16 @@ class BadgeBotApp(app.App):
 
         eventbus.on_async(RequestForegroundPushEvent, self._gain_focus, self)
         eventbus.on_async(RequestForegroundPopEvent, self._lose_focus, self)
-        eventbus.on_async(ButtonUpEvent, self._handle_button_up, self)
 
         # We start with focus on launch, without an event emmited
         self._gain_focus(RequestForegroundPushEvent(self))
    
 
+
     ### ASYNC EVENT HANDLERS ###
 
     async def _handle_hexpansion_removal(self, event: HexpansionRemovalEvent):
+        self.hexpansion_slot_type[event.port-1] = None
         if event.port in self.ports_with_blank_eeprom:
             if self._settinfs['logging'].v:
                 print(f"H:EEPROM removed from port {event.port}")
@@ -267,24 +273,34 @@ class BadgeBotApp(app.App):
         elif self.erase_port is not None and event.port == self.erase_port:
             self.hexpansion_update_required = True    
 
+
     async def _handle_hexpansion_insertion(self, event: HexpansionInsertionEvent):
         if self.check_port_for_hexdrive(event.port):
             self.hexpansion_update_required = True
 
+
     async def _gain_focus(self, event: RequestForegroundPushEvent):
-        if event.app is self and self.current_state in _LED_CONTROL_STATES:
-            eventbus.emit(PatternDisable())
+        if event.app is self:
+            if self.current_state in _LED_CONTROL_STATES:
+                eventbus.emit(PatternDisable())
+            elif self.current_state == STATE_RECEIVE_INSTR:
+                eventbus.on_async(ButtonUpEvent, self._handle_button_up, self)
+
 
     async def _lose_focus(self, event: RequestForegroundPopEvent):
         if event.app is self:
             eventbus.emit(PatternEnable())
             self._pattern_status = True
+            if self.current_state == STATE_RECEIVE_INSTR:
+                eventbus.remove(ButtonUpEvent, self._handle_button_up, self)            
+
 
     async def _handle_button_up(self, event: ButtonUpEvent):
         if self.current_state == STATE_RECEIVE_INSTR and event.button == BUTTONS["C"]:
             self.is_scroll = not self.is_scroll
             state = "yes" if self.is_scroll else "no"
             self.notification = Notification(f"Scroll {state}")
+
 
     async def background_task(self):
         # Modiifed background task loop for shorter sleep time
@@ -307,6 +323,7 @@ class BadgeBotApp(app.App):
                 self.current_state = STATE_DONE
             elif self.hexdrive_app is not None:
                 self.hexdrive_app.set_motors(output)
+
 
     def generate_new_qr(self):
         from .uQR import QRCode
@@ -335,15 +352,14 @@ class BadgeBotApp(app.App):
         for port in range(1, 7):
             self.check_port_for_hexdrive(port)
 
+
     def check_port_for_hexdrive(self, port) -> bool:
         # avoiding use of badge read_hexpansion_header as this triggers a full i2c scan each time
         # we know the EEPROM address so we can just read the header directly
         if port not in range(1, 7):
             return False
         try:
-            i2c = I2C(port)
-            i2c.writeto(_EEPROM_ADDR, bytes([0]*_EEPROM_NUM_ADDRESS_BYTES))  # Read header @ address 0                
-            header_bytes = i2c.readfrom(_EEPROM_ADDR, 32)
+            header_bytes = I2C(port).readfrom_mem(_EEPROM_ADDR, 0, 32, addrsize = (8*_EEPROM_NUM_ADDRESS_BYTES))
         except OSError:
             # no EEPROM on this port
             return False
@@ -356,17 +372,17 @@ class BadgeBotApp(app.App):
             self.ports_with_blank_eeprom.add(port)
             return True
         # check is this is a HexDrive header by scanning the _HEXDRIVE_TYPES list
-        for hexpansion_type in self._HEXDRIVE_TYPES:
+        for index, hexpansion_type in enumerate(self._HEXDRIVE_TYPES):
             if read_header.vid == hexpansion_type.vid and read_header.pid == hexpansion_type.pid:
                 if self._settings['logging'].v:
                     print(f"H:Found '{hexpansion_type.name}' HexDrive on port {port}")
-                self.ports_with_hexdrive.add(port)
-                self.hexpansion_type = hexpansion_type
-                self.num_motors = hexpansion_type.motors
-                self.num_servos = hexpansion_type.servos
+                if port not in self.ports_with_latest_hexdrive:
+                    self.ports_with_hexdrive.add(port)
+                self.hexpansion_slot_type[port-1] = index
                 return True
         # we are not interested in this type of hexpansion
         return False
+
 
     def update_app_in_eeprom(self, port, addr) -> bool:
         # Copy hexdrive.mpy to EEPROM as app.mpy
@@ -448,6 +464,7 @@ class BadgeBotApp(app.App):
             print(f"H:HexDrive app.mpy updated to version {CURRENT_APP_VERSION}")            
         return True
     
+
     def prepare_eeprom(self, port, addr) -> bool:
         if self._settings['logging'].v:
             print(f"H:Initialising EEPROM on port {port}")
@@ -478,8 +495,7 @@ class BadgeBotApp(app.App):
             finally:
                 time.sleep_ms(1)
         try:
-            i2c.writeto(addr, bytes([0]*_EEPROM_NUM_ADDRESS_BYTES))  # Read header @ address 0                
-            header_bytes = i2c.readfrom(addr, 32)
+            header_bytes = i2c.readfrom_mem(addr, 0, 32, addrsize = (8*_EEPROM_NUM_ADDRESS_BYTES))
         except Exception as e:
             print(f"H:Error reading header back: {e}")
             return False
@@ -508,10 +524,19 @@ class BadgeBotApp(app.App):
             vfs.mount(partition, mountpoint, readonly=False)
             if self._settings['logging'].v:
                 print("H:EEPROM initialised")
+        except OSError as e:
+            if e.args[0] == 1:
+                #already_mounted
+                if self._settings['logging'].v:
+                    print("H:EEPROM initialised")                
+            else:
+                print(f"H:Error mounting: {e}")
+                return False
         except Exception as e:
-            print(f"H:Error mounting: {e}")
+            print(f"H:Error mounting: {e}")                
             return False
         return True 
+
 
     def erase_eeprom(self, port, addr) -> bool:
         if self._settings['logging'].v:
@@ -543,8 +568,7 @@ class BadgeBotApp(app.App):
                 if port is None:
                     return None
                 i2c = I2C(port)
-            i2c.writeto(_EEPROM_ADDR, bytes([0]*_EEPROM_NUM_ADDRESS_BYTES))  # Read header @ address 0                
-            header_bytes = i2c.readfrom(_EEPROM_ADDR, 32)
+            header_bytes = i2c.readfrom_mem(_EEPROM_ADDR, 0, 32, addrsize = (8*_EEPROM_NUM_ADDRESS_BYTES))
             return HexpansionHeader.from_bytes(header_bytes)
         except OSError:     
             return None   
@@ -607,13 +631,13 @@ class BadgeBotApp(app.App):
 
     def _update_hexpansion_management(self, delta):
         if self.current_state == STATE_INIT:
-            # One Time initialisation      
+            # One Time initialisation
             self.scan_ports()
             if (len(self.ports_with_hexdrive) == 0) and (len(self.ports_with_blank_eeprom) == 0):
                 # There are currently no possible HexDrives plugged in
                 self._animation_counter = 0
                 self.current_state = STATE_WARNING
-            else:
+            else:      
                 self.current_state = STATE_CHECK
             return
         
@@ -690,14 +714,13 @@ class BadgeBotApp(app.App):
 
     def _update_state_warning(self, delta):
         if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
-            # Warning has been acknowledged by the user - toggle between warning and logo
             self.button_states.clear()
-            if self.current_state == STATE_WARNING:
+            if self.current_state == STATE_WARNING or self.hexdrive_port is not None:
+                # Warning has been acknowledged by the user
                 self._animation_counter = 0
-                self.current_state = STATE_LOGO
-            elif self.hexdrive_port is not None:
-                self.current_state = STATE_MENU
+                self.current_state = STATE_MENU # allow access to settings and About
             else:
+                # Return to Warning screen from Logo when no HexDrive is present
                 self.current_state = STATE_WARNING    
         else:
             # "CANCEL" button is handled below in common for all MINIMISE_VALID_STATES 
@@ -736,11 +759,14 @@ class BadgeBotApp(app.App):
         if self.upgrade_port is not None:
             if self.update_app_in_eeprom(self.upgrade_port, _EEPROM_ADDR):
                 self.notification = Notification("Upgraded", port = self.upgrade_port)
-                self.ports_with_latest_hexdrive.add(self.upgrade_port)
+                #self.ports_with_latest_hexdrive.add(self.upgrade_port)
+                # Try to trigger hexpansion managment app to restart the HexDrive
+                # by emit hexpansion insertion event
+                eventbus.emit(HexpansionInsertionEvent(self.upgrade_port))
                 self.error_message = ["Upgraded:","Please","reboop"]
                 self.current_state = STATE_MESSAGE                                     
                 if self._settings['logging'].v:
-                    print(f"H:HexDrive on port {self.upgrade_port} upgraded please reboop")
+                    print(f"H:HexDrive on port {self.upgrade_port} upgraded")
             else:
                 self.notification = Notification("Failed", port = self.upgrade_port)
                 self.error_message = ["HexDrive","programming","failed"]
@@ -842,6 +868,9 @@ class BadgeBotApp(app.App):
                 if hexdrive_app is not None:
                     self.hexdrive_port = valid_port
                     self.hexdrive_app = hexdrive_app
+                    if self.hexpansion_slot_type[valid_port-1] is not None:
+                        self.num_motors = self._HEXDRIVE_TYPES[self.hexpansion_slot_type[valid_port-1]].motors
+                        self.num_servos = self._HEXDRIVE_TYPES[self.hexpansion_slot_type[valid_port-1]].servos
                     # only intended for use with a single active HexDrive at once at present
                     if self.hexdrive_app.get_status():
                         if self._settings['logging'].v:
@@ -914,6 +943,7 @@ class BadgeBotApp(app.App):
                     if 0 == self._animation_counter:
                         if self._settings['logging'].v:
                             print(f"H:No app found on port {self.waiting_app_port} - WAITING for app to appear in Scheduler")
+                    self.notification = Notification("Checking...", port = self.waiting_app_port)                            
                     self._animation_counter += delta/1000
                     return True                    
                 if hexdrive_app_version == CURRENT_APP_VERSION:    
@@ -941,6 +971,7 @@ class BadgeBotApp(app.App):
         elif self.button_states.get(BUTTON_TYPES["CONFIRM"]):
             self.button_states.clear()
             self.is_scroll = True   # so that release of this button will CLEAR Scroll mode
+            eventbus.on_async(ButtonUpEvent, self._handle_button_up, self)
             self.current_state = STATE_RECEIVE_INSTR
         else:            
             # Show the help for 10 seconds
@@ -963,6 +994,7 @@ class BadgeBotApp(app.App):
                     self.finalize_instruction()
                     self.current_state = STATE_COUNTDOWN
                 self.is_scroll = False
+                eventbus.remove(ButtonUpEvent, self._handle_button_up, self)            
         else:
             # Confirm is not pressed. Reset long_press state
             self.long_press_delta = 0
@@ -971,6 +1003,7 @@ class BadgeBotApp(app.App):
                 self._animation_counter = 0
                 self.is_scroll = False
                 self.current_state = STATE_HELP
+                eventbus.remove(ButtonUpEvent, self._handle_button_up, self)            
                 return
             # Manage scrolling
             if self.is_scroll:
@@ -1154,8 +1187,14 @@ class BadgeBotApp(app.App):
                 else:
                     self._refresh = True
                 self.notification = Notification(f"  Servo {self.servo_selected}:\n {self._servo_modes[self.servo_mode[self.servo_selected]]}")
+        
+        self._time_since_last_update += delta
+        if self._time_since_last_update > self._keep_alive_period:
+            self._time_since_last_update = 0
+            self._refresh = True
 
         for i in range(self.num_servos):
+            _refresh = self._refresh
             if self.servo_mode[i] == 3:
                 # for any servo set to Scan mode, update the position
                 if self.servo[self.servo_selected] is None:
@@ -1169,8 +1208,8 @@ class BadgeBotApp(app.App):
                     # swap direction
                     self.servo_rate[i] = -self.servo_rate[i]
                     self.servo[i] = -self.servo_range[i] - (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE)
-                self._refresh = True
-            if self._refresh and self.hexdrive_app is not None and self.servo_mode[i] != 0 and self.servo[i] is not None:
+                _refresh = True
+            if _refresh and self.hexdrive_app is not None and self.servo_mode[i] != 0 and self.servo[i] is not None:
                 # scanning servo or the selected servo
                 self.hexdrive_app.set_servoposition(i, int(self.servo[i]))
 
@@ -1224,7 +1263,9 @@ class BadgeBotApp(app.App):
             clear_background(ctx)   
             ctx.save()
             ctx.font_size = label_font_size
-            ctx.text_align = ctx.LEFT
+            if ctx.text_align != ctx.LEFT:             
+                print(f"H:Font alignment {ctx.text_align}!")
+                ctx.text_align = ctx.LEFT
             ctx.text_baseline = ctx.BOTTOM            
             if self.current_state == STATE_LOGO:
                 draw_logo_animated(ctx, self.rpm, self._animation_counter, [self.b_msg, self.t_msg], self.qr_code)
@@ -1268,8 +1309,7 @@ class BadgeBotApp(app.App):
             elif self.current_state == STATE_RUN:
                 # convert current_power_duration to string, dividing all four values down by 655 (to get a value from 0-100)
                 current_power, _ = self.current_power_duration
-                power_str = str(tuple([x//655 for x in current_power]))
-                #TODO - remember the directon to be shown: direction_str = str(self.current_instruction.press_type)
+                power_str = str(tuple([int(x/(self._settings['max_power'].v//100)) for x in current_power]))
                 self.draw_message(ctx, ["Running...",power_str], [(1,1,1),(1,1,0)], label_font_size)
             elif self.current_state == STATE_DONE:
                 #self.draw_message(ctx, ["Program","complete!","Replay:Press C","Restart:Press F"], [(0,1,0),(0,1,0),(1,1,0),(0,1,1)], label_font_size)
@@ -1442,6 +1482,8 @@ class BadgeBotApp(app.App):
                     self.hexdrive_app.set_servoposition(i, int(self.servo[i]))
             # leave the servo modes as they are
         self.servo_selected = 0
+        self._time_since_last_update = 0
+
 
 
 ### MENU FUNCTIONALITY ###
@@ -1451,7 +1493,13 @@ class BadgeBotApp(app.App):
         if self._settings['logging'].v:
             print(f"H:Set Menu {menu_name}")
         if self.menu is not None:
-            self.menu._cleanup()
+            try:
+                self.menu._cleanup()
+            except:
+                # See badge-2024-software PR#168
+                # in case badge s/w changes and this is done within the menu s/w
+                # and then access to this function is removed
+                pass
         self.current_menu = menu_name
         if menu_name == "main":
             # construct the main menu based on template
@@ -1512,7 +1560,12 @@ class BadgeBotApp(app.App):
             self._animation_counter = 0
             self.current_state = STATE_LOGO
             self._refresh = True   
-
+        elif item == _main_menu_items[4]: # Exit
+            eventbus.remove(HexpansionInsertionEvent, self._handle_hexpansion_insertion, self)
+            eventbus.remove(HexpansionRemovalEvent, self._handle_hexpansion_removal, self)
+            eventbus.remove(RequestForegroundPushEvent, self._gain_focus, self)
+            eventbus.remove(RequestForegroundPopEvent, self._lose_focus, self)
+            eventbus.emit(RequestStopAppEvent(self))
 
     def _settings_menu_select_handler(self, item, idx):
         if self._settings['logging'].v:
