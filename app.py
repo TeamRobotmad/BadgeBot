@@ -1194,7 +1194,7 @@ class BadgeBotApp(app.App):
             self._refresh = True
 
         for i in range(self.num_servos):
-            _refresh = self._refreah
+            _refresh = self._refresh
             if self.servo_mode[i] == 3:
                 # for any servo set to Scan mode, update the position
                 if self.servo[self.servo_selected] is None:
