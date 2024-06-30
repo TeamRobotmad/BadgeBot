@@ -1,8 +1,10 @@
 # BadgeBot app
 
-Companion app for HexDrive expansion, assuming BadgeBot configuration with 2 motors.
+Companion app for HexDrive expansion, assuming BadgeBot configuration with 2 motors or 4 servos.
 
 This guide is current for Badgebot version 1.2
+
+As this application has become quite complicated if you are looking for example code to use a HexDrive please see [HExDriveUseTemplate](https://github.com/TeamRobotmad/HexDriveUseTemplate)
 
 ## User guide
 
