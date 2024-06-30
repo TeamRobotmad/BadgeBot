@@ -37,4 +37,4 @@ description = "A demo tildagon app for use with Hex Drive hexpansion "
 # increased, we interpret this as a new version being released.
 #
 # Version number must be an integer!
-version = "0.5.1"
+version = "1.2.0"
