@@ -2,15 +2,56 @@
 
 Companion app for HexDrive expansion, assuming BadgeBot configuration with 2 motors.
 
+This guide is current for Badgebot version 1.2
+
 ## User guide
 
 Install the BadgeBot app and then plug your HexDrive board into any of the hexpansion slots on your EMF Camp 2024 Badge.  If your HexDrive EEPROM has not been initialised before you will be promted to confirm that the hexpansion is a HexDrive, if you have other hexpansions plugged in which have uninitialised EEPROMs then please be careful to only initialise the correct one as being a HexDrive.
 
-If your HexDrive software (stored on the EEPROM on the hexpansion) is not the latest version then you will be prompted to update this - please confirm by pressing the "C" (confirm) button.
+If your HexDrive software (stored on the EEPROM on the hexpansion) is not the latest version then you will be prompted to update this.  You can select from 4 'flavours' of configuration suitable for:
+- 2 Motor
+- 4 Servo
+- 1 Motor and 2 Servos
+- Unknown
 
+Once you have selected the desired 'flavour' - please confirm by pressing the "C" (confirm) button.
+ 
 There must be a HexDrive board plugged in and running the latest software to use the BadgeBot app. If this is not the case then you will see a warning that you need a HexDrive with a reference to this repo. 
 
-Each motor driver requires two PWM signals to control it, so a single HexDrive takes up four PWM resources on the ESP32.  As there are 8 such resources you can run two HexDrives simultaneously as long as you don't have any other hexpansions or applications using PWM resources.
+### Main Menu ###
+
+The main menu will present options for a demonstration for motors "Motor Moves" or a simple "Servo Test" function.
+
+### Settings ###
+
+The main menu includes a sub-menu of Settings which can be adjusted.
+#### Motor Moves SETTINGS ####
+| Setting          | Description                               | Default        | Min    | Max    |
+|------------------|-------------------------------------------|----------------|--------|--------|
+| acceleration     | Limits the change in motor drive per tick | 7500           | 1      | 65535  |
+| max_power        | Maximum Motor power level                 | 65536          | 1000   | 65535  |
+| drive_step_ms    | Step duration for driving in ms           | 50             | 5      | 200    |
+| turn_step_ms     | Step duration for turning in ms           | 20             | 5      | 200    |
+#### Servo Test Settings ####
+| Setting          | Description                               | Default        | Min    | Max    |
+|------------------|-------------------------------------------|----------------|--------|--------|
+| servo_step       | Servo pulse step value in us              | 10             | 1      | 100    |
+| servo_range      | Range of servo motion in us               | 1000           | 100    | 1400   |
+| servo_period     | Servo period duration in ms               | 20             | 5      | 50     |
+#### Other Settings ####
+| Setting          | Description                               | Default        | Min    | Max    |
+|------------------|-------------------------------------------|----------------|--------|--------|
+| brightness       | LED brightness                            | 1.0            | 0.1    | 1.0    |
+| logging          | Enable or disable logging                 | False          | False  | True   |
+| erase_slot       | Slot to offer erase function              | 0 (i.e. none)  | 0      | 6      |
+
+### Limitations ###
+
+When running from badge power the current available is limited - the best way to cope with this is to use low power motors and most importantly to limit the rate of change of the PWM signal, particularly avoiding rapid change of direction. The ```acceleration``` setting provides control of this in the BadgeBot application.
+
+The maximum allowed servo range is VERY WIDE - most Servos will not be able to cope with this, so you probably want to reduce the ```servo_range``` setting to suit your servos.
+
+Each Servo or Motor driver requires a PWM signals to control it, so a single HexDrive takes up four PWM resources on the ESP32.  As there are 8 such resources, the 'flavour' of your HexDrives will determine how many you can run simultaneously as long as you don't have any other hexpansions or applications using PWM resources. Two '4 Servo' or 'Unknown' flavour HexDrives will use up all the available PWM channels, whereas you can run up to 4 HexDrives in '2 Motor' flavour. (While each motor driver does actually require two PWM signals we have been able to reduce this to one by swapping it between the active signal when the motor direction changes.)
 
 If you unplug a HexDrive the PWM resources will be released immediately so you can move them around the badge easily. 
 
@@ -19,11 +60,34 @@ If you unplug a HexDrive the PWM resources will be released immediately so you c
 
 Stable version available via [Tildagon App Directory](https://apps.badge.emfcamp.org/).
 
-This repo contains lots of files that you don't need on your badge to use a HexDrive. If you want to load a minimal application onto a badge directly you only need the files (as long as you have already initialised the HExDrive EEPROM):
+This repo contains lots of files that you don't need on your badge to use a HexDrive. If you want to load a minimal application onto a badge directly you only need the files (as long as you have already initialised the HexDrive EEPROM):
 + app.py
 + tildagon.toml
 + metadata.json
 + utils.py
+
+
+### Hexpansion Recovery ###
+
+If you have issues with a HexDrive, or for that matter any hexpansion fitted with an EEPROM, e.g. a software incompatibility with a particular badge software version, you can reset the EEPROM back to blank as follows:
+1) Plug in the hexpansion to Slot 1 (will work with any slot but you have to change the "1" below to the slot number.
+2) Connect your favourite Terminal program to the COM port presented by the Badge over USB.
+3) Press "Ctrl" & "C" simultaneously. i.e. "Ctrl-C" 
+4) You should now be presented with a prompt ">>>" which is called the python REPL. At this type in the following lines (the HexDrive EEPROM is 8kbytes so requires 16 bit addressing, hence the ```addrsize=16``` other hexpansions may use smaller EEPROMS where this is not required):
+   ```
+		from machine import I2C
+		i = I2C(1)
+		i.writeto_mem(0x50, 0, bytes([0xFF]*8192), addrsize=16)
+   ```
+6) As long as there is no Traceback then this worked. But you can check by reading back the EEPROM contents with:
+   ```
+		i.readfrom_mem(0x50,0,32,addrsize=16)
+   ```
+	You should get a response which confirms that the first 32 bytes have been reset back to 0xFF:
+```
+    b'\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff'
+```
+
 
 
 ### Construction guide & useful documents
@@ -50,16 +114,18 @@ Call ```set_pwm()``` to set the duty cycle of the 4 PWM channels which control t
 note the extra set of brackets as the function argument is a single tupple of 4 values rather than being 4 individual values.
 
 
-To protect against most badge/software crashes causing the motors to run out of control there is a keep alive mechanism which means that if you do not make a call to the ```set_pwm``` fucntion the motors will be turned off after 1000mS (default - which can be changed with a call to ```set_keep_alive()```).
+To protect against most badge/software crashes causing the motors or servos to run out of control there is a keep alive mechanism which means that if you do not make a call to the ```set_pwm```, ```set_motors``` or ```set_servoposition``` functions the motors/servos will be turned off after 1000mS (default - which can be changed with a call to ```set_keep_alive()```).
 
-You can adjust the PWM frequency, default 20000Hz by calling the ```set_freq()``` function.
+You can adjust the PWM frequency, default 20000Hz for motors and 50Hz for servos by calling the ```set_freq()``` function.
 
 ### Servos
 You can control 1,2,3 or 4 RC hobby servos (centre pulse width 1500us).  The first time you set a pulse width for a channel using ```set_servo()``` the PWM frequency for that channel will be set to 50Hz.
-Channels 0 & 1 take up signals that would otherwise control Motor 1 and Channels 2 & 3 take up the channels that are used for Motor 2.
+The first two Channels take up signals that would otherwise control Motor 1 and teh second two Channels take up the signals that are used for Motor 2.
 You can use one motor and 1 or 2 servos simultaneously.
 
+
 ### Developers setup
+This is to help develop the BadgeBot application
 ```
 git clone https://github.com/TeamRobotmad/badge-2024-software.git
 cd badge-2024-software.git
