@@ -14,7 +14,7 @@ from machine import I2C
 from system.eventbus import eventbus
 from system.hexpansion.events import (HexpansionInsertionEvent,
                                       HexpansionRemovalEvent)
-from system.hexpansion.header import HexpansionHeader
+from system.hexpansion.header import HexpansionHeader, write_header, read_header
 from system.hexpansion.util import get_hexpansion_block_devices
 from system.patterndisplay.events import PatternDisable, PatternEnable
 from system.scheduler import scheduler
@@ -354,18 +354,16 @@ class BadgeBotApp(app.App):
 
 
     def check_port_for_hexdrive(self, port) -> bool:
-        # avoiding use of badge read_hexpansion_header as this triggers a full i2c scan each time
         # we know the EEPROM address so we can just read the header directly
         if port not in range(1, 7):
             return False
+        # We want to do this in two parts so that we detect if there is a valid EEPROM or not
         try:
-            header_bytes = I2C(port).readfrom_mem(_EEPROM_ADDR, 0, 32, addrsize = (8*_EEPROM_NUM_ADDRESS_BYTES))
+            hexpansion_header = read_header(port, addr_len=_EEPROM_NUM_ADDRESS_BYTES)
         except OSError:
             # no EEPROM on this port
             return False
-        try:
-            read_header = HexpansionHeader.from_bytes(header_bytes)
-        except Exception:
+        except RuntimeError:
             # not a valid header
             if self._settings['logging'].v:
                 print(f"H:Found EEPROM on port {port}")
@@ -373,7 +371,7 @@ class BadgeBotApp(app.App):
             return True
         # check is this is a HexDrive header by scanning the _HEXDRIVE_TYPES list
         for index, hexpansion_type in enumerate(self._HEXDRIVE_TYPES):
-            if read_header.vid == hexpansion_type.vid and read_header.pid == hexpansion_type.pid:
+            if hexpansion_header.vid == hexpansion_type.vid and hexpansion_header.pid == hexpansion_type.pid:
                 if self._settings['logging'].v:
                     print(f"H:Found '{hexpansion_type.name}' HexDrive on port {port}")
                 if port not in self.ports_with_latest_hexdrive:
@@ -393,13 +391,13 @@ class BadgeBotApp(app.App):
         except Exception as e:
             print(f"H:Error opening I2C port {port}: {e}")
             return False
-        header = self.read_hexpansion_header(i2c=i2c)
+        header = read_header(port, addr_len = _EEPROM_NUM_ADDRESS_BYTES)
         if header is None:
             if self._settings['logging'].v:
                 print(f"H:Error reading header on port {port}")
             return False
         try:
-            _, partition = get_hexpansion_block_devices(i2c, header, addr)
+            _, partition = get_hexpansion_block_devices(i2c, header, addr, addr_len = _EEPROM_NUM_ADDRESS_BYTES)
         except RuntimeError as e:
             print(f"H:Error getting block devices: {e}")
             return False              
@@ -481,32 +479,22 @@ class BadgeBotApp(app.App):
         # Write and read back header efficiently
         try:
             i2c = I2C(port)
-            i2c.writeto(addr, bytes([0]*_EEPROM_NUM_ADDRESS_BYTES) + hexdrive_header.to_bytes())
+        except Exception as e:
+            print(f"H:Error opening I2C port {port}: {e}")
+            return False
+        try:
+            write_header(port, hexdrive_header, addr_len = _EEPROM_NUM_ADDRESS_BYTES, page_size = _EEPROM_PAGE_SIZE)       
         except Exception as e:
             print(f"H:Error writing header: {e}")
             return False
-        # Poll ACK
-        while True:
-            try:
-                if i2c.writeto(addr, bytes([0]*_EEPROM_NUM_ADDRESS_BYTES)):  # Poll ACK
-                    break
-            except OSError:
-                pass
-            finally:
-                time.sleep_ms(1)
         try:
-            header_bytes = i2c.readfrom_mem(addr, 0, 32, addrsize = (8*_EEPROM_NUM_ADDRESS_BYTES))
+            hexpansion_header = read_header(port, addr_len = _EEPROM_NUM_ADDRESS_BYTES)
         except Exception as e:
             print(f"H:Error reading header back: {e}")
             return False
         try:
-            read_header = HexpansionHeader.from_bytes(header_bytes)
-        except Exception as e:
-            print(f"H:Error parsing header: {e}")
-            return False
-        try:
             # Get block devices
-            _, partition = get_hexpansion_block_devices(i2c, read_header, addr)
+            _, partition = get_hexpansion_block_devices(i2c, hexpansion_header, addr, addr_len = _EEPROM_NUM_ADDRESS_BYTES)
         except RuntimeError as e:
             print(f"H:Error getting block devices: {e}")
             return False           
@@ -543,14 +531,16 @@ class BadgeBotApp(app.App):
             print(f"H:Erasing EEPROM on port {port}")
         try:
             i2c = I2C(port)
-            i2c.writeto(addr, bytes([0]*_EEPROM_NUM_ADDRESS_BYTES))
             # loop through all pages and erase them
             for page in range(_EEPROM_TOTAL_SIZE // _EEPROM_PAGE_SIZE):
-                i2c.writeto(addr, bytes([page >> 8, page & 0xFF]) + bytes([0xFF]*_EEPROM_PAGE_SIZE))
+                mem_addr = page * _EEPROM_PAGE_SIZE
+                #generate a bit mask for the address based on the number of address bytes
+                mem_addr_mask = 1<<(_EEPROM_NUM_ADDRESS_BYTES*8)-1
+                i2c.writeto_mem((addr | (mem_addr >> (8*_EEPROM_NUM_ADDRESS_BYTES))), (mem_addr & mem_addr_mask), bytes([0xFF]*_EEPROM_PAGE_SIZE), addrsize = (8*_EEPROM_NUM_ADDRESS_BYTES))
                 # check Ack
                 while True:
-                    try:
-                        if i2c.writeto(addr, bytes([page >> 8, page & 0xFF])):  # Poll ACK
+                    try:    # Poll Ack
+                        if i2c.writeto((addr | (mem_addr >> (8*_EEPROM_NUM_ADDRESS_BYTES))), bytes([mem_addr & 0xFF]) if _EEPROM_NUM_ADDRESS_BYTES == 1 else bytes([mem_addr >> 8, mem_addr & 0xFF])):
                             break
                     except OSError:
                         pass
@@ -559,19 +549,7 @@ class BadgeBotApp(app.App):
         except Exception as e:
             print(f"H:Error erasing EEPROM: {e}")
             return False
-        return True
-
-
-    def read_hexpansion_header(self, i2c=None, port=None) -> HexpansionHeader:                
-        try:
-            if i2c is None:
-                if port is None:
-                    return None
-                i2c = I2C(port)
-            header_bytes = i2c.readfrom_mem(_EEPROM_ADDR, 0, 32, addrsize = (8*_EEPROM_NUM_ADDRESS_BYTES))
-            return HexpansionHeader.from_bytes(header_bytes)
-        except OSError:     
-            return None   
+        return True 
 
 
     def find_hexdrive_app(self, port) -> app:                    
@@ -776,10 +754,12 @@ class BadgeBotApp(app.App):
             if self.prepare_eeprom(self.detected_port, _EEPROM_ADDR):
                 self.notification = Notification("Initialised", port = self.detected_port)
                 self.upgrade_port = self.detected_port
+                self.hexpansion_slot_type[self.detected_port-1] = self.hexpansion_init_type
                 self.current_state = STATE_UPGRADE                      
             else:
                 self.notification = Notification("Failed", port = self.detected_port)
                 self.error_message = ["EEPROM","initialisation","failed"]
+                self.hexpansion_slot_type[self.detected_port-1] = None
                 self.current_state = STATE_ERROR
             self.detected_port = None
         elif self._settings['logging'].v:
@@ -1263,8 +1243,8 @@ class BadgeBotApp(app.App):
             clear_background(ctx)   
             ctx.save()
             ctx.font_size = label_font_size
-            if ctx.text_align != ctx.LEFT:             
-                print(f"H:Font alignment {ctx.text_align}!")
+            if ctx.text_align != ctx.LEFT:
+                # See https://github.com/emfcamp/badge-2024-software/issues/181             
                 ctx.text_align = ctx.LEFT
             ctx.text_baseline = ctx.BOTTOM            
             if self.current_state == STATE_LOGO:
