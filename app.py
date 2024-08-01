@@ -147,12 +147,46 @@ class StepperMode:
     OFF = 0
     POSITION = 1
     SPEED = 2
+    stepper_modes = ["OFF", "POSITION", "SPEED"]
+
+    def __init__(self, mode = OFF):
+        self.mode = mode
+        
+    def set(self, mode):
+        self.mode = mode
+
+    def inc(self):
+        self.mode = (self.mode + 1) % 3
+
+    def __eq__(self, other):
+        return self.mode == other
+    
+    def __str__(self):
+        return self.stepper_modes[self.mode]
+
 
 class ServoMode:
     OFF = 0
     TRIM = 1
     POSITION = 2
     SCANNING = 3
+    servo_modes = ["OFF", "TRIM", "POSITION", "SCANNING"]
+    
+    def __init__(self, mode = OFF):
+        self.mode = mode
+
+    def set(self, mode):
+        self.mode = mode
+
+    def inc(self):
+        self.mode = (self.mode + 1) % 4
+    
+    def __eq__(self, other):
+        return self.mode == other
+    
+    def __str__(self):
+        return self.servo_modes[self.mode]
+
 
 class BadgeBotApp(app.App):
     def __init__(self):
@@ -176,15 +210,15 @@ class BadgeBotApp(app.App):
         self.t_msg: str = "RobotMad"
         self.is_scroll: bool = False
         self.scroll_offset: int = 0
-        self.notification = None
-        self.error_message = []
-        self.current_menu = None
-        self.menu = None
+        self.notification: Notification = None
+        self.error_message = [str]
+        self.current_menu: str = None
+        self.menu: Menu = None
 
         # BadgeBot Control Sequence Variables
         self.run_countdown_elapsed_ms: int = 0
-        self.instructions = []
-        self.current_instruction = None
+        self.instructions = [Instruction]
+        self.current_instruction: Instruction = None
         self.current_power_duration = ((0,0,0,0), 0)
         self.power_plan_iter = iter([])
 
@@ -200,9 +234,9 @@ class BadgeBotApp(app.App):
         self._settings['brightness']    = MySetting(self._settings, _BRIGHTNESS, 0.1, 1.0)
         self._settings['logging']       = MySetting(self._settings, _LOGGING, False, True)
         self._settings['erase_slot']    = MySetting(self._settings, _ERASE_SLOT, 0, 6)
+        self._settings['step_max_pos']  = MySetting(self._settings, _STEPPER_MAX_POSITION, 0, 65535)
 
-
-        self._edit_setting: int = None
+        self._edit_setting: int  = None
         self._edit_setting_value = None       
         self.update_settings()   
 
@@ -227,7 +261,7 @@ class BadgeBotApp(app.App):
         self.hexpansion_init_type: int = 0
         self.detected_port: int = None
         self.waiting_app_port: int = None
-        self.erase_port: int = None
+        self.erase_port: int  = None
         self.upgrade_port: int = None
         self.hexdrive_port: int = None
         self.ports_with_blank_eeprom = set()
@@ -241,12 +275,13 @@ class BadgeBotApp(app.App):
         # Motor Driver
         self.num_motors: int = 2       # Default assumed for a single HexDrive
         self.num_steppers: int = 1       # Default assumed for a single HexDrive
-        self._stepper = None
-        #self._stepper_modes = list(StepperMode)
-        self.stepper_mode = StepperMode.OFF
+        self._stepper: Stepper = None
+        self.stepper_mode = StepperMode()
         self.stepper_pos: int = 0
 
         # Servo Tester
+        self._time_since_last_input: int = 0
+        self._timeout_period: int = 60000                      # ms        
         self._time_since_last_update: int = 0
         self._keep_alive_period: int = 500                     # ms (half the value used in hexdrive.py)  
         self.num_servos: int     = 4                           # Default assumed for a single HexDrive
@@ -254,9 +289,8 @@ class BadgeBotApp(app.App):
         self.servo_centre        = [_SERVO_DEFAULT_CENTRE]*4   # Trim Servo Centre
         self.servo_range         = [_SERVO_DEFAULT_RANGE]*4    # Limit Servo Range
         self.servo_rate          = [_SERVO_DEFAULT_RATE]*4     # Servo Rate of Change
-        self.servo_mode          = [ServoMode.OFF]*4     # Servo Mode
+        self.servo_mode          = [ServoMode()]*4               # Servo Mode
         self.servo_selected: int = 0
-        #self._servo_modes = list(ServoMode)
 
         # Overall app state (controls what is displayed and what user inputs are accepted)
         self.current_state = STATE_INIT
@@ -1109,7 +1143,7 @@ class BadgeBotApp(app.App):
                     self._stepper.speed(speed)
                 else:
                     if self.stepper_mode != StepperMode.POSITION:                  # Position Mode
-                        self.stepper_mode = StepperMode.POSITION
+                        self.stepper_mode.set(StepperMode.POSITION)
                         self._stepper.speed(_STEPPER_DEFAULT_SPEED)
                         self._stepper.enable(True)
                         self._stepper.track_target()
@@ -1127,7 +1161,7 @@ class BadgeBotApp(app.App):
                     self._stepper.speed(speed)  
                 else:                                           # Position Mode
                     if self.stepper_mode != StepperMode.POSITION:
-                        self.stepper_mode = StepperMode.POSITION
+                        self.stepper_mode.set(StepperMode.POSITION)
                         self._stepper.speed(_STEPPER_DEFAULT_SPEED)
                         self._stepper.enable(True)
                         self._stepper.track_target()
@@ -1146,8 +1180,7 @@ class BadgeBotApp(app.App):
                 return
             elif self.button_states.get(BUTTON_TYPES["CONFIRM"]): #Cycle Through Modes
                 self.button_states.clear()
-                #self.stepper_mode = self._stepper_modes[(self._stepper_modes.index(self.stepper_mode) + 1) % len(self._stepper_modes)]
-                #self.stepper_mode = (self.stepper_mode + 1) % len(StepperMode)
+                self.stepper_mode.inc()
                 if self.stepper_mode == StepperMode.POSITION:      # Position Mode
                     self._stepper.speed(_STEPPER_DEFAULT_SPEED)
                     self._stepper.enable(True)
@@ -1162,14 +1195,20 @@ class BadgeBotApp(app.App):
                 self._refresh = True
                 self.notification = Notification(f"  Stepper:\n {self.stepper_mode}")
                 print(f"Stepper:{self.stepper_mode}")
-        if self.stepper_mode == StepperMode.SPEED:    # Speed Mode
-            self._refresh = True
+        if self._refresh:                
+            self._time_since_last_input = 0
+        else:
+            self._time_since_last_input += delta                
+            if self._time_since_last_input > self._timeout_period:
+                self._stepper.stop()
+                self.current_state = STATE_MENU
+                self.notification = Notification("  Stepper:\n Timeout")            
+            elif self.stepper_mode == StepperMode.SPEED:    # Speed Mode
+                self._refresh = True
         self._time_since_last_update += delta
         if self._time_since_last_update > self._keep_alive_period:
             self._stepper.step()
             self._time_since_last_update = 0
-
-        _refresh = self._refresh
 
 
     def _update_state_servo(self, delta: int):            
@@ -1204,7 +1243,7 @@ class BadgeBotApp(app.App):
                 else:                                            # Position Mode
                     if  self.servo[self.servo_selected] is None:
                         self.servo[self.servo_selected] = 0
-                    self.servo_mode[self.servo_selected] = ServoMode.POSITION    
+                    self.servo_mode[self.servo_selected].set(ServoMode.POSITION)    
                     self.servo[self.servo_selected] += self._settings['servo_step'].v
                 if self.servo[self.servo_selected] is not None:
                     if self.servo_range[self.servo_selected] < (self.servo[self.servo_selected] + (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)):
@@ -1238,7 +1277,7 @@ class BadgeBotApp(app.App):
                 else:                                           # Position Mode
                     if  self.servo[self.servo_selected] is None:
                         self.servo[self.servo_selected] = 0                        
-                    self.servo_mode[self.servo_selected] = ServoMode.POSITION    
+                    self.servo_mode[self.servo_selected].set(ServoMode.POSITION)    
                     self.servo[self.servo_selected] -= self._settings['servo_step'].v
                 if self.servo[self.servo_selected] is not None:
                     if -self.servo_range[self.servo_selected] > (self.servo[self.servo_selected] + (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)):
@@ -1264,8 +1303,7 @@ class BadgeBotApp(app.App):
                 return
             elif self.button_states.get(BUTTON_TYPES["CONFIRM"]): #Cycle Through Modes
                 self.button_states.clear()
-                #self.servo_mode[self.servo_selected] = self._servo_modes[(self._servo_modes.index(self.servo_mode[self.servo_selected]) + 1) % len(self._servo_modes)]
-                #self.servo_mode[self.servo_selected] = (self.servo_mode[self.servo_selected] + 1) % len(ServoMode)
+                self.servo_mode[self.servo_selected].inc()
                 if self.servo_mode[self.servo_selected] == ServoMode.OFF:
                     if self.hexdrive_app is not None:
                         self.hexdrive_app.set_servoposition(self.servo_selected, None)
@@ -1273,6 +1311,17 @@ class BadgeBotApp(app.App):
                     self._refresh = True
                 self.notification = Notification(f"  Servo {self.servo_selected}:\n {self.servo_mode[self.servo_selected]}")
         
+        if self._refresh:                
+            self._time_since_last_input = 0
+        else:
+            self._time_since_last_input += delta                
+            if self._time_since_last_input > self._timeout_period:
+                if self.hexdrive_app is not None:
+                    self.hexdrive_app.set_power(False)
+                    self.hexdrive_app.set_servoposition()   # All Off                
+                self.current_state = STATE_MENU
+                self.notification = Notification("  Servo:\n Timeout")   
+
         self._time_since_last_update += delta
         if self._time_since_last_update > self._keep_alive_period:
             self._time_since_last_update = 0
@@ -1467,7 +1516,7 @@ class BadgeBotApp(app.App):
             ctx.rgb(*background_colour).rectangle(-100,1,200,label_font_size-2).fill() 
             c = 0
             # draw the stepper position
-            x = 100 * (self._stepper.get_pos() / _STEPPER_MAX_POSITION)
+            x = 100 * (self._stepper.get_pos() / self._settings['step_max_pos'].v)
             # vertical bar at servo position
             ctx.rgb(*bar_colour).rectangle(x-2,1,5,label_font_size-2).fill()
             # horizontal bar from 0 to servo position, not covering the centre marker or the servo position bar
@@ -1615,6 +1664,7 @@ class BadgeBotApp(app.App):
             # leave the servo modes as they are
         self.servo_selected = 0
         self._time_since_last_update = 0
+        self._time_since_last_input = 0
 
 
 
@@ -1684,7 +1734,7 @@ class BadgeBotApp(app.App):
                     # try timer IDs 0-3 until one is free
                     for i in range(4):
                         try: 
-                            self._stepper = Stepper(self.hexdrive_app, timer_id=i) # self._settings['stepper_steps'].v)
+                            self._stepper = Stepper(self.hexdrive_app, timer_id=i, max_pos=self._settings['step_max_pos'].v)
                             break
                         except:
                             pass
@@ -1929,7 +1979,7 @@ class Stepper:
                     # we have reached the endstop
                     self._hit_endstop()
             except Exception as e:                       
-                print(e)
+                print(f"step phase {self._phase} failed:{e}")
 
     def _hit_endstop(self):             
         print("Endstop - hit")
@@ -1937,7 +1987,7 @@ class Stepper:
             self._calibrated = True
         # set this as the new zero position
         self.overwrite_pos(0)
-
+        self.speed(0)
 
     def _timer_callback(self,t):
         if self._free_run_mode>0:
@@ -1965,7 +2015,7 @@ class Stepper:
                 self._freq = 0
                 self._timer_is_running=False
             except Exception as e:
-                print(e)
+                print(f"update_timer failed:{e}")
         if 0 != freq and freq != self._freq:
             try:                
                 print(f"Timer: {freq}Hz")
@@ -1973,7 +2023,7 @@ class Stepper:
                 self._freq = freq
                 self._timer_is_running=True
             except Exception as e:
-                print(e)        
+                print(f"update_timer failed:{e}")        
 
     def stop(self):
         self._free_run_mode=0
@@ -1981,7 +2031,7 @@ class Stepper:
         try:
             self._hexdrive_app.motor_release()
         except Exception as e:
-            print(e)
+            print(f"stop failed:{e}")
 
     def enable(self,e = True):
         self._enabled=e
@@ -1992,7 +2042,7 @@ class Stepper:
                 self._hexdrive_app.motor_release()
             self._hexdrive_app.set_power(e)
         except Exception as e:
-            print(e)
+            print(f"enable failed:{e}")
 
 
     def is_enabled(self) -> bool:
