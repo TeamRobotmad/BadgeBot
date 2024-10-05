@@ -1,6 +1,6 @@
 import asyncio
-import aioble
-import bluetooth
+#import aioble
+#import bluetooth
 import os
 import time
 from math import cos, pi
@@ -34,11 +34,11 @@ from .utils import chain, draw_logo_animated, parse_version
 
 # See the following for generating UUIDs:
 # https://www.uuidgenerator.net/
-_BLE_SERVICE_UUID = bluetooth.UUID('19b10000-e8f2-537e-4f6c-d104768a1214')
-_BLE_SENSOR_CHAR_UUID = bluetooth.UUID('19b10001-e8f2-537e-4f6c-d104768a1214')
-_BLE_LED_UUID = bluetooth.UUID('19b10002-e8f2-537e-4f6c-d104768a1214')
+#_BLE_SERVICE_UUID = bluetooth.UUID('19b10000-e8f2-537e-4f6c-d104768a1214')
+#_BLE_SENSOR_CHAR_UUID = bluetooth.UUID('19b10001-e8f2-537e-4f6c-d104768a1214')
+#_BLE_LED_UUID = bluetooth.UUID('19b10002-e8f2-537e-4f6c-d104768a1214')
 # How frequently to send advertising beacons.
-_ADV_INTERVAL_MS = 250_000
+#_ADV_INTERVAL_MS = 250_000
 
 
 # Hard coded to talk to EEPROMs on address 0x50 - because we know that is what is on the HexDrive Hexpansion
@@ -312,11 +312,11 @@ class BadgeBotApp(app.App):
         eventbus.on_async(RequestForegroundPushEvent, self._gain_focus, self)
         eventbus.on_async(RequestForegroundPopEvent, self._lose_focus, self)
 
-        ### Bluetooth ###
+        ### Bluetooth ### NOT WORKING YET
         # Register GATT server, the service and characteristics
-        self.ble_service = aioble.Service(_BLE_SERVICE_UUID)
-        self.sensor_characteristic = aioble.Characteristic(self.ble_service, _BLE_SENSOR_CHAR_UUID, read=True, notify=True)
-        self.led_characteristic = aioble.Characteristic(self.ble_service, _BLE_LED_UUID, read=True, write=True, notify=True, capture=True)
+        #self.ble_service = aioble.Service(_BLE_SERVICE_UUID)
+        #self.sensor_characteristic = aioble.Characteristic(self.ble_service, _BLE_SENSOR_CHAR_UUID, read=True, notify=True)
+        #self.led_characteristic = aioble.Characteristic(self.ble_service, _BLE_LED_UUID, read=True, write=True, notify=True, capture=True)
         # Register service(s)
         #aioble.register_services(self.ble_service)
 
