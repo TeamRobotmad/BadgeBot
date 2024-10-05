@@ -46,7 +46,7 @@ _ADV_INTERVAL_MS = 250_000
 
 CURRENT_APP_VERSION = 6 # HEXDRIVE.PY Integer Version Number - checked against the EEPROM app.py version to determine if it needs updating
 
-_APP_VERSION = "1.4" # BadgeBot App Version Number
+_APP_VERSION = "1.5" # BadgeBot App Version Number
 
 # If you change the URL then you will need to regenerate the QR code
 _QR_CODE = [0x1fcf67f, 
@@ -98,7 +98,7 @@ _MAX_SERVO_RANGE       = 1400       # 1400us either side of centre (VERY WIDE)
 
 # Stepper Tester - Defaults
 _STEPPER_MAX_SPEED     = 200        # full steps per second
-_STEPPER_MAX_POSITION  = 3100       # full steps from h/w endstop to s/w endstop at the other end
+_STEPPER_MAX_POSITION  = 3100       # full steps from one end to the other end
 _STEPPER_DEFAULT_SPEED = 50         # full steps per second
 _STEPPER_NUM_PHASES    = 8          # half steps
 _STEPPER_DEFAULT_SPR   = 200        # full steps per revolution
@@ -147,12 +147,6 @@ _EEPROM_ADDR  = 0x50
 _EEPROM_NUM_ADDRESS_BYTES = 2
 _EEPROM_PAGE_SIZE = 32
 _EEPROM_TOTAL_SIZE = 64 * 1024 // 8
-
-X_DIR = 0
-X_STEP = 1
-Y_DIR = 2
-Y_STEP = 3
-
 
 #Misceallaneous Settings
 _LOGGING = False
@@ -2033,6 +2027,8 @@ class Stepper:
         except Exception as e:                       
             print(f"step phase {self._phase} failed:{e}")
 
+    # There is no code to handle the endstop being hit at present - it needs to be specific to the hardware
+    # i.e. which pin is connected to the endstop.
     def _hit_endstop(self):             
         print("Endstop - hit")
         if not self._calibrated:
