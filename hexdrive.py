@@ -4,14 +4,20 @@
 
 import asyncio
 import ota
+import settings
+from app_components.tokens import label_font_size, clear_background
+from events.input import ButtonUpEvent
 from machine import PWM, Pin
 from system.eventbus import eventbus
-from system.scheduler.events import RequestStopAppEvent
+from system.scheduler.events import RequestForegroundPopEvent, RequestForegroundPushEvent, RequestStopAppEvent
 
 import app
 
 # HexDrive.py App Version - used to check if upgrade is required
 APP_VERSION = 6 
+
+_PROMPT_DELAY_MS = 5000     # Delay before prompting user to install BadgeBot
+_PROMPT_SETTING  = "hexdrive.prompted"  # Settings key to remember we have prompted
 
 
 _ENABLE_PIN  = 0  # First LS pin used to enable the SMPSU
@@ -54,6 +60,10 @@ class HexDriveApp(app.App):
         # define the stepping sequence for a 8-phase stepper motor as a list of 4-tuples
         self._step = [(1,0,1,0), (0,0,1,0), (0,1,1,0), (0,1,0,0), (0,1,0,1), (0,0,0,1), (1,0,0,1), (1,0,0,0)]        
         self._stepper = False
+        self._interrogated = False
+        self._time_since_start = 0
+        self._in_foreground = False
+        self._prompted = settings.get(_PROMPT_SETTING, False)
         if config is None:
             print("H:No Config!")
             return
@@ -63,6 +73,8 @@ class HexDriveApp(app.App):
 
         self._servo_centre = [_SERVO_CENTRE] * 4
         eventbus.on_async(RequestStopAppEvent, self._handle_stop_app, self)
+        eventbus.on_async(RequestForegroundPushEvent, self._handle_gain_focus, self)
+        eventbus.on_async(RequestForegroundPopEvent, self._handle_lose_focus, self)
         try:
             ver = self._parse_version(ota.get_version())
             print(f"H:S/W {ver}")
@@ -127,9 +139,34 @@ class HexDriveApp(app.App):
             pass      
 
 
+    async def _handle_gain_focus(self, event):
+        if event.app == self:
+            self._in_foreground = True
+            eventbus.on_async(ButtonUpEvent, self._handle_button_up, self)
+
+
+    async def _handle_lose_focus(self, event):
+        if event.app == self:
+            self._in_foreground = False
+            eventbus.remove(ButtonUpEvent, self._handle_button_up, self)
+
+
+    async def _handle_button_up(self, event):
+        if self._in_foreground:
+            eventbus.emit(RequestForegroundPopEvent(self))
+
+
     # Check keep alive period and turn off PWM outputs if exceeded
     def background_update(self, delta: int):
-        if (self.config is None) or not (self._pwm_setup or self._stepper):
+        if self.config is None:
+            return
+        if not self._interrogated and not self._prompted:
+            self._time_since_start += delta
+            if self._time_since_start > _PROMPT_DELAY_MS:
+                self._prompted = True
+                settings.set(_PROMPT_SETTING, True)
+                eventbus.emit(RequestForegroundPushEvent(self))
+        if not (self._pwm_setup or self._stepper):
             return
         self._time_since_last_update += delta
         if self._time_since_last_update > self._keep_alive_period:
@@ -154,8 +191,35 @@ class HexDriveApp(app.App):
 
 
     def get_version(self) -> int:
+        # Calling get_version() marks this app as interrogated by a controlling app.
+        # If no app calls this within _PROMPT_DELAY_MS, we prompt the user to install BadgeBot.
+        self._interrogated = True
         return APP_VERSION
     
+
+    def draw(self, ctx):
+        if self._in_foreground:
+            clear_background(ctx)
+            ctx.save()
+            ctx.font_size = label_font_size
+            ctx.text_align = ctx.LEFT
+            ctx.text_baseline = ctx.BOTTOM
+            # Each entry is (text, RGB colour tuple)
+            lines = [
+                ("HexDrive",         (1, 1, 0)),
+                ("Install BadgeBot", (1, 1, 1)),
+                ("app for full",     (1, 1, 1)),
+                ("control!",         (1, 1, 1)),
+                ("Press any button", (0, 1, 0)),
+            ]
+            num_lines = len(lines)
+            for i, (text, colour) in enumerate(lines):
+                width = ctx.text_width(text)
+                # Vertical offset centres the block; -2 accounts for descender space in the font
+                y_pos = int((i - (num_lines - 2) / 2) * ctx.font_size - 2)
+                ctx.rgb(*colour).move_to(-width // 2, y_pos).text(text)
+            ctx.restore()
+
 
     # Get the current status of the HexDrive App
     def get_status(self) -> bool:
