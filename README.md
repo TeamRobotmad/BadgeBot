@@ -2,7 +2,7 @@
 
 Companion app for HexDrive expansion, assuming BadgeBot configuration with 2 motors or 4 servos.
 
-This guide is current for Badgebot version 1.2
+This guide is current for Badgebot version 1.3
 
 As this application has become quite complicated if you are looking for example code to use a HexDrive please see [HexDriveUseTemplate](https://github.com/TeamRobotmad/HexDriveUseTemplate)
 
@@ -10,19 +10,21 @@ As this application has become quite complicated if you are looking for example 
 
 Install the BadgeBot app and then plug your HexDrive board into any of the hexpansion slots on your EMF Camp 2024 Badge.  If your HexDrive EEPROM has not been initialised before you will be promted to confirm that the hexpansion is a HexDrive, if you have other hexpansions plugged in which have uninitialised EEPROMs then please be careful to only initialise the correct one as being a HexDrive.
 
-If your HexDrive software (stored on the EEPROM on the hexpansion) is not the latest version then you will be prompted to update this.  You can select from 4 'flavours' of configuration suitable for:
+If your HexDrive software (stored on the EEPROM on the hexpansion) is not the latest version then you will be prompted to update this.  You can select from 5 'flavours' of configuration suitable for:
 - 2 Motor
 - 4 Servo
 - 1 Motor and 2 Servos
+- Stepper
 - Unknown
 
+The board can drive 2 brushed DC motors, 4 RC servos, 1 DC motor and 2 servos or a single two phase Stepper Motor.
 Once you have selected the desired 'flavour' - please confirm by pressing the "C" (confirm) button.
  
 There must be a HexDrive board plugged in and running the latest software to use the BadgeBot app. If this is not the case then you will see a warning that you need a HexDrive with a reference to this repo. 
 
 ### Main Menu ###
 
-The main menu will present options for a demonstration for motors "Motor Moves" or a simple "Servo Test" function.
+The main menu will present options for a demonstration for a 2 motor robot "Motor Moves", a test/demo a single Stepper Motor "Stepper Test", or a simple "Servo Test" function for up to 4 servos.
 
 ### Settings ###
 
@@ -46,6 +48,7 @@ The main menu includes a sub-menu of Settings which can be adjusted.
 | brightness       | LED brightness                            | 1.0            | 0.1    | 1.0    |
 | logging          | Enable or disable logging                 | False          | False  | True   |
 | erase_slot       | Slot to offer erase function              | 0 (i.e. none)  | 0      | 6      |
+| stepper_max_pos  | Maximum stepper position                  | 6200           | 0      | 65535  | 
 
 ### Limitations ###
 
@@ -53,7 +56,7 @@ When running from badge power the current available is limited - the best way to
 
 The maximum allowed servo range is VERY WIDE - most Servos will not be able to cope with this, so you probably want to reduce the ```servo_range``` setting to suit your servos.
 
-Each Servo or Motor driver requires a PWM signals to control it, so a single HexDrive takes up four PWM resources on the ESP32.  As there are 8 such resources, the 'flavour' of your HexDrives will determine how many you can run simultaneously as long as you don't have any other hexpansions or applications using PWM resources. Two '4 Servo' or 'Unknown' flavour HexDrives will use up all the available PWM channels, whereas you can run up to 4 HexDrives in '2 Motor' flavour. (While each motor driver does actually require two PWM signals we have been able to reduce this to one by swapping it between the active signal when the motor direction changes.)
+Each Servo or Motor driver requires a PWM signals to control it, so a single HexDrive takes up four PWM resources on the ESP32.  As there are 8 such resources, the 'flavour' of your HexDrives will determine how many you can run simultaneously as long as you don't have any other hexpansions or applications using PWM resources. Two '4 Servo', 'Stepper' or 'Unknown' flavour HexDrives will use up all the available PWM channels, whereas you can run up to 4 HexDrives in '2 Motor' flavour. (While each motor driver does actually require two PWM signals we have been able to reduce this to one by swapping it between the active signal when the motor direction changes.)
 
 If you unplug a HexDrive the PWM resources will be released immediately so you can move them around the badge easily. 
 
@@ -116,15 +119,17 @@ Call ```set_pwm()``` to set the duty cycle of the 4 PWM channels which control t
 note the extra set of brackets as the function argument is a single tupple of 4 values rather than being 4 individual values.
 
 
-To protect against most badge/software crashes causing the motors or servos to run out of control there is a keep alive mechanism which means that if you do not make a call to the ```set_pwm```, ```set_motors``` or ```set_servoposition``` functions the motors/servos will be turned off after 1000mS (default - which can be changed with a call to ```set_keep_alive()```).
+To protect against most badge/software crashes causing the motors or servos to run out of control there is a keep alive mechanism which means that if you do not make a call to the ```set_pwm```, ```set_motors```, ```motor_step``` or ```set_servoposition``` functions the motors/servos will be turned off after 1000mS (default - which can be changed with a call to ```set_keep_alive()```).
 
 You can adjust the PWM frequency, default 20000Hz for motors and 50Hz for servos by calling the ```set_freq()``` function.
 
 ### Servos
 You can control 1,2,3 or 4 RC hobby servos (centre pulse width 1500us).  The first time you set a pulse width for a channel using ```set_servo()``` the PWM frequency for that channel will be set to 50Hz.
-The first two Channels take up signals that would otherwise control Motor 1 and teh second two Channels take up the signals that are used for Motor 2.
+The first two Channels take up signals that would otherwise control Motor 1 and the second two Channels take up the signals that are used for Motor 2.
 You can use one motor and 1 or 2 servos simultaneously.
 
+### Stepper Motor
+You can control a single 2 phase stepper motor using ```motor_step()``` specifying which of the 8 possible phases to output in the range 0 to 7.  There are 8 possible values as half stepping is supported. To use only full steps specify phase values of 0, 2, 4 and 6.  Information on the pros and cons of using full or half stepping can be found online and what is right for you will depend on your motor and the application.  The motor can be released (so that it is not taking power to hold it in a fixed position) using ```motor_release()```.
 
 ### Developers setup
 This is to help develop the BadgeBot application
