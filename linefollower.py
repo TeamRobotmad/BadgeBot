@@ -92,7 +92,7 @@ FOLLOWER_HEXPANSION = 1  # Hexpansion slot for Line Follower Sensors - as it doe
 GESTURE_HEXPANSION = 2   # Hexpansion slot for Gesture Sensor - as it does not have an EEPROM to be detected automatically
 GESTURE_ADDRESS = 0x73
 
-FOLLOWER_SENSOR_SCAN_PERIOD = 25  # ms
+FOLLOWER_SENSOR_SCAN_PERIOD = 10  # ms
 DEFAULT_UPDATE_PERIOD  = 50  # ms
 
 # Dedicated Pins
@@ -162,7 +162,7 @@ STATE_FOLLOWER = 19       # Line Follower
 
 # App states where user can minimise app
 _MINIMISE_VALID_STATES = [0, 1, 7, 12, 13, 14, 15]
-_LED_CONTROL_STATES    = [0, 3, 4, 5, 6, 12, 13, 14, 15]
+_LED_CONTROL_STATES    = [0, 3, 4, 5, 6, 12, 13, 14, 15, 19]
 
 # HexDrive Hexpansion constants
 _EEPROM_ADDR  = 0x50
@@ -321,6 +321,7 @@ class LineFollowerApp(app.App):
         self._stepper: Stepper = None
         self.stepper_mode = StepperMode()
         self.stepper_pos: int = 0
+        self._output = (0,0)
 
         # Servo Tester
         self._time_since_last_input: int = 0
@@ -337,8 +338,12 @@ class LineFollowerApp(app.App):
         # Line Follower
         self._override = False
         self.num_line_sensors: int = _NUM_LINE_SENSORS
+        self._s = [False, False]
         self._line_sensors       = [None]*_NUM_LINE_SENSORS
         self._hexpansion_config  = HexpansionConfig(FOLLOWER_HEXPANSION)  # There is no EEPROM on the Line Follower Sensor Hexpansion
+        self._sample_count: int  = 0
+        self._sample_time: int   = 0
+        self._rate: int = 0     # sample rate
 
         # Gesture Sensor
         self._gesture_sensor = DFRobot_GR30_10_I2C(GESTURE_HEXPANSION, GESTURE_ADDRESS)
@@ -467,22 +472,33 @@ class LineFollowerApp(app.App):
                 self.hexdrive_app.set_motors(output)
         elif self.current_state == STATE_FOLLOWER:    
             # Read the line sensors
-            for i in range(self.num_line_sensors):
-                if self._line_sensors[i] is not None:
-                    self._line_sensors[i].read()
-                else:
-                    print(f"Line Sensor {i} not initialised")             
+            #for i in range(self.num_line_sensors):
+            #    if self._line_sensors[i] is not None:
+            #        self._line_sensors[i].read()
+            #    else:
+            #        print(f"Line Sensor {i} not initialised")             
             output = (0,0)
             # if _override is a bool
             if type(self._override) is bool:
                 if not self._override:
                     # Line Follower Sensor
-                    if self._line_sensors[0].value() and not self._line_sensors[1].value():
-                        output = (-self._settings['max_power'].v, self._settings['max_power'].v)
-                    elif not self._line_sensors[0].value() and self._line_sensors[1].value():
-                        output = (self._settings['max_power'].v, -self._settings['max_power'].v)
+                    # have either sensors changed their line detection status?
+                    s0 = self._line_sensors[0].value()
+                    s1 = self._line_sensors[1].value()
+                    self._line_sensors[0].read()
+                    self._line_sensors[1].read()     
+                    if (s0 != self._s[0] or s1 != self._s[1]):
+                        self._s[0] = s0
+                        self._s[1] = s1
+                        if s0 and not s1:
+                            output = (-self._settings['max_power'].v, self._settings['max_power'].v)
+                        elif not s0 and s1:
+                            output = (self._settings['max_power'].v, -self._settings['max_power'].v)
+                        else:
+                            output = (self._settings['max_power'].v, self._settings['max_power'].v)                   
+                        self._output = output                    
                     else:
-                        output = (self._settings['max_power'].v, self._settings['max_power'].v)
+                        output = self._output
             else:
                 if self._override == BUTTON_TYPES["UP"]:
                     output = (self._settings['max_power'].v, self._settings['max_power'].v)
@@ -492,8 +508,7 @@ class LineFollowerApp(app.App):
                     output = (-self._settings['max_power'].v, self._settings['max_power'].v)
                 elif self._override == BUTTON_TYPES["RIGHT"]:
                     output = (self._settings['max_power'].v, -self._settings['max_power'].v)
-            if self.hexdrive_app is not None:
-                self.hexdrive_app.set_motors(output)
+            self.hexdrive_app.set_motors(output)
 
 
     def generate_new_qr(self):
@@ -1385,6 +1400,7 @@ class LineFollowerApp(app.App):
 
     def _update_state_follower(self, delta: int):
         # Line Follower:
+        self._sample_time += delta
         # Cancel to exit
         if self.button_states.get(BUTTON_TYPES["CANCEL"]):
             self.button_states.clear()
@@ -1735,16 +1751,24 @@ class LineFollowerApp(app.App):
 
     def _draw_state_follower(self, ctx):
         # Line Follower
-        #print("d")
         # draw the two line follower sensor values on/off as green/white circles
         ctx.save()
+        # display the average sample rate (2 sensors) to 1 decimal place
+        if (self._sample_time > 2000):
+            state = disable_irq()
+            self._rate = int(((1000/2) * self._sample_count) // self._sample_time)
+            self._sample_count = 0
+            enable_irq(state)
+            self._sample_time = 0
+            print(f"Rate: {self._rate} Hz")
+        ctx.rgb(1,1,1).move_to(-50, -2*label_font_size).text(f"{self._rate} Hz")
         for i in range(self.num_line_sensors):
-            #ctx.translate(0, (i-0.5) * label_font_size)
             x = 40 - i * 80
             colour = (0,1,0) if self._line_sensors[i].value() else (0,0,0)
             ctx.rgb(*colour).arc(x, 0, 30, 0, 2 * pi, True).fill()
             ctx.rgb(1,1,1).arc(x, 0, 31, 0, 2 * pi, True).stroke()
         ctx.restore()
+
 
     def _draw_state_servo(self, ctx):                 
         servo_text         = ["S"]*(1+self.num_servos)              # Servo Text
@@ -2139,10 +2163,14 @@ class LineSensor:
         try:
             self._container = container
             self._threshold = threshold
-            self._state = False
-            self._name = name
-            self._start_time = 0
-            self.updated = False
+            self._state: bool = False
+            self._prev_state: bool = False
+            self._name: str = name
+            self._start_time: int = 0
+            self._diff: int = 0
+            self._irq_state = None
+            self.updated: bool = False
+            self._phase: int = 0
 
             # Pins for hardware
             self._pins = pins
@@ -2186,34 +2214,45 @@ class LineSensor:
         self._pins["sig"].on()
         time.sleep_us(10)
         # configure the pin as an input and wait for it to go low
+        # "hard" NOT supported
+        #self._phase = 0
         self._pins["sig"].irq(trigger=Pin.IRQ_FALLING, handler=self._handler)
+        #self._phase = 1
         state = disable_irq()
+        #self._phase = 2
         self._start_time = time.ticks_us()
         self._pins["sig"].init(mode=Pin.IN, pull=None)
         enable_irq(state)
+        #self._phase = 3
         return True
 
     def value(self) -> bool:
         return self._state
 
-    def _handler(self, pin):
-        now = time.ticks_us()
-        self._pins["ctrl"].off()
-        self._pins["sig"].irq(handler=None)
+    def _handler(self, _):
         # This is the interrupt handler for the line sensor
         # read the time and compare to the start time
         # if the time is less than the threshold then the sensor is active
+        self._irq_state = disable_irq()
+        self._diff = time.ticks_diff(time.ticks_us(), self._start_time)
+        self._pins["sig"].irq(handler=None)
+        enable_irq(self._irq_state)
+        #self._pins["sig"].off()
+        #self._pins["sig"].init(mode=Pin.OUT)
+        self._pins["ctrl"].off()
+
         if self._start_time == 0:
-            print(f"Sensor {self._name} spurious interrupt")
+            #print(f"Sensor {self._name} {self._phase} spurious interrupt")
+            #self._phase = 4
             # not expecting an interrupt
             return
-        prev_state = self._state
-        self._state = True if time.ticks_diff(now, self._start_time) < self._threshold else False
-        if (prev_state != self._state):
-            #print("u")
+        #self._phase = 5
+        self._prev_state = self._state
+        self._state = True if self._diff < self._threshold else False
+        if (self._prev_state != self._state):
             self.updated = True
         self._start_time = 0
-
+        self._container._sample_count += 1
 
 ######## STEPPER MOTOR CLASS ########
 
