@@ -2,6 +2,7 @@ import asyncio
 #import aioble
 #import bluetooth
 import os
+import sys
 import time
 from math import cos, pi
 import ota
@@ -151,6 +152,7 @@ _EEPROM_TOTAL_SIZE = 64 * 1024 // 8
 #Misceallaneous Settings
 _LOGGING = False
 _ERASE_SLOT = 0   # Slot for user to set if they want to erase EEPROMs on HexDrives
+_IS_SIMULATOR = sys.platform != "rp2"  # True when running in the simulator, not on real badge hardware
 
 # 
 _main_menu_items = ["Motor Moves", "Stepper Test", "Servo Test", "Settings", "About","Exit"]
@@ -444,6 +446,9 @@ class BadgeBotApp(app.App):
             return False
         except RuntimeError:
             # not a valid header
+            if _IS_SIMULATOR:
+                # In the simulator there is no real EEPROM hardware, so skip the programming prompt
+                return False
             if self._settings['logging'].v:
                 print(f"H:Found EEPROM on port {port}")
             self.ports_with_blank_eeprom.add(port)
