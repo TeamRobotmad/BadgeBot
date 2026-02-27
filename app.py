@@ -242,7 +242,7 @@ class BadgeBotApp(app.App):
         eventbus.on_async(RequestForegroundPopEvent, self._lose_focus, self)
 
         # We start with focus on launch, without an event emmited
-        self._gain_focus(RequestForegroundPushEvent(self))
+        asyncio.ensure_future(self._gain_focus(RequestForegroundPushEvent(self)))
    
 
 
@@ -1266,7 +1266,7 @@ class BadgeBotApp(app.App):
             if ctx.text_align != ctx.LEFT:             
                 print(f"H:Font alignment {ctx.text_align}!")
                 ctx.text_align = ctx.LEFT
-            ctx.text_baseline = ctx.BOTTOM            
+            ctx.text_baseline = "bottom"            
             if self.current_state == STATE_LOGO:
                 draw_logo_animated(ctx, self.rpm, self._animation_counter, [self.b_msg, self.t_msg], self.qr_code)
             # Scroll mode indicator
