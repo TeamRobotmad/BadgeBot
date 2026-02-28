@@ -2,6 +2,7 @@ import asyncio
 #import aioble
 #import bluetooth
 import os
+import sys
 import time
 from math import cos, pi
 import ota
@@ -12,7 +13,11 @@ from app_components.tokens import label_font_size, twentyfour_pt, clear_backgrou
 from app_components import Menu
 from events.input import BUTTON_TYPES, Button, Buttons, ButtonUpEvent
 from frontboards.twentyfour import BUTTONS
-from machine import I2C, Timer
+from machine import I2C
+try:
+    from machine import Timer
+except ImportError:
+    Timer = None
 from system.eventbus import eventbus
 from system.hexpansion.events import (HexpansionInsertionEvent,
                                       HexpansionRemovalEvent)
@@ -151,6 +156,7 @@ _EEPROM_TOTAL_SIZE = 64 * 1024 // 8
 #Misceallaneous Settings
 _LOGGING = False
 _ERASE_SLOT = 0   # Slot for user to set if they want to erase EEPROMs on HexDrives
+_IS_SIMULATOR = sys.platform != "rp2"  # True when running in the simulator, not on real badge hardware
 
 # 
 _main_menu_items = ["Motor Moves", "Stepper Test", "Servo Test", "Settings", "About","Exit"]
@@ -321,7 +327,7 @@ class BadgeBotApp(app.App):
         #aioble.register_services(self.ble_service)
 
         # We start with focus on launch, without an event emmited
-        self._gain_focus(RequestForegroundPushEvent(self))  
+        asyncio.get_event_loop().create_task(self._gain_focus(RequestForegroundPushEvent(self)))  
 
 
     ### ASYNC EVENT HANDLERS ###
@@ -444,6 +450,9 @@ class BadgeBotApp(app.App):
             return False
         except RuntimeError:
             # not a valid header
+            if _IS_SIMULATOR:
+                # In the simulator there is no real EEPROM hardware, so skip the programming prompt
+                return False
             if self._settings['logging'].v:
                 print(f"H:Found EEPROM on port {port}")
             self.ports_with_blank_eeprom.add(port)
@@ -633,7 +642,7 @@ class BadgeBotApp(app.App):
 
     def find_hexdrive_app(self, port: int) -> app:                    
         for an_app in scheduler.apps:
-            if type(an_app).__name__ is 'HexDriveApp':
+            if type(an_app).__name__ == 'HexDriveApp':
                 if hasattr(an_app, "config") and hasattr(an_app.config, "port") and  an_app.config.port == port:
                     return an_app
         return None
@@ -1923,7 +1932,7 @@ class Stepper:
         self._hexdrive_app = hexdrive_app
         self._phase = 0
         self._calibrated = False
-        self._timer = Timer(timer_id)
+        self._timer = Timer(timer_id) if Timer is not None else None
         self._timer_is_running = False
         self._timer_mode = 0
         self._free_run_mode = 0                     # direction of free run mode
@@ -2063,6 +2072,8 @@ class Stepper:
         self._update_timer((2//self._step_size)*abs(self._steps_per_sec))      # half steps per second
 
     def _update_timer(self,freq):
+        if self._timer is None:
+            return
         if self._timer_is_running and freq != self._freq:
             try:
                 self._timer.deinit()
