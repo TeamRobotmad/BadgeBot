@@ -327,7 +327,7 @@ class BadgeBotApp(app.App):
         #aioble.register_services(self.ble_service)
 
         # We start with focus on launch, without an event emmited
-        self._gain_focus(RequestForegroundPushEvent(self))  
+        await self._gain_focus(RequestForegroundPushEvent(self))  
 
 
     ### ASYNC EVENT HANDLERS ###
