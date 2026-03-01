@@ -1431,7 +1431,7 @@ class BadgeBotApp(app.App):
             if ctx.text_align != ctx.LEFT:
                 # See https://github.com/emfcamp/badge-2024-software/issues/181             
                 ctx.text_align = ctx.LEFT
-            ctx.text_baseline = ctx.BOTTOM            
+            ctx.text_baseline = "bottom"            
             if self.current_state == STATE_LOGO:
                 draw_logo_animated(ctx, self.rpm, self._animation_counter, [self.b_msg, self.t_msg], self.qr_code)
             # Scroll mode indicator
