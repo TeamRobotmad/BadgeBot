@@ -142,6 +142,7 @@ STATE_LOGO = 15           # Logo display
 STATE_SERVO = 16          # Servo test
 STATE_STEPPER = 17        # Stepper test
 STATE_SETTINGS = 18       # Edit Settings
+STATE_SENSOR = 19         # Sensor test
 
 # App states where user can minimise app
 _MINIMISE_VALID_STATES = [0, 1, 7, 12, 13, 14, 15]
@@ -159,7 +160,7 @@ _ERASE_SLOT = 0   # Slot for user to set if they want to erase EEPROMs on HexDri
 _IS_SIMULATOR = sys.platform != "esp32"  # True when running in the simulator, not on real badge hardware
 
 # 
-_main_menu_items = ["Motor Moves", "Stepper Test", "Servo Test", "Settings", "About","Exit"]
+_main_menu_items = ["Motor Moves", "Stepper Test", "Servo Test", "Settings", "Sensor Test", "About", "Exit"]
 
 class StepperMode:
     OFF = 0
@@ -309,6 +310,13 @@ class BadgeBotApp(app.App):
         self.servo_rate          = [_SERVO_DEFAULT_RATE]*4     # Servo Rate of Change
         self.servo_mode          = [ServoMode()]*4             # Servo Mode
         self.servo_selected: int = 0
+
+        # Sensor Tester
+        self._sensor_mgr = None              # SensorManager instance (lazy-imported)
+        self._sensor_select_port: bool = True  # True = port-pick screen, False = reading screen
+        self._sensor_port_selected: int = 1    # currently highlighted port (1-6)
+        self._sensor_read_timer: int = 0       # ms since last sensor read
+        self._sensor_data: dict = {}           # latest reading from selected sensor
 
         # Overall app state (controls what is displayed and what user inputs are accepted)
         self.current_state = STATE_INIT
@@ -776,6 +784,10 @@ class BadgeBotApp(app.App):
     ### Stepper Tester Application ###
         elif self.current_state == STATE_STEPPER:
             self._update_state_stepper(delta)
+
+    ### Sensor Tester Application ###
+        elif self.current_state == STATE_SENSOR:
+            self._update_state_sensor(delta)
 
     ### Settings Capability ###
         elif self.current_state == STATE_SETTINGS:
@@ -1483,7 +1495,9 @@ class BadgeBotApp(app.App):
             elif self.current_state == STATE_SERVO:
                 self._draw_state_servo(ctx)
             elif self.current_state == STATE_STEPPER:
-                self._draw_state_stepper(ctx)                
+                self._draw_state_stepper(ctx)
+            elif self.current_state == STATE_SENSOR:
+                self._draw_state_sensor(ctx)
             elif self.current_state == STATE_SETTINGS:
                 self.draw_message(ctx, ["Edit Setting",f"{self._edit_setting}:",f"{self._edit_setting_value}"], [(1,1,1),(0,0,1),(0,1,0)], label_font_size)
                 button_labels(ctx, up_label="+", down_label="-", confirm_label="Set", cancel_label="Cancel", right_label="Default")
@@ -1627,6 +1641,98 @@ class BadgeBotApp(app.App):
             #Position mode
             button_labels(ctx, up_label="^", down_label="\u25BC", confirm_label="Mode", cancel_label="Exit", left_label="<--", right_label="-->")
         # NB characters \u25B2, \u25C0, \u25BA, \u21A9, \u2611 do not exist, so ii seems \u25BC has been included as a special case
+
+
+    ### Sensor Tester ###
+
+    def _update_state_sensor(self, delta: int):
+        """Sensor test: port-selection sub-state then live-reading sub-state."""
+        if self._sensor_select_port:
+            # Sub-state 1: choose a port to scan
+            if self.button_states.get(BUTTON_TYPES["RIGHT"]):
+                self.button_states.clear()
+                self._sensor_port_selected = (self._sensor_port_selected % 6) + 1
+                self._refresh = True
+            elif self.button_states.get(BUTTON_TYPES["LEFT"]):
+                self.button_states.clear()
+                self._sensor_port_selected = ((self._sensor_port_selected - 2) % 6) + 1
+                self._refresh = True
+            elif self.button_states.get(BUTTON_TYPES["CONFIRM"]):
+                self.button_states.clear()
+                # Lazy import to conserve RAM on badge hardware
+                if self._sensor_mgr is None:
+                    from .sensor_manager import SensorManager
+                    self._sensor_mgr = SensorManager(logging=self._settings['logging'].v)
+                else:
+                    self._sensor_mgr.close()
+                self._sensor_data = {}
+                self._sensor_read_timer = 0
+                self._refresh = True
+                if self._sensor_mgr.open(self._sensor_port_selected):
+                    self._sensor_select_port = False  # sensor(s) found — go to reading view
+                else:
+                    self.notification = Notification("No Sensors")
+            elif self.button_states.get(BUTTON_TYPES["CANCEL"]):
+                self.button_states.clear()
+                if self._sensor_mgr is not None:
+                    self._sensor_mgr.close()
+                self.current_state = STATE_MENU
+        else:
+            # Sub-state 2: live sensor reading (refresh every 250 ms)
+            self._sensor_read_timer += delta
+            if self._sensor_read_timer >= 250:
+                self._sensor_read_timer = 0
+                try:
+                    self._sensor_data = self._sensor_mgr.read_current()
+                except Exception as e:
+                    self._sensor_data = {"Error": str(e)}
+                self._refresh = True
+            if self.button_states.get(BUTTON_TYPES["RIGHT"]):
+                self.button_states.clear()
+                self._sensor_mgr.next_sensor()
+                self._sensor_data = {}
+                self._refresh = True
+            elif self.button_states.get(BUTTON_TYPES["LEFT"]):
+                self.button_states.clear()
+                self._sensor_mgr.prev_sensor()
+                self._sensor_data = {}
+                self._refresh = True
+            elif self.button_states.get(BUTTON_TYPES["CANCEL"]):
+                self.button_states.clear()
+                self._sensor_mgr.close()
+                self._sensor_select_port = True
+                self._refresh = True
+
+    def _draw_state_sensor(self, ctx):
+        if self._sensor_select_port:
+            # Port selection screen
+            self.draw_message(ctx,
+                ["Sensor Test", f"Port: {self._sensor_port_selected}"],
+                [(1, 1, 1), (0, 1, 1)],
+                label_font_size)
+            button_labels(ctx, left_label="<Port", right_label="Port>", confirm_label="Scan", cancel_label="Back")
+        else:
+            # Sensor reading screen
+            num_sensors = self._sensor_mgr.num_sensors if self._sensor_mgr else 1
+            sensor_name = self._sensor_mgr.current_sensor_name if self._sensor_mgr else "Sensor"
+            if num_sensors > 1:
+                title = f"{sensor_name} {self._sensor_mgr.current_sensor_index + 1}/{num_sensors}"
+            else:
+                title = sensor_name
+            lines = [title]
+            colours = [(0, 1, 1)]
+            if self._sensor_data:
+                for label, value in self._sensor_data.items():
+                    lines.append(f"{label}:{value}")
+                    colours.append((1, 1, 0))
+            else:
+                lines.append("Reading...")
+                colours.append((0.5, 0.5, 0.5))
+            self.draw_message(ctx, lines, colours, label_font_size)
+            if num_sensors > 1:
+                button_labels(ctx, left_label="<Prev", right_label="Next>", cancel_label="Back")
+            else:
+                button_labels(ctx, cancel_label="Back")
 
 
     # Value increment/decrement functions for positive integers only
@@ -1791,13 +1897,21 @@ class BadgeBotApp(app.App):
                 self._auto_repeat_clear()
         elif item == _main_menu_items[3]: # Settings
             self.set_menu(_main_menu_items[3])
-        elif item == _main_menu_items[4]: # About
+        elif item == _main_menu_items[4]: # Sensor Test
+            self.set_menu(None)
+            self.button_states.clear()
+            self._sensor_select_port = True
+            self._sensor_port_selected = 1
+            self._sensor_data = {}
+            self.current_state = STATE_SENSOR
+            self._refresh = True
+        elif item == _main_menu_items[5]: # About
             self.set_menu(None)
             self.button_states.clear()
             self._animation_counter = 0
             self.current_state = STATE_LOGO
             self._refresh = True   
-        elif item == _main_menu_items[5]: # Exit
+        elif item == _main_menu_items[6]: # Exit
             eventbus.remove(HexpansionInsertionEvent, self._handle_hexpansion_insertion, self)
             eventbus.remove(HexpansionRemovalEvent, self._handle_hexpansion_removal, self)
             eventbus.remove(RequestForegroundPushEvent, self._gain_focus, self)
