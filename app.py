@@ -156,7 +156,7 @@ _EEPROM_TOTAL_SIZE = 64 * 1024 // 8
 #Misceallaneous Settings
 _LOGGING = False
 _ERASE_SLOT = 0   # Slot for user to set if they want to erase EEPROMs on HexDrives
-_IS_SIMULATOR = sys.platform != "rp2"  # True when running in the simulator, not on real badge hardware
+_IS_SIMULATOR = sys.platform != "esp32"  # True when running in the simulator, not on real badge hardware
 
 # 
 _main_menu_items = ["Motor Moves", "Stepper Test", "Servo Test", "Settings", "About","Exit"]
@@ -1431,7 +1431,7 @@ class BadgeBotApp(app.App):
             if ctx.text_align != ctx.LEFT:
                 # See https://github.com/emfcamp/badge-2024-software/issues/181             
                 ctx.text_align = ctx.LEFT
-            ctx.text_baseline = "bottom"            
+            ctx.text_baseline = ctx.BOTTOM            
             if self.current_state == STATE_LOGO:
                 draw_logo_animated(ctx, self.rpm, self._animation_counter, [self.b_msg, self.t_msg], self.qr_code)
             # Scroll mode indicator
