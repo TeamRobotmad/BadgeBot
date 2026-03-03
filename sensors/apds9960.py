@@ -1,10 +1,13 @@
 """
-APDS-9960 proximity + RGBC colour sensor driver.
+APDS-9960 Gesture / Proximity / Colour sensor driver.
 
 Default I2C address: 0x39
+In this driver we enable proximity and colour (RGBC) measurement.
+Gesture detection is left as a future extension.
+
 Measurements:
-  - prox  : proximity (0–255, higher = closer)
-  - clear : clear channel count
+  - prox  : proximity count (0-255, higher = closer)
+  - clear : clear (white) channel count
   - red   : red channel count
   - green : green channel count
   - blue  : blue channel count
@@ -15,33 +18,30 @@ Datasheet: https://docs.broadcom.com/doc/AV02-4191EN
 import time
 from .sensor_base import SensorBase
 
-_ID_REG     = 0x92
-_ID_APDS    = 0xAB   # APDS-9960
 
-_ENABLE     = 0x80
-_ATIME      = 0x81
-_PPULSE     = 0x8E
-_CONTROL    = 0x8F
-_STATUS     = 0x93
-_CDATAL     = 0x94   # 8 bytes: C 16LE, R 16LE, G 16LE, B 16LE
-_PDATA      = 0x9C
+_ID_REG        = 0x92
+_ID_EXPECT_1   = 0xAB
+_ID_EXPECT_2   = 0xA8   # some batches report this
 
-# ENABLE bits
-_PON  = 0x01
-_AEN  = 0x02
-_PEN  = 0x04
-_WEN  = 0x08
+_ENABLE        = 0x80
+_ATIME         = 0x81
+_CONTROL       = 0x8F
+_STATUS        = 0x93
+_CDATAL        = 0x94   # CDATA 16-bit LE, then R, G, B each 16-bit LE
+_PDATA         = 0x9C   # proximity 8-bit
+
+# ENABLE register bits
+_PON   = 0x01   # power on
+_AEN   = 0x02   # ALS/colour enable
+_PEN   = 0x04   # proximity enable
+_WEN   = 0x08   # wait enable
 
 # STATUS bits
-_AVALID = 0x01
-_PVALID = 0x02
+_AVALID = 0x01   # colour data valid
+_PVALID = 0x02   # proximity data valid
 
-# Gain
-_AGAIN_4X  = 0x01
-_PGAIN_4X  = 0x0C
-
-# ATIME: integration cycles = 256 - ATIME_VAL, each cycle = 2.78 ms
-_ATIME_VAL = 0xC0   # 64 cycles ≈ 178 ms integration
+_AGAIN_4X  = 0x01   # ALS gain control
+_ATIME_VAL = 0xC0   # integration time ≈ 154ms (~18,000 lux full-scale)
 
 
 class APDS9960(SensorBase):
@@ -50,20 +50,18 @@ class APDS9960(SensorBase):
 
     def _init(self) -> bool:
         chip_id = self._read_u8(_ID_REG)
-        if chip_id != _ID_APDS:
+        if chip_id not in (_ID_EXPECT_1, _ID_EXPECT_2):
             print(f"S:APDS9960 unexpected ID 0x{chip_id:02X}")
             return False
 
-        # Power off briefly
+        # Power off, reset
         self._write_u8(_ENABLE, 0x00)
-        time.sleep_ms(5)
+        time.sleep_ms(10)
 
         # ALS integration time
         self._write_u8(_ATIME, _ATIME_VAL)
         # AGAIN = 4x
         self._write_u8(_CONTROL, _AGAIN_4X)
-        # Proximity: 8 pulses, 16 µs, PGAIN 4x
-        self._write_u8(_PPULSE, 0x87)   # pulse len=16µs, count=8
         # Power on + enable ALS + enable proximity
         self._write_u8(_ENABLE, _PON | _AEN | _PEN)
         time.sleep_ms(5)

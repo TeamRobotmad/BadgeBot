@@ -95,34 +95,33 @@ class TCS3472(SensorBase):
         green = raw[4] | (raw[5] << 8)
         blue  = raw[6] | (raw[7] << 8)
 
-        # Approximate lux and CCT (Färber / Taos formulas)
-        if clear == 0:
-            lux, cct = 0.0, 0
-        else:
-            r = red   * _GLASS_ATTENUATION
-            g = green * _GLASS_ATTENUATION
-            b = blue  * _GLASS_ATTENUATION
-            x = -0.14282 * r + 1.54924 * g + -0.95641 * b
-            y = -0.32466 * r + 1.57837 * g + -0.73191 * b
-            z = -0.68202 * r + 0.77073 * g +  0.56332 * b
-            xyz_sum = x + y + z
-            if xyz_sum == 0:
-                lux, cct = 0.0, 0
-            else:
-                xc = x / xyz_sum
-                yc = y / xyz_sum
-                n  = (xc - 0.3320) / (0.1858 - yc)
-                cct = int(449 * n**3 + 3525 * n**2 + 6823.3 * n + 5520.33)
-                lux = y
-
-        return {
+        result = {
             "clear": str(clear),
             "red":   str(red),
             "green": str(green),
             "blue":  str(blue),
-            "cct":   f"{cct}k",
-            "lux":   f"{lux:.0f}lx",
         }
+
+        # Approximate CCT (McCamy's formula)
+        if clear > 0:
+            r = red   / clear
+            g = green / clear
+            b = blue  / clear
+            x = -0.14282 * r + 1.54924 * g + -0.95641 * b
+            y = -0.32466 * r + 1.57837 * g + -0.73191 * b
+            z = -0.68202 * r + 0.77073 * g +  0.56332 * b
+            if (x + y + z) > 0:
+                xc = x / (x + y + z)
+                yc = y / (x + y + z)
+                n  = (xc - 0.3320) / (0.1858 - yc) if (0.1858 - yc) != 0 else 0
+                cct = int(449.0 * n**3 + 3525.0 * n**2 + 6823.3 * n + 5520.33)
+                result["cct"] = f"{cct}K"
+
+            # Approximate lux (Taos DN25)
+            lux = (-0.32466 * red + 1.57837 * green + -0.73191 * blue) * _GLASS_ATTENUATION
+            result["lux"] = f"{max(0.0, lux):.0f}lx"
+
+        return result
 
     def _shutdown(self):
         self._cmd_write(_ENABLE, 0x00)

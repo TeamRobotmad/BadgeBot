@@ -93,6 +93,15 @@ class SensorManager:
             self._index = (self._index - 1) % len(self._sensors)
             self._last_data = {}
 
+    def select_sensor(self, name: str) -> bool:
+        """Select sensor by NAME. Returns True if found."""
+        for idx, sensor in enumerate(self._sensors):
+            if sensor.NAME == name:
+                self._index = idx
+                self._last_data = {}
+                return True
+        return False
+
     # ------------------------------------------------------------------
     # Reading
     # ------------------------------------------------------------------

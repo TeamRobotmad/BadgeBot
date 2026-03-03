@@ -1,47 +1,52 @@
 """
-SensorBase — abstract base class for all BadgeBot I2C sensor drivers.
+SensorBase - Abstract base class for all BadgeBot I2C sensor drivers.
 
-Subclasses must set class attributes:
-    I2C_ADDR : int   — default 7-bit I2C address
-    NAME     : str   — human-readable name shown in the UI
+Each concrete driver must implement:
+  - I2C_ADDR   : int  - default 7-bit I2C address
+  - NAME        : str  - human-readable sensor name (≤10 chars for display)
+  - begin(i2c)  - initialise the sensor; returns True on success
+  - read()      - take a measurement; returns a dict {label: value_string}
+  - reset()     - put sensor to a safe/low-power state (called on cleanup)
 
-And override (at minimum):
-    _init()    -> bool      — configure the chip; return False on failure
-    _measure() -> dict      — take one reading; return {label: str, ...}
-
-Optional override:
-    _shutdown()             — power-down / reset the chip
+The manager calls begin() once after confirming the address is present on the
+bus, then calls read() periodically while the sensor is selected in the UI.
 """
-
-import struct
-import time
 
 
 class SensorBase:
-    I2C_ADDR: int = 0x00
-    NAME: str = "Sensor"
+    # Sub-classes must override these
+    I2C_ADDR = 0x00
+    NAME = "Unknown"
 
     def __init__(self):
         self._i2c = None
-        self._ok = False
+        self._ready = False
 
     # ------------------------------------------------------------------
-    # Public API
+    # Public API (called by SensorManager / app.py)
     # ------------------------------------------------------------------
 
     def begin(self, i2c) -> bool:
-        """Attach to *i2c* bus and initialise the chip.  Returns True on success."""
+        """Initialise the sensor on the given I2C bus.
+
+        Returns True if the sensor is found and configured successfully.
+        Store the i2c object for later use in read().
+        """
         self._i2c = i2c
+        self._ready = False
         try:
-            self._ok = self._init()
+            self._ready = self._init()
         except Exception as e:
             print(f"S:{self.NAME} begin error: {e}")
-            self._ok = False
-        return self._ok
+            self._ready = False
+        return self._ready
 
     def read(self) -> dict:
-        """Return the latest measurement as {label: value_str, ...}."""
-        if not self._ok:
+        """Return the latest measurement as {label: value_string}.
+
+        Returns an empty dict or {'Error': 'msg'} on failure.
+        """
+        if not self._ready:
             return {"Error": "not ready"}
         try:
             return self._measure()
@@ -50,48 +55,53 @@ class SensorBase:
             return {"Error": str(e)}
 
     def reset(self):
-        """Shutdown and re-initialise the sensor."""
+        """Put the sensor into a low-power / safe state."""
         try:
             self._shutdown()
-        except Exception:
-            pass
-        self._ok = False
-        if self._i2c is not None:
-            self.begin(self._i2c)
+        except Exception as e:
+            print(f"S:{self.NAME} reset error: {e}")
+        self._ready = False
+
+    @property
+    def is_ready(self) -> bool:
+        return self._ready
 
     # ------------------------------------------------------------------
-    # Subclass hooks
+    # Internal helpers - override in sub-classes
     # ------------------------------------------------------------------
 
     def _init(self) -> bool:
+        """Hardware initialisation. Return True on success."""
         raise NotImplementedError
 
     def _measure(self) -> dict:
+        """Perform measurement. Return dict of {label: value_str}."""
         raise NotImplementedError
 
     def _shutdown(self):
-        pass  # optional
+        """Optional: power-down registers, etc."""
+        pass
 
     # ------------------------------------------------------------------
-    # Low-level I2C helpers  (8-bit register addresses)
+    # Utility helpers available to all drivers
     # ------------------------------------------------------------------
-
-    def _write_u8(self, reg: int, value: int):
-        self._i2c.writeto_mem(self.I2C_ADDR, reg, bytes([value & 0xFF]))
-
-    def _read_u8(self, reg: int) -> int:
-        return self._i2c.readfrom_mem(self.I2C_ADDR, reg, 1)[0]
-
-    def _read_u16_le(self, reg: int) -> int:
-        d = self._i2c.readfrom_mem(self.I2C_ADDR, reg, 2)
-        return d[0] | (d[1] << 8)
-
-    def _read_u16_be(self, reg: int) -> int:
-        d = self._i2c.readfrom_mem(self.I2C_ADDR, reg, 2)
-        return (d[0] << 8) | d[1]
-
-    def _read_reg(self, reg: int, n: int) -> bytes:
-        return self._i2c.readfrom_mem(self.I2C_ADDR, reg, n)
 
     def _write_reg(self, reg: int, data: bytes):
         self._i2c.writeto_mem(self.I2C_ADDR, reg, data)
+
+    def _read_reg(self, reg: int, n: int = 1) -> bytes:
+        return self._i2c.readfrom_mem(self.I2C_ADDR, reg, n)
+
+    def _read_u8(self, reg: int) -> int:
+        return self._read_reg(reg, 1)[0]
+
+    def _read_u16_le(self, reg: int) -> int:
+        d = self._read_reg(reg, 2)
+        return d[0] | (d[1] << 8)
+
+    def _read_u16_be(self, reg: int) -> int:
+        d = self._read_reg(reg, 2)
+        return (d[0] << 8) | d[1]
+
+    def _write_u8(self, reg: int, value: int):
+        self._write_reg(reg, bytes([value & 0xFF]))
