@@ -141,7 +141,7 @@ class SensorManager:
 
     @property
     def is_open(self) -> bool:
-        return self._i2c is not None
+        return self._i2c is not None and len(self._sensors) > 0
 
     def sensor_list(self) -> list:
         """Return [(index, name), ...] for all found sensors."""

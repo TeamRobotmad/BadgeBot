@@ -449,13 +449,13 @@ class LineFollowerApp(app.App):
 
 
     async def background_task(self):
-        # Modiifed background task loop for shorter sleep time
+        # Modified background task loop for shorter sleep time
         last_time = time.ticks_ms()
         while True:
             cur_time = time.ticks_ms()
             delta_ticks = time.ticks_diff(cur_time, last_time)
             self.background_update(delta_ticks)
-            await asyncio.sleep_ms(self._update_period)
+            await asyncio.sleep(self._update_period / 1000)
             last_time = cur_time
 
 

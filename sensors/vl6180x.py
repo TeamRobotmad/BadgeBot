@@ -25,6 +25,7 @@ _SYSALS_INTEGRATION_PERIOD_LO = 0x041
 _SYSALS_START                 = 0x038
 _SYSALS_ANALOGUE_GAIN         = 0x03F
 _RESULT_INTERRUPT_STATUS_GPIO = 0x04F
+_RESULT_RANGE_STATUS          = 0x04D  # lower nibble = error code; 0 = valid
 _RESULT_RANGE_VAL             = 0x062
 _RESULT_ALS_VAL               = 0x050  # 2 bytes, big-endian
 _SYSTEM_INTERRUPT_CLEAR       = 0x015
@@ -136,8 +137,13 @@ class VL6180X(SensorBase):
         self._write_u8_16(_SYSRANGE_START, 0x01)           # single shot
 
         if self._poll_status(_INT_NEW_SAMPLE_RANGE, _RANGE_TIMEOUT_MS):
-            range_mm = self._read_u8_16(_RESULT_RANGE_VAL)
-            result["range_mm"] = f"{range_mm}mm"
+            status = self._read_u8_16(_RESULT_RANGE_STATUS) >> 4  # upper nibble = error code
+            if status == 0:
+                range_mm = self._read_u8_16(_RESULT_RANGE_VAL)
+                result["range_mm"] = f"{range_mm}mm"
+            else:
+                # Non-zero = measurement error (e.g. 0x0B = no target detected)
+                result["range_mm"] = "error"
         else:
             result["range_mm"] = "timeout"
 
