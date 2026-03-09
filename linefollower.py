@@ -96,8 +96,14 @@ _LINE_SENSOR_READ_TIMEOUT_US = 10000  # µs: max time to wait for a sensor readi
 FOLLOWER_HEXPANSION = 1  # Hexpansion slot for Line Follower Sensors - as it does not have an EEPROM to be detected automatically
 
 FOLLOWER_SENSOR_SCAN_PERIOD = 10  # ms
+FOLLOWER_SENSOR_TRIGGER_DURATION_US = 10  # µs - duration to set the sensor pin high for to trigger a reading
 DEFAULT_UPDATE_PERIOD  = 50  # ms
 SAMPLE_RATE_UPDATE_INTERVAL = 1000  # ms
+FOLLOWER_PROPORTIONAL_SCALE_FACTOR = 10  # Scale factor for proportional control in differential mode - this is a tuning parameter that may need adjusting based on the specific robot and sensors being used
+
+# Line Follower Modes
+FOLLOWER_MODE_DIFFERENTIAL = 0
+FOLLOWER_MODE_BINARY = 1
 
 # Dedicated Pins
 SENSOR_1_CTRL   = 3  # hs pin (HSI)
@@ -181,7 +187,7 @@ _EEPROM_TOTAL_SIZE = 64 * 1024 // 8
 #Misceallaneous Settings
 _LOGGING = False
 _ERASE_SLOT = 0   # Slot for user to set if they want to erase EEPROMs on HexDrives
-_IS_SIMULATOR = sys.platform != "rp2"  # True when running in the simulator, not on real badge hardware
+_IS_SIMULATOR = sys.platform != "esp32"  # True when running in the simulator, not on real badge hardware
 
 # Main Menu Items
 _main_menu_items = ["Line Follower","Motor Moves", "Stepper Test", "Servo Test", "Settings", "About","Exit"]
@@ -353,7 +359,8 @@ class LineFollowerApp(app.App):
         self._sample_count: int  = 0
         self._sample_time: int   = 0
         self._rate: int = 0     # sample rate
-
+        self._follower_mode: int = FOLLOWER_MODE_DIFFERENTIAL  # Default follower mode
+        self._forward_power: int = 3000  # Default forward power for line follower
 
         # Overall app state (controls what is displayed and what user inputs are accepted)
         self.current_state = STATE_INIT
@@ -456,7 +463,7 @@ class LineFollowerApp(app.App):
             elif self.hexdrive_app is not None:
                 self.hexdrive_app.set_motors(output)
         elif self.current_state == STATE_FOLLOWER:
-            # Read all line sensors simultaneously (single 10µs pulse for all)
+            # Read all line sensors simultaneously
             output = (0,0)
             # if _override is a bool
             if type(self._override) is bool:
@@ -464,17 +471,25 @@ class LineFollowerApp(app.App):
                     # Line Follower Sensor - read all sensors at once, then check for changes
                     s = self._line_sensors.values()
                     self._line_sensors.read()
-                    if s != self._s:
-                        self._s = s
-                        if s[0] and not s[1]:
-                            output = (-self._settings['max_power'].v, self._settings['max_power'].v)
-                        elif not s[0] and s[1]:
-                            output = (self._settings['max_power'].v, -self._settings['max_power'].v)
+                    if self._follower_mode == FOLLOWER_MODE_DIFFERENTIAL:
+                        # scale the difference
+                        difference = FOLLOWER_PROPORTIONAL_SCALE_FACTOR * (self._line_sensors.raw_value(0) - self._line_sensors.raw_value(1))
+                        # combine scaled difference with base power to get output for each motor
+                        output = (self._forward_power + difference, self._forward_power - difference)
+                        # limit output to max power
+                        output = (max(min(output[0], self._settings['max_power'].v), -self._settings['max_power'].v), max(min(output[1], self._settings['max_power'].v), -self._settings['max_power'].v))
+                    else: # FOLLOWER_MODE_BINARY
+                        if s != self._s:
+                            self._s = s
+                            if s[0] and not s[1]:
+                                output = (-self._settings['max_power'].v, self._settings['max_power'].v)
+                            elif not s[0] and s[1]:
+                                output = (self._settings['max_power'].v, -self._settings['max_power'].v)
+                            else:
+                                output = (self._settings['max_power'].v, self._settings['max_power'].v)
+                            self._output = output
                         else:
-                            output = (self._settings['max_power'].v, self._settings['max_power'].v)
-                        self._output = output
-                    else:
-                        output = self._output
+                            output = self._output
             else:
                 if self._override == BUTTON_TYPES["UP"]:
                     output = (self._settings['max_power'].v, self._settings['max_power'].v)
@@ -1694,19 +1709,19 @@ class LineFollowerApp(app.App):
         # draw the two line follower sensor values on/off as green/white circles
         ctx.save()
         # Show the current threshold for the sensors, to help with calibration.
-        ctx.rgb(1,1,0).move_to(-50, -3*label_font_size).text(f"TH:{self._settings['line_threshold'].v}")
+        ctx.rgb(1,1,0).move_to(0,   -1*label_font_size).text(f"TH:{self._settings['line_threshold'].v}") # Yellow text for threshold
         # show the average sample rate
-        ctx.rgb(1,1,1).move_to(-50, -2*label_font_size).text(f"{self._rate} Hz")
+        ctx.rgb(1,1,1).move_to(-70, -1*label_font_size).text(f"{self._rate} Hz")
         for i in range(self.num_line_sensors):
             x = 40 - i * 80
             colour = (0,1,0) if self._line_sensors.value(i) else (0,0,0)
-            ctx.rgb(*colour).arc(x, 0, 30, 0, 2 * pi, True).fill()
-            ctx.rgb(1,1,1).arc(x, 0, 31, 0, 2 * pi, True).stroke()
+            ctx.rgb(*colour).arc(x, 0, 24, 0, 2 * pi, True).fill()
+            ctx.rgb(1,1,1).arc(x, 0, 25, 0, 2 * pi, True).stroke()
             # show the sensor raw value below the circle, to help with calibration
-            ctx.rgb(1,1,0).move_to(x-20, 3*label_font_size).text(f"{self._line_sensors[i].raw_value():4}")
+            ctx.rgb(1,1,0).move_to(x-20, 2*label_font_size).text(f"{self._line_sensors.raw_value(i):4}")    # Yellow text for raw value
             if self._settings['logging'].v:
                 # Latest sensor values for calibration purposes
-                print(f"Sensor {i}: {self._line_sensors[i].value()} (raw: {self._line_sensors[i].raw_value()})")
+                print(f"Sensor {i}: {self._line_sensors.value(i)} (raw: {self._line_sensors.raw_value(i)})")
         ctx.restore()
         button_labels(ctx, up_label="+", down_label="-", cancel_label="Cancel")
 
@@ -2143,6 +2158,10 @@ class LineSensors:
         for sensor in self._sensors:
             sensor.disable()
 
+    def raw_value(self, index: int) -> int:
+        """Return the last measured raw value (discharge time in µs) of sensor at position index."""
+        return self._sensors[index].raw_value()
+
     def value(self, index: int) -> bool:
         """Return the last measured value of sensor at position index."""
         return self._sensors[index].value()
@@ -2179,14 +2198,14 @@ class LineSensors:
         for sensor in self._sensors:
             sensor.updated = False
 
-        # Charge all ctrl and sig pins simultaneously
+        # Enable all IR emitter ctrl pins and charge all sig pins simultaneously
         for sensor in self._sensors:
             sensor._pins["ctrl"].on()
             sensor._pins["sig"].init(mode=Pin.OUT)
             sensor._pins["sig"].on()
 
         # Single 10µs charge pulse shared by all sensors
-        time.sleep_us(10)
+        time.sleep_us(FOLLOWER_SENSOR_TRIGGER_DURATION_US)
 
         # Register IRQ handlers for all sensors before releasing the pins
         for sensor in self._sensors:
@@ -2224,7 +2243,6 @@ class LineSensor:
             self._pins["ctrl"].init(mode=Pin.OUT)
             self._pins["ctrl"].off()
             self._pins["sig"].init(mode=Pin.IN, pull=Pin.PULL_UP)
-            #self._pins["sig"].irq(trigger=Pin.IRQ_FALLING, handler=self._handler)
 
         except Exception as e:
             print(f"{self._name} Init failed:{e}")
@@ -2244,38 +2262,6 @@ class LineSensor:
 
     def enable(self):
         self._start_time = 0
-        #self._pins["sig"].irq(trigger=Pin.IRQ_FALLING, handler=self._handler)
-
-    # Read the sensor - if there is a reflection the value is 1, otherwise with black or no surface it is 0
-    def read(self) -> bool:
-        # Set Signal to Output and High on SENSOR_1_CTRL
-        # Delay 10us
-        # Set Signal to Input
-        # Read Signal by timing how long it takes to go low
-        # Compare the duration against the threshold
-        if self._start_time != 0:
-            # already in progress
-            if time.ticks_diff(time.ticks_us(), self._start_time) <= _LINE_SENSOR_READ_TIMEOUT_US:
-                print(f"Sensor {self._name} already in progress")
-                return False
-        else:
-            self.updated = False
-        self._pins["ctrl"].on()
-        self._pins["sig"].init(mode=Pin.OUT)
-        self._pins["sig"].on()
-        time.sleep_us(10)
-        # configure the pin as an input and wait for it to go low
-        # "hard" NOT supported
-        #self._phase = 0
-        self._pins["sig"].irq(trigger=Pin.IRQ_FALLING, handler=self._handler)
-        #self._phase = 1
-        state = disable_irq()
-        #self._phase = 2
-        self._start_time = time.ticks_us()
-        self._pins["sig"].init(mode=Pin.IN, pull=None)
-        enable_irq(state)
-        #self._phase = 3
-        return True
 
     def value(self) -> bool:
         return self._state
