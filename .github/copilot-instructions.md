@@ -109,6 +109,8 @@ Main app class. Key methods:
 | `update(delta)` | Main update loop tick; routes to state handlers |
 | `draw(ctx)` | Main draw; routes to state-specific draw methods |
 | `background_update(delta)` | Keep-alive and periodic tasks |
+| `_apply_fwd_dir(output)` | Negates all motor outputs when `fwd_dir=1`; called at every `set_motors` callsite so the setting applies to both programmed moves and auto drive |
+| `_set_direction_leds(direction)` | Lights the two LEDs corresponding to the given direction, rotated by `front_face` |
 | `scan_ports()` | Scan all 6 hexpansion ports for HexDrives |
 | `check_port_for_hexdrive(port)` | Check if a specific port has a HexDrive |
 | `update_app_in_eeprom(port, addr)` | Write HexDrive firmware to EEPROM |
@@ -245,6 +247,16 @@ Settings are stored as `MySetting` objects in `self._settings` dict. Each has a 
 | `logging` | False | Console logging |
 | `erase_slot` | 0 | Slot to offer erase (0 = none) |
 | `step_max_pos` | 3100 | Stepper max position (half-steps) |
+| `fwd_dir` | 0 | Motor direction: `0`=Normal (HexDrive faces away from robot front), `1`=Reversed (HexDrive faces toward robot front). Applied by `_apply_fwd_dir()` at every `set_motors` call — affects programmed moves **and** auto drive. Display labels: `Normal` / `Reverse`. |
+| `front_face` | 0 | Which physical face of the badge is the robot's front, for LED indicators only (does **not** affect motors). 12 positions clockwise: `0`=BtnA (corner between slot 6 & 1, default top), `1`=Slot 1, `2`=BtnB … `10`=BtnF, `11`=Slot 6. Corners A–F match the badge's physical buttons. |
+
+### Orientation System Design
+
+The two orientation settings are **independent** and affect different subsystems:
+
+- **`fwd_dir`** — a single hardware-polarity switch applied at `set_motors`. Negating every output element correctly handles forward, reverse, and both turn directions simultaneously (since left/right is relative to forward). It also applies to auto drive (cruise, scan spin, turn) without any extra code in those paths. Display: `Normal` / `Reverse`.
+
+- **`front_face`** — a 0–11 ring position (each step = 30° clockwise). `_set_direction_leds()` offsets the lit LED pair from the front position: forward = `front_face`, right = `+2`, backward = `+6`, left = `+8`. Position 0 is the top corner (BtnA, between slot 6 & slot 1). Motor logic is not affected.
 
 ---
 
@@ -265,6 +277,25 @@ _EEPROM_TOTAL_SIZE     = 8192    # 64 Kbit = 8 KB
 _MAX_POWER             = 65535   # Full-scale PWM duty
 _SERVO_DEFAULT_CENTRE  = 1500    # Servo centre (µs)
 _MAX_SERVO_RANGE       = 1400    # Maximum servo range (µs)
+
+# Orientation constants
+_FWD_DIR_DEFAULT    = 0
+_FWD_DIR_LABELS     = ("Normal", "Reverse")   # display labels for fwd_dir setting
+_FRONT_FACE_DEFAULT = 0
+_FRONT_FACE_LABELS  = (                        # display labels for front_face setting
+    "BtnA",   # 0  - corner between slot 6 & slot 1 (default top)
+    "Slot 1",  # 1
+    "BtnB",   # 2  - corner between slot 1 & slot 2
+    "Slot 2",  # 3
+    "BtnC",   # 4
+    "Slot 3",  # 5
+    "BtnD",   # 6  - corner between slot 3 & slot 4 (bottom)
+    "Slot 4",  # 7
+    "BtnE",   # 8
+    "Slot 5",  # 9
+    "BtnF",   # 10
+    "Slot 6",  # 11
+)
 ```
 
 ---

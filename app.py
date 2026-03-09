@@ -1,8 +1,5 @@
 import asyncio
-#import aioble
-#import bluetooth
 import os
-import sys
 import time
 from math import cos, pi
 import ota
@@ -14,10 +11,6 @@ from app_components import Menu
 from events.input import BUTTON_TYPES, Button, Buttons, ButtonUpEvent
 from frontboards.twentyfour import BUTTONS
 from machine import I2C
-try:
-    from machine import Timer
-except ImportError:
-    Timer = None
 from system.eventbus import eventbus
 from system.hexpansion.events import (HexpansionInsertionEvent,
                                       HexpansionRemovalEvent)
@@ -35,192 +28,33 @@ import app
 
 from .utils import chain, draw_logo_animated, parse_version
 
-
-
-# See the following for generating UUIDs:
-# https://www.uuidgenerator.net/
-#_BLE_SERVICE_UUID = bluetooth.UUID('19b10000-e8f2-537e-4f6c-d104768a1214')
-#_BLE_SENSOR_CHAR_UUID = bluetooth.UUID('19b10001-e8f2-537e-4f6c-d104768a1214')
-#_BLE_LED_UUID = bluetooth.UUID('19b10002-e8f2-537e-4f6c-d104768a1214')
-# How frequently to send advertising beacons.
-#_ADV_INTERVAL_MS = 250_000
-
-
-# Hard coded to talk to EEPROMs on address 0x50 - because we know that is what is on the HexDrive Hexpansion
-# makes it a lot more efficient than scanning the I2C bus for devices and working out what they are
-
-CURRENT_APP_VERSION = 6 # HEXDRIVE.PY Integer Version Number - checked against the EEPROM app.py version to determine if it needs updating
-
-_APP_VERSION = "1.5" # BadgeBot App Version Number
-
-# If you change the URL then you will need to regenerate the QR code
-_QR_CODE = [0x1fcf67f, 
-            0x104cc41, 
-            0x174975d, 
-            0x1744e5d, 
-            0x175d45d, 
-            0x104ea41, 
-            0x1fd557f, 
-            0x001af00, 
-            0x04735f7, 
-            0x1070c97, 
-            0x1c23ae9, 
-            0x08ce9bd, 
-            0x1af3160, 
-            0x1270a80,
-            0x1cc3549,
-            0x097ef36,
-            0x03ff5e9,
-            0x1b18300,
-            0x1b5a37f,
-            0x0313b41,
-            0x03f3d5d,
-            0x078b65d,
-            0x111e35d,
-            0x0b57141,
-            0x18bbd7f]
-
-# Screen positioning for movement sequence text
-H_START = -63
-V_START = -58
-_BRIGHTNESS = 1.0
-
-# Motor Driver - Defaults
-_MAX_POWER = 65535
-_POWER_STEP_PER_TICK = 7500  # effectively the acceleration
-
-# Servo Tester - Defaults
-_SERVO_DEFAULT_STEP    = 10         # us per step    
-_SERVO_DEFAULT_CENTRE  = 1500       # us
-_SERVO_DEFAULT_RANGE   = 1000       # +/- 500us from centre
-_SERVO_DEFAULT_RATE    = 25         # *10us per s
-_SERVO_DEFAULT_MODE    = 0          # Off
-_SERVO_DEFAULT_PERIOD  = 20         # ms    
-_SERVO_MAX_RATE        = 1000       # *10us per s
-_SERVO_MIN_RATE        = 1          # *10us per s
-_SERVO_MAX_TRIM        = 1000       # us
-_MAX_SERVO_RANGE       = 1400       # 1400us either side of centre (VERY WIDE)
-
-# Stepper Tester - Defaults
-_STEPPER_MAX_SPEED     = 200        # full steps per second
-_STEPPER_MAX_POSITION  = 3100       # full steps from one end to the other end
-_STEPPER_DEFAULT_SPEED = 50         # full steps per second
-_STEPPER_NUM_PHASES    = 8          # half steps
-_STEPPER_DEFAULT_SPR   = 200        # full steps per revolution
-_STEPPER_DEFAULT_STEP  = 1          # half steps, (2 = full steps)
-
-# Timings
-_TICK_MS       =  10        # Smallest unit of change for power, in ms
-_USER_DRIVE_MS =  50        # User specifed drive durations, in ms
-_USER_TURN_MS  =  20        # User specifed turn durations, in ms
-_LONG_PRESS_MS = 750        # Time for long button press to register, in ms
-_RUN_COUNTDOWN_MS = 5000    # Time after running program until drive starts, in ms
-_AUTO_REPEAT_MS = 200       # Time between auto-repeats, in ms
-_AUTO_REPEAT_COUNT_THRES = 10 # Number of auto-repeats before increasing level
-_AUTO_REPEAT_SPEED_LEVEL_MAX = 4  # Maximum level of auto-repeat speed increases
-_AUTO_REPEAT_LEVEL_MAX = 3  # Maximum level of auto-repeat digit increases
-
-
-# App states
-STATE_INIT = -1
-STATE_WARNING = 0
-STATE_MENU = 1
-STATE_HELP = 2
-STATE_RECEIVE_INSTR = 3
-STATE_COUNTDOWN = 4
-STATE_RUN = 5
-STATE_DONE = 6
-STATE_CHECK = 7           # Checks for EEPROMs and HexDrives
-STATE_DETECTED = 8        # Hexpansion ready for EEPROM initialisation
-STATE_UPGRADE = 9         # Hexpansion ready for EEPROM upgrade
-STATE_ERASE = 10          # Hexpansion ready for EEPROM erase
-STATE_PROGRAMMING = 11    # Hexpansion EEPROM programming
-STATE_REMOVED = 12        # Hexpansion removed
-STATE_ERROR = 13          # Hexpansion error
-STATE_MESSAGE = 14        # Message display
-STATE_LOGO = 15           # Logo display
-STATE_SERVO = 16          # Servo test
-STATE_STEPPER = 17        # Stepper test
-STATE_SETTINGS = 18       # Edit Settings
-STATE_SENSOR = 19         # Sensor test
-STATE_AUTO = 20           # Autonomous drive
-
-# App states where user can minimise app
-_MINIMISE_VALID_STATES = [0, 1, 7, 12, 13, 14, 15]
-_LED_CONTROL_STATES    = [0, 3, 4, 5, 6, 12, 13, 14, 15]
-
-# HexDrive Hexpansion constants
-_EEPROM_ADDR  = 0x50
-_EEPROM_NUM_ADDRESS_BYTES = 2
-_EEPROM_PAGE_SIZE = 32
-_EEPROM_TOTAL_SIZE = 64 * 1024 // 8
-
-#Misceallaneous Settings
-_LOGGING = False
-_ERASE_SLOT = 0   # Slot for user to set if they want to erase EEPROMs on HexDrives
-_IS_SIMULATOR = sys.platform != "esp32"  # True when running in the simulator, not on real badge hardware
-
-# Auto-drive sub-states
-_AUTO_SUB_DRIVE = 0           # driving forward
-_AUTO_SUB_SCAN  = 1           # spinning, sampling ToF per slot
-_AUTO_SUB_TURN  = 2           # turning to best heading
-
-# Auto-drive defaults
-_AUTO_DRIVE_SPEED  = 56000    # ~43% max power
-_AUTO_OBSTACLE_MM  = 100      # mm — trigger scan below this
-_AUTO_SCAN_SLOTS   = 12       # samples per 360° scan
-_AUTO_SLOT_MS      = 700      # ms per scan slot
-_AUTO_SENSOR_READ_MS = 50     # sensor read interval during auto
-_AUTO_MIN_FWD_MS   = 400      # ms minimum forward run before another scan trigger
-_AUTO_CRUISE_MIN_PWM = 36000  # minimum sustained PWM while driving forward
-_AUTO_SCAN_FORWARD_ONLY = False  # True = scan/turn without reverse motor commands
-_AUTO_CLEAR_DIST_MM = 255      # score used when sensor returns None (clear/no object)
-
-_main_menu_items = ["Motor Moves", "Stepper Test", "Servo Test", "Settings", "Sensor Test", "Auto Drive", "About", "Exit"]
-
-class StepperMode:
-    OFF = 0
-    POSITION = 1
-    SPEED = 2
-    stepper_modes = ["OFF", "POSITION", "SPEED"]
-
-    def __init__(self, mode = OFF):
-        self.mode = mode
-        
-    def set(self, mode):
-        self.mode = mode
-
-    def inc(self):
-        self.mode = (self.mode + 1) % 3
-
-    def __eq__(self, other):
-        return self.mode == other
-    
-    def __str__(self):
-        return self.stepper_modes[self.mode]
-
-
-class ServoMode:
-    OFF = 0
-    TRIM = 1
-    POSITION = 2
-    SCANNING = 3
-    servo_modes = ["OFF", "TRIM", "POSITION", "SCANNING"]
-    
-    def __init__(self, mode = OFF):
-        self.mode = mode
-
-    def set(self, mode):
-        self.mode = mode
-
-    def inc(self):
-        self.mode = (self.mode + 1) % 4
-    
-    def __eq__(self, other):
-        return self.mode == other
-    
-    def __str__(self):
-        return self.servo_modes[self.mode]
+from .constants import (
+    CURRENT_APP_VERSION, _APP_VERSION, _QR_CODE,
+    H_START, V_START, _BRIGHTNESS,
+    _MAX_POWER, _POWER_STEP_PER_TICK,
+    _SERVO_DEFAULT_STEP, _SERVO_DEFAULT_CENTRE, _SERVO_DEFAULT_RANGE,
+    _SERVO_DEFAULT_RATE, _SERVO_DEFAULT_MODE, _SERVO_DEFAULT_PERIOD,
+    _SERVO_MAX_RATE, _SERVO_MIN_RATE, _SERVO_MAX_TRIM, _MAX_SERVO_RANGE,
+    _STEPPER_MAX_SPEED, _STEPPER_MAX_POSITION, _STEPPER_DEFAULT_SPEED,
+    _TICK_MS, _USER_DRIVE_MS, _USER_TURN_MS,
+    _LONG_PRESS_MS, _RUN_COUNTDOWN_MS, _AUTO_REPEAT_MS,
+    _AUTO_REPEAT_COUNT_THRES, _AUTO_REPEAT_SPEED_LEVEL_MAX, _AUTO_REPEAT_LEVEL_MAX,
+    STATE_INIT, STATE_WARNING, STATE_MENU, STATE_HELP,
+    STATE_RECEIVE_INSTR, STATE_COUNTDOWN, STATE_RUN, STATE_DONE,
+    STATE_CHECK, STATE_DETECTED, STATE_UPGRADE, STATE_ERASE,
+    STATE_PROGRAMMING, STATE_REMOVED, STATE_ERROR, STATE_MESSAGE,
+    STATE_LOGO, STATE_SERVO, STATE_STEPPER, STATE_SETTINGS,
+    STATE_SENSOR, STATE_AUTO,
+    _MINIMISE_VALID_STATES, _LED_CONTROL_STATES,
+    _EEPROM_ADDR, _EEPROM_NUM_ADDRESS_BYTES, _EEPROM_PAGE_SIZE, _EEPROM_TOTAL_SIZE,
+    _LOGGING, _ERASE_SLOT, _IS_SIMULATOR,
+    _FWD_DIR_DEFAULT, _FWD_DIR_LABELS, _FRONT_FACE_DEFAULT, _FRONT_FACE_LABELS,
+    _AUTO_DRIVE_SPEED, _AUTO_OBSTACLE_MM, _AUTO_SCAN_SLOTS, _AUTO_SLOT_MS,
+    _AUTO_MIN_FWD_MS,
+    _main_menu_items,
+)
+from .models import StepperMode, ServoMode, HexDriveType, MySetting, Instruction
+from .stepper import Stepper
 
 
 class BadgeBotApp(app.App):
@@ -274,6 +108,8 @@ class BadgeBotApp(app.App):
         self._settings['auto_obstacle'] = MySetting(self._settings, _AUTO_OBSTACLE_MM, 20, 500)
         self._settings['auto_slots']    = MySetting(self._settings, _AUTO_SCAN_SLOTS, 4, 16)
         self._settings['auto_slot_ms']  = MySetting(self._settings, _AUTO_SLOT_MS, 50, 1000)
+        self._settings['fwd_dir']       = MySetting(self._settings, _FWD_DIR_DEFAULT, 0, 1)      # 0=Normal, 1=Reversed
+        self._settings['front_face']    = MySetting(self._settings, _FRONT_FACE_DEFAULT, 0, 11)  # LED front position 0=BtnA..11=Slot6
 
         self._edit_setting: int  = None
         self._edit_setting_value = None       
@@ -338,21 +174,8 @@ class BadgeBotApp(app.App):
         self._sensor_read_timer: int = 0       # ms since last sensor read
         self._sensor_data: dict = {}           # latest reading from selected sensor
 
-        # Autonomous Drive
-        self._auto_sub_state: int = _AUTO_SUB_DRIVE
-        self._auto_distance = None            # latest ToF reading in mm (int or None)
-        self._auto_lux = None                 # latest lux reading (float or None)
-        self._auto_sensor_timer: int = 0      # ms since last sensor read in auto mode
-        self._auto_scan_data: list = []       # distance per scan slot
-        self._auto_scan_slot: int = 0         # slot index being filled
-        self._auto_scan_timer: int = 0        # ms elapsed within current slot
-        self._auto_turn_ms: int = 0           # total ms for this turn
-        self._auto_turn_timer: int = 0        # ms turned so far
-        self._auto_turn_dir: int = 1          # +1 = right, -1 = left
-        self._auto_forward_hold_ms: int = 0   # ms remaining before obstacle can trigger scan
-        self._auto_target_output: tuple = (0, 0) # desired motor output from state logic
-        self._auto_motor_output: tuple = (0, 0)  # ramped output sent by background_update
-        self._auto_status: str = ""           # one-line status for display
+        # Autonomous Drive (state managed by AutoDrive instance)
+        self._auto = None
 
         # Overall app state (controls what is displayed and what user inputs are accepted)
         self.current_state = STATE_INIT
@@ -445,18 +268,21 @@ class BadgeBotApp(app.App):
 
     def background_update(self, delta: int):
         if self.current_state == STATE_RUN:
-            # DC Motor Contorl
+            # DC Motor Control
             output = self.get_current_power_level(delta)
             if output is None:
                 self.current_state = STATE_DONE
                 self._update_period = 50
             elif self.hexdrive_app is not None:
-                self.hexdrive_app.set_motors(output)
-        elif self.current_state == STATE_AUTO:
-            # Feed motors from background_update so the HexDrive watchdog is never
-            # starved by slow blocking I2C sensor reads in the main update loop.
-            if self.hexdrive_app is not None:
-                self.hexdrive_app.set_motors(self._auto_motor_output)
+                self.hexdrive_app.set_motors(self._apply_fwd_dir(output))
+        elif self.current_state == STATE_AUTO and self._auto is not None:
+            self._auto.background_update(delta)
+
+    def _apply_fwd_dir(self, output: tuple) -> tuple:
+        """Negate all motor outputs when fwd_dir=1 (HexDrive mounted facing front)."""
+        if self._settings['fwd_dir'].v:
+            return tuple(-v for v in output)
+        return output
 
 
     def generate_new_qr(self):
@@ -831,8 +657,8 @@ class BadgeBotApp(app.App):
             self._update_state_sensor(delta)
 
     ### Autonomous Drive ###
-        elif self.current_state == STATE_AUTO:
-            self._update_state_auto(delta)
+        elif self.current_state == STATE_AUTO and self._auto is not None:
+            self._auto.update(delta)
 
     ### Settings Capability ###
         elif self.current_state == STATE_SETTINGS:
@@ -1172,26 +998,29 @@ class BadgeBotApp(app.App):
 
 
     def _set_direction_leds(self, direction: Button):
-        if direction == BUTTON_TYPES["RIGHT"]:
-            # Green = Starboard = Right
-            self.clear_leds()
-            tildagonos.leds[2]  = (0, 255, 0)
-            tildagonos.leds[3]  = (0, 255, 0)                
-        elif direction ==BUTTON_TYPES["LEFT"]:
-            # Red = Port = Left
-            self.clear_leds()
-            tildagonos.leds[8]  = (255, 0, 0)
-            tildagonos.leds[9]  = (255, 0, 0)                
-        elif direction == BUTTON_TYPES["UP"]:
-            # Cyan
-            self.clear_leds()
-            tildagonos.leds[12] = (0, 255, 255)
-            tildagonos.leds[1]  = (0, 255, 255)                
+        # LED positions rotate based on 'front_face' (0-11, each step = 30° CW).
+        # Each position p maps to LED pair: (p if p>0 else 12) and (p+1).
+        # This is independent of motor direction (fwd_dir).
+        f = self._settings['front_face'].v
+        if direction == BUTTON_TYPES["UP"]:
+            pos = f % 12
+            colour = (0, 255, 255)   # Cyan = forward
+        elif direction == BUTTON_TYPES["RIGHT"]:
+            pos = (f + 2) % 12
+            colour = (0, 255, 0)     # Green = right
         elif direction == BUTTON_TYPES["DOWN"]:
-            # Magenta
-            self.clear_leds()
-            tildagonos.leds[6]  = (255, 0, 255)
-            tildagonos.leds[7]  = (255, 0, 255)                
+            pos = (f + 6) % 12
+            colour = (255, 0, 255)   # Magenta = backward
+        elif direction == BUTTON_TYPES["LEFT"]:
+            pos = (f + 8) % 12
+            colour = (255, 0, 0)     # Red = left
+        else:
+            return
+        led_a = pos if pos > 0 else 12
+        led_b = pos + 1
+        self.clear_leds()
+        tildagonos.leds[led_a] = colour
+        tildagonos.leds[led_b] = colour
 
 
     def _update_state_countdown(self, delta: int):            
@@ -1474,7 +1303,13 @@ class BadgeBotApp(app.App):
                     print(f"Setting: {self._edit_setting} = {self._edit_setting_value}")
                 self._settings[self._edit_setting].v = self._edit_setting_value
                 self._settings[self._edit_setting].persist()
-                self.notification = Notification(f"  Setting:   {self._edit_setting}={self._edit_setting_value}")
+                if   self._edit_setting == 'fwd_dir':
+                    disp_val = _FWD_DIR_LABELS[self._edit_setting_value]
+                elif self._edit_setting == 'front_face':
+                    disp_val = _FRONT_FACE_LABELS[self._edit_setting_value]
+                else:
+                    disp_val = self._edit_setting_value
+                self.notification = Notification(f"  Setting:   {self._edit_setting}={disp_val}")
                 self.set_menu(_main_menu_items[3])
                 self.current_state = STATE_MENU
 
@@ -1543,10 +1378,16 @@ class BadgeBotApp(app.App):
                 self._draw_state_stepper(ctx)
             elif self.current_state == STATE_SENSOR:
                 self._draw_state_sensor(ctx)
-            elif self.current_state == STATE_AUTO:
-                self._draw_state_auto(ctx)
+            elif self.current_state == STATE_AUTO and self._auto is not None:
+                self._auto.draw(ctx)
             elif self.current_state == STATE_SETTINGS:
-                self.draw_message(ctx, ["Edit Setting",f"{self._edit_setting}:",f"{self._edit_setting_value}"], [(1,1,1),(0,0,1),(0,1,0)], label_font_size)
+                if   self._edit_setting == 'fwd_dir':
+                    disp_val = _FWD_DIR_LABELS[self._edit_setting_value]
+                elif self._edit_setting == 'front_face':
+                    disp_val = _FRONT_FACE_LABELS[self._edit_setting_value]
+                else:
+                    disp_val = str(self._edit_setting_value)
+                self.draw_message(ctx, ["Edit Setting",f"{self._edit_setting}:",disp_val], [(1,1,1),(0,0,1),(0,1,0)], label_font_size)
                 button_labels(ctx, up_label="+", down_label="-", confirm_label="Set", cancel_label="Cancel", right_label="Default")
             ctx.restore()
 
@@ -1782,219 +1623,6 @@ class BadgeBotApp(app.App):
                 button_labels(ctx, cancel_label="Back")
 
 
-    ### Autonomous Drive ###
-
-    def _update_state_auto(self, delta: int):
-        """Autonomous drive: obstacle avoidance via ToF spin-scan."""
-        # CANCEL always exits cleanly
-        if self.button_states.get(BUTTON_TYPES["CANCEL"]):
-            self.button_states.clear()
-            self._auto_motor_output = (0, 0)
-            # Directly stop motors here — background_update won't run for STATE_AUTO once we leave
-            if self.hexdrive_app is not None:
-                self.hexdrive_app.set_motors((0, 0))
-                self.hexdrive_app.set_power(False)
-            self._auto_status = ""
-            self._update_period = 50
-            self.current_state = STATE_MENU
-            return
-
-        # Sub-state logic runs first so that _auto_distance cleared on a state
-        # transition (e.g. scan→drive) is not immediately overwritten by a fresh
-        # sensor read in the same tick, which would cause an instant re-scan.
-        if self._auto_sub_state == _AUTO_SUB_DRIVE:
-            self._auto_update_drive(delta)
-        elif self._auto_sub_state == _AUTO_SUB_SCAN:
-            self._auto_update_scan(delta)
-        elif self._auto_sub_state == _AUTO_SUB_TURN:
-            self._auto_update_turn(delta)
-
-        self._auto_apply_output_ramp(delta)
-
-        # Sensor read runs after sub-state so the new value is used next tick
-        self._auto_sensor_timer += delta
-        if self._auto_sensor_timer >= _AUTO_SENSOR_READ_MS:
-            self._auto_sensor_timer = 0
-            self._auto_read_sensor()
-
-        self._refresh = True
-
-    def _auto_read_sensor(self):
-        """Read the current sensor and store numeric distance and lux."""
-        if self._sensor_mgr is None or not self._sensor_mgr.is_open:
-            return
-        try:
-            data = self._sensor_mgr.read_current()
-            r = str(data.get("range_mm", ""))
-            self._auto_distance = int(r.replace("mm", "")) if "mm" in r else None
-            lx = str(data.get("lux", ""))
-            self._auto_lux = float(lx.replace("lx", "")) if "lx" in lx else None
-        except Exception:
-            self._auto_distance = None
-            self._auto_lux = None
-        if self._settings['logging'].v:
-            print(f"A:sens dist={self._auto_distance} lux={self._auto_lux}")
-
-    def _auto_stop_motors(self):
-        self._auto_target_output = (0, 0)
-        self._auto_motor_output = (0, 0)
-
-    def _auto_slew(self, current: int, target: int, step: int) -> int:
-        if current < target:
-            return min(current + step, target)
-        if current > target:
-            return max(current - step, target)
-        return current
-
-    def _auto_apply_output_ramp(self, delta: int):
-        accel = max(1, int(self._settings['acceleration'].v))
-        ticks = max(1, delta // _TICK_MS)
-        step = accel * ticks
-        max_power = int(self._settings['max_power'].v)
-
-        target_l = max(-max_power, min(max_power, int(self._auto_target_output[0])))
-        target_r = max(-max_power, min(max_power, int(self._auto_target_output[1])))
-        cur_l = int(self._auto_motor_output[0])
-        cur_r = int(self._auto_motor_output[1])
-
-        self._auto_motor_output = (
-            self._auto_slew(cur_l, target_l, step),
-            self._auto_slew(cur_r, target_r, step),
-        )
-
-    def _auto_enter_drive(self):
-        """Enter forward-drive mode with scan holdoff."""
-        self._auto_sub_state = _AUTO_SUB_DRIVE
-        self._auto_distance = None
-        self._auto_forward_hold_ms = _AUTO_MIN_FWD_MS
-        speed = max(self._settings['auto_speed'].v, _AUTO_CRUISE_MIN_PWM)
-        self._auto_target_output = (speed, speed)
-        self._auto_status = "Fwd"
-
-    def _auto_update_drive(self, delta: int):
-        """Drive forward; trigger a scan if an obstacle is detected within threshold.
-
-        A None distance means the sensor timed out (nothing in range) — treated
-        as clear.  Only a valid reading *below* auto_obstacle triggers a scan.
-        Keep auto_obstacle below the sensor's hardware max range so that
-        "nothing detected" arrives as None/timeout, not as a spurious in-range
-        reading that would immediately re-trigger a scan.
-        """
-        if self._auto_forward_hold_ms > 0:
-            self._auto_forward_hold_ms = max(0, self._auto_forward_hold_ms - delta)
-
-        obstacle_detected = (self._auto_distance is not None and
-                             self._auto_distance < self._settings['auto_obstacle'].v)
-        if obstacle_detected and self._auto_forward_hold_ms == 0:
-            self._auto_sub_state = _AUTO_SUB_SCAN
-            self._auto_scan_data = []
-            self._auto_scan_slot = 0
-            self._auto_scan_timer = 0
-            num_slots = self._settings['auto_slots'].v
-            speed = max(self._settings['auto_speed'].v, _AUTO_CRUISE_MIN_PWM)
-            if _AUTO_SCAN_FORWARD_ONLY:
-                self._auto_target_output = (speed, 0)
-            else:
-                self._auto_target_output = (speed, -speed)
-            self._auto_status = f"Scan 0/{num_slots}"
-            if self._settings['logging'].v:
-                print(f"A:Obstacle {self._auto_distance}mm — scanning")
-        else:
-            speed = max(self._settings['auto_speed'].v, _AUTO_CRUISE_MIN_PWM)
-            self._auto_target_output = (speed, speed)
-            d = f"{self._auto_distance}mm" if self._auto_distance is not None else "---"
-            self._auto_status = f"Fwd {d}"
-
-    def _auto_update_scan(self, delta: int):
-        """Spin clockwise, sampling ToF once per slot across a full 360°."""
-        speed = max(self._settings['auto_speed'].v, _AUTO_CRUISE_MIN_PWM)
-        slot_ms = self._settings['auto_slot_ms'].v
-        num_slots = self._settings['auto_slots'].v
-
-        if _AUTO_SCAN_FORWARD_ONLY:
-            self._auto_target_output = (speed, 0)  # clockwise pivot without reverse
-        else:
-            self._auto_target_output = (speed, -speed)  # spin clockwise
-
-        self._auto_scan_timer += delta
-        if self._auto_scan_timer >= slot_ms:
-            self._auto_scan_timer -= slot_ms
-            dist = self._auto_distance if self._auto_distance is not None else _AUTO_CLEAR_DIST_MM
-            self._auto_scan_data.append(dist)
-            self._auto_scan_slot += 1
-            self._auto_status = f"Scan {self._auto_scan_slot}/{num_slots}"
-
-            if self._auto_scan_slot >= num_slots:
-                best_slot = max(range(len(self._auto_scan_data)),
-                                key=lambda i: self._auto_scan_data[i])
-                best_dist = self._auto_scan_data[best_slot]
-                if self._settings['logging'].v:
-                    print(f"A:Scan done. Best slot {best_slot}={best_dist}mm data={self._auto_scan_data}")
-
-                # Sample i was taken after (i+1) slots of clockwise spin from start.
-                # We ended back at 0°.  Shortest rotation to face slot i:
-                #   clockwise:        (i + 1) slots
-                #   anti-clockwise:   (num_slots - i - 1) slots
-                right_slots = best_slot + 1
-                left_slots  = num_slots - best_slot - 1
-                if right_slots <= left_slots:
-                    self._auto_turn_dir = 1          # clockwise
-                    self._auto_turn_ms  = right_slots * slot_ms
-                else:
-                    self._auto_turn_dir = -1         # anti-clockwise
-                    self._auto_turn_ms  = left_slots * slot_ms
-                self._auto_turn_timer = 0
-
-                if self._auto_turn_ms == 0:
-                    self._auto_enter_drive()
-                else:
-                    self._auto_sub_state = _AUTO_SUB_TURN
-                    if _AUTO_SCAN_FORWARD_ONLY:
-                        self._auto_target_output = (speed, 0) if self._auto_turn_dir > 0 else (0, speed)
-                    else:
-                        self._auto_target_output = (speed  * self._auto_turn_dir,
-                                                    -speed * self._auto_turn_dir)
-                    lbl = "right" if self._auto_turn_dir > 0 else "left"
-                    self._auto_status = f"Turn {lbl} {best_dist}mm"
-
-    def _auto_update_turn(self, delta: int):
-        """Rotate toward the best heading then resume driving."""
-        speed = max(self._settings['auto_speed'].v, _AUTO_CRUISE_MIN_PWM)
-        if _AUTO_SCAN_FORWARD_ONLY:
-            self._auto_target_output = (speed, 0) if self._auto_turn_dir > 0 else (0, speed)
-        else:
-            self._auto_target_output = (speed  * self._auto_turn_dir,
-                                        -speed * self._auto_turn_dir)
-        self._auto_turn_timer += delta
-        if self._auto_turn_timer >= self._auto_turn_ms:
-            self._auto_enter_drive()
-
-    def _draw_state_auto(self, ctx):
-        sub_labels = {_AUTO_SUB_DRIVE: "Driving",
-                      _AUTO_SUB_SCAN:  "Scanning",
-                      _AUTO_SUB_TURN:  "Turning"}
-        sub_label = sub_labels.get(self._auto_sub_state, "?")
-        d_str  = f"{self._auto_distance}mm" if self._auto_distance is not None else "---"
-        lx_str = f"{self._auto_lux:.0f}lx"  if self._auto_lux      is not None else "---"
-        lines   = ["Auto Drive", sub_label, f"Dist: {d_str}", f"Lux:  {lx_str}", self._auto_status]
-        colours = [(1,1,1), (0,1,1), (1,1,0), (0.6,0.6,0), (0.8,0.8,0.8)]
-        self.draw_message(ctx, lines, colours, label_font_size)
-
-        # Mini bar chart of last scan (if any data)
-        if self._auto_scan_data:
-            n = len(self._auto_scan_data)
-            max_dist = max(self._auto_scan_data) if max(self._auto_scan_data) > 0 else 1
-            bar_w = 180 // max(n, 1)
-            ctx.save()
-            ctx.translate(-90, 55)
-            for i, d in enumerate(self._auto_scan_data):
-                h = int(20 * d / max_dist)
-                ctx.rgb(0, 0.6, 0.6).rectangle(i * bar_w, -h, bar_w - 1, h).fill()
-            ctx.restore()
-
-        button_labels(ctx, cancel_label="Stop")
-
-
     # Value increment/decrement functions for positive integers only
     def _inc(self, v: int, l: int):
         if l==0:
@@ -2186,18 +1814,8 @@ class BadgeBotApp(app.App):
         elif item == _main_menu_items[5]: # Auto Drive
             self.set_menu(None)
             self.button_states.clear()
-            self._auto_sub_state = _AUTO_SUB_DRIVE
-            self._auto_distance = None
-            self._auto_lux = None
-            self._auto_sensor_timer = 0
-            self._auto_scan_data = []
-            self._auto_scan_slot = 0
-            self._auto_scan_timer = 0
-            self._auto_turn_timer = 0
-            self._auto_forward_hold_ms = _AUTO_MIN_FWD_MS
-            self._auto_target_output = (0, 0)
-            self._auto_motor_output = (0, 0)
-            self._auto_status = "Starting..."
+            from .autodrive import AutoDrive
+            self._auto = AutoDrive(self)
             self.current_state = STATE_AUTO
             self._update_period = 10
             self._refresh = True
@@ -2224,7 +1842,7 @@ class BadgeBotApp(app.App):
                         break
                 if not opened:
                     self.notification = Notification(f"No sensor\n{ports_to_try}")
-                    self._auto_status = f"No sensor"
+                    self._auto.status = "No sensor"
         elif item == _main_menu_items[6]: # About
             self.set_menu(None)
             self.button_states.clear()
@@ -2356,361 +1974,6 @@ class BadgeBotApp(app.App):
             if len(self.instructions) >= 5:
                 self.scroll_offset -= 1
             self.current_instruction = None
-
-
-######## STEPPER MOTOR CLASS ########
-
-class Stepper:
-    def __init__(self, container, hexdrive_app, step_size: int = 1, steps_per_rev: int = _STEPPER_DEFAULT_SPR, speed_sps: int = _STEPPER_DEFAULT_SPEED, max_sps: int = _STEPPER_MAX_SPEED, max_pos: int = _STEPPER_MAX_POSITION, timer_id: int = 0):
-        self._container = container 
-        self._hexdrive_app = hexdrive_app
-        self._phase = 0
-        self._calibrated = False
-        self._timer = Timer(timer_id) if Timer is not None else None
-        self._timer_is_running = False
-        self._timer_mode = 0
-        self._free_run_mode = 0                     # direction of free run mode
-        self._enabled = False
-        self._target_pos = 0
-        self._pos = 0                               # current position in half steps
-        self._max_sps = int(max_sps)                # max speed in full steps per second
-        self._steps_per_sec = int(speed_sps)        # current speed in full steps per second
-        self._steps_per_rev = int(steps_per_rev)    # full steps per revolution
-        self._max_pos = 2*int(max_pos)              # max position stored in half steps
-        self._freq = 0
-        self._min_period = 0
-        self._step_size = int(step_size)            # 1 = half steps, 2 = full steps
-        self._last_step_time = 0    
-        self.track_target()
-        
-    def step_size(self,sz=1):
-        if sz < 1:
-            sz = 1
-        elif sz > 2:
-            sz = 2
-        self._step_size = int(sz)
-
-    def speed(self,sps):    # speed in FULL steps per second
-        if self._free_run_mode == 1 and sps < 0:
-            self._free_run_mode = -1
-        elif self._free_run_mode == -1 and sps > 0:
-            self._free_run_mode = 1
-        if sps > self._max_sps:
-            sps = self._max_sps
-        elif sps < -self._max_sps:
-            sps = -self._max_sps
-        self._steps_per_sec = int(sps)
-        self._update_timer((2//self._step_size)*abs(self._steps_per_sec))    # steps per second
-
-    def speed_rps(self,rps):
-        self.speed(rps*self._steps_per_rev)
-
-    def get_speed(self) -> int:
-        return self._steps_per_sec
-
-    def target(self,t):
-        if self._calibrated and t < 0:
-            # when already calibrated limit to 0
-            self._target_pos = 0
-        elif self._calibrated and (2*int(t)) > self._max_pos:
-            # when already calibrated limit to max
-            self._target_pos = self._max_pos
-        else:
-            self._target_pos = 2*int(t)
-
-    def target_deg(self,deg):
-        self.target(self._steps_per_rev*deg/360.0)  # target pos is in steps
-    
-    def target_rad(self,rad):
-        self.target(self._steps_per_rev*rad/(2*pi)) # target pos is in steps
-    
-    def get_pos(self) -> int:
-        return (self._pos//2)   # convert half steps to full steps
-    
-    def get_pos_deg(self) -> float:
-        return self._pos*180.0/self._steps_per_rev      # half steps to degrees
-    
-    def get_pos_rad(self) -> float:
-        return self._pos*pi/self._steps_per_rev         # half steps to radians
-    
-    def overwrite_pos(self,p=0):
-        self._pos = 2*int(p)    # convert full steps to half steps
-    
-    def overwrite_pos_deg(self,deg):
-        self._pos = deg*self._steps_per_rev/180.0      # degrees to half steps
-    
-    def overwrite_pos_rad(self,rad):
-        self._pos = rad*self._steps_per_rev/pi         # radians to half steps
-
-    def step(self,d=0):
-        cur_time = time.ticks_ms()
-        if time.ticks_diff(cur_time, self._last_step_time) < self._min_period:
-            # avoid stepping too quickly as this causes skipped steps
-            return
-        self._last_step_time = cur_time
-        if d>0:
-            self._pos+=self._step_size
-            self._phase = (self._phase-self._step_size)%_STEPPER_NUM_PHASES
-        elif d<0:
-            self._pos-=self._step_size
-            self._phase = (self._phase+self._step_size)%_STEPPER_NUM_PHASES
-        # Check position limits
-        if self._calibrated and self._pos < 0:
-            print("s/w min endstop")
-            self._pos = 0
-            self.speed(0)
-            return
-        elif self._calibrated and self._pos > self._max_pos:
-            print("s/w max endstop")
-            self._pos = self._max_pos
-            self.speed(0)
-            return
-        try:
-            self._hexdrive_app.motor_step(self._phase)
-        except Exception as e:                       
-            print(f"step phase {self._phase} failed:{e}")
-
-    # There is no code to handle the endstop being hit at present - it needs to be specific to the hardware
-    # i.e. which pin is connected to the endstop.
-    def _hit_endstop(self):             
-        print("Endstop - hit")
-        if not self._calibrated:
-            self._calibrated = True
-        # set this as the new zero position
-        self.overwrite_pos(0)
-        # if we were moving towards the endstop, stop
-        if self._free_run_mode < 0:
-            self.speed(0)
-        elif self._free_run_mode == 0 and self._target_pos < self._pos:
-            self.speed(0)
-
-    def _timer_callback_fwd(self,t):
-        self.step(1)
-
-    def _timer_callback_rev(self,t):
-        self.step(-1)
-
-    def _timer_callback(self,t):
-        if self._target_pos>self._pos:
-            self.step(1)
-        elif self._target_pos<self._pos:
-            self.step(-1)
-
-    def free_run(self,d=1):
-        self._free_run_mode=d
-        if d!=0:
-            self._update_timer((2//self._step_size)*abs(self._steps_per_sec))   # half steps per second
-
-    def track_target(self):
-        self._free_run_mode=0
-        self._update_timer((2//self._step_size)*abs(self._steps_per_sec))      # half steps per second
-
-    def _update_timer(self,freq):
-        if self._timer is None:
-            return
-        if self._timer_is_running and freq != self._freq:
-            try:
-                self._timer.deinit()
-                self._freq = 0
-                self._timer_is_running=False
-            except Exception as e:
-                print(f"update_timer failed:{e}")
-        if 0 != freq and (freq != self._freq or self._free_run_mode != self._timer_mode):
-            try:                
-                print(f"Timer: {freq}Hz")
-                if self._free_run_mode>0:
-                    self._timer.init(freq=freq,callback=self._timer_callback_fwd)
-                elif self._free_run_mode<0:
-                    self._timer.init(freq=freq,callback=self._timer_callback_rev)
-                else:
-                    self._timer.init(freq=freq,callback=self._timer_callback)
-                self._freq = freq
-                self._min_period = (1000//freq) - 1
-                self._timer_is_running=True
-                self._timer_mode = self._free_run_mode
-            except Exception as e:
-                print(f"update_timer failed:{e}")
-        elif freq == 0:
-            print("Timer: 0Hz")
-
-
-    def stop(self):
-        self._update_timer(0)
-        try:
-            self._hexdrive_app.motor_release()
-        except Exception as e:
-            print(f"stop failed:{e}")
-
-    def enable(self,e = True):
-        self._enabled=e
-        try:
-            if e:
-                if self._free_run_mode!=0:
-                    self._update_timer((2//self._step_size)*abs(self._steps_per_sec))   # half steps per second                
-                self._hexdrive_app.motor_step(self._phase)
-            else:
-                self._update_timer(0)
-                self._hexdrive_app.motor_release()
-            self._hexdrive_app.set_power(e)
-        except Exception as e:
-            print(f"enable failed:{e}")
-
-    def is_enabled(self) -> bool:
-        return self._enabled
-    
-########## END OF STEPPER CLASS ##########
-
-
-
-class HexDriveType:
-    def __init__(self, pid, vid = 0xCAFE, motors = 0, steppers = 0, servos = 0, name ="Unknown"):
-        self.vid = vid
-        self.pid = pid
-        self.name = name
-        self.motors = motors
-        self.servos = servos
-        self.steppers = steppers
-
-
-class MySetting:
-    def __init__(self, container, default, minimum, maximum):
-        self._container = container
-        self.d = default
-        self.v = default
-        self._min = minimum
-        self._max = maximum
-
-
-    def __str__(self):
-        return str(self.v)
-
-
-    def _index(self):
-        for k,v in self._container.items():
-            if v == self:
-                return k
-        return None
-
-        
-    # This returns an increase in the value passed in - subject to max and with scale of increase depending on level
-    # based on the type of the setting
-    # it does not affect the current value of the setting
-    def inc(self, v, l=0):            
-        if isinstance(self.v, bool):
-            v = not v
-        elif isinstance(self.v, int):
-            if l==0:
-                v += 1
-            else:
-                d = 10**l
-                v = ((v // d) + 1) * d   # round up to the next multiple of 10^l, being very careful not to cause big jumps when value was nearly at the next multiple 
-
-            if v > self._max:
-                v = self._max
-        elif isinstance(self.v, float):
-            # only float at present is brightness from 0.0 to 1.0
-            v += 0.1            
-            if v > self._max:
-                v = self._max  
-        elif self._container['logging'].v:
-            print(f"H:inc type: {type(self.v)}")                               
-        return v
-
-    # This returns a decrease in the value passed in - subject to min and with scale of increase depending on level
-    # based on the type of the setting
-    # it does not affect the current value of the setting
-    def dec(self, v, l=0):            
-        if isinstance(self.v, bool):
-            v = not v
-        elif isinstance(self.v, int):
-            if l==0:
-                v -= 1
-            else:
-                d = 10**l
-                v = (((v+(9*(10**(l-1)))) // d) - 1) * d   # round down to the next multiple of 10^l
-
-            if v < self._min:
-                v = self._min       
-        elif isinstance(self.v, float):
-            # only float at present is brightness from 0.0 to 1.0
-            v -= 0.1            
-            if v < self._min:
-                v = self._min
-        elif self._container['logging'].v:
-            print(f"H: dec type: {type(self.v)}") 
-        return v
-    
-
-    def persist(self):
-        # only save non-default settings to the settings store
-        try:
-            if self.v != self.d:
-                settings.set(f"badgebot.{self._index()}", self.v)
-            else:
-                settings.set(f"badgebot.{self._index()}", None)
-        except Exception as e:
-            print(f"H:Failed to persist setting {self._index()}: {e}")
-
-
-class Instruction:
-    def __init__(self, press_type: Button) -> None:
-        self._press_type = press_type
-        self._duration = 1
-        self.power_plan = []
-
-
-    @property
-    def press_type(self) -> Button:
-        return self._press_type
-
-
-    def inc(self):
-        self._duration += 1
-
-
-    def __str__(self):
-        return f"{self.press_type.name} {self._duration}"
-
-
-    def directional_power_tuple(self, power):
-        if   self._press_type == BUTTON_TYPES["UP"]:
-            return ( power,  power)
-        elif self._press_type == BUTTON_TYPES["DOWN"]:
-            return (-power, -power)
-        elif self._press_type == BUTTON_TYPES["LEFT"]:
-            return (-power,  power)
-        elif self._press_type == BUTTON_TYPES["RIGHT"]:
-            return ( power, -power)
-
-
-    def directional_duration(self, mysettings):
-        if   self._press_type == BUTTON_TYPES["UP"] or self._press_type == BUTTON_TYPES["DOWN"]:
-            return (mysettings['drive_step_ms'].v)            
-        elif self._press_type == BUTTON_TYPES["LEFT"] or self._press_type == BUTTON_TYPES["RIGHT"]:
-            return (mysettings['turn_step_ms'].v)
-        
-
-    def make_power_plan(self, mysettings):
-        # return collection of tuples of power and their duration
-        curr_power = 0
-        ramp_up = []
-        for i in range(1*(self._duration+3)):
-            ramp_up.append((self.directional_power_tuple(curr_power), _TICK_MS))
-            curr_power += mysettings['acceleration'].v
-            if curr_power >= mysettings['max_power'].v:
-                ramp_up.append((self.directional_power_tuple(mysettings['max_power'].v), _TICK_MS))
-                break
-        user_power_duration = (self.directional_duration(mysettings) * self._duration)-(2*(i+1)*_TICK_MS)
-        power_durations = ramp_up.copy()
-        if user_power_duration > 0:
-            power_durations.append((self.directional_power_tuple(mysettings['max_power'].v), user_power_duration))
-        ramp_down = ramp_up.copy()
-        ramp_down.reverse()
-        power_durations.extend(ramp_down)
-        if mysettings['logging'].v:
-            print("Power durations:")
-            print(power_durations)
-        self.power_plan = power_durations
 
 
 __app_export__ = BadgeBotApp
