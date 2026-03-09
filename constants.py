@@ -116,6 +116,11 @@ _IS_SIMULATOR = sys.platform != "esp32"
 _FWD_DIR_DEFAULT = 0
 _FWD_DIR_LABELS  = ("Normal", "Reverse")
 
+# Drive mode setting (Motor Moves)
+_DRIVE_MODE_DEFAULT = 0
+_DRIVE_MODE_LABELS  = ("Time", "Distance")
+_DRIVE_STEP_MM      = 50        # mm per button press in distance mode
+
 # Front face setting (LEDs only)
 _FRONT_FACE_DEFAULT = 0
 _FRONT_FACE_LABELS = (
@@ -163,5 +168,13 @@ _AUTO_TURN_BACK_SPEED_FRAC   = 0.5  # fraction of auto_speed used during back-sw
 # IMU-aided turn control
 _AUTO_GYRO_AXIS         = 2     # index into gyro_read() tuple for yaw (0=X,1=Y,2=Z)
 _AUTO_GYRO_DEADBAND_DPS = 3.0   # ignore gyro readings below this magnitude (noise floor)
+
+# IMU accelerometer-aided distance control
+_AUTO_ACCEL_AXIS        = 0     # index into acc_read() tuple for fwd/back (0=X,1=Y,2=Z)
+_AUTO_ACCEL_DEADBAND    = 0.05  # m/s² - ignore accel readings below this (vibration/noise)
+_AUTO_ACCEL_GRAVITY     = 9.81  # m/s² - used for gravity compensation
+_AUTO_ACCEL_LPF_ALPHA   = 0.6   # low-pass filter coefficient (0-1, higher = faster response)
+_AUTO_ACCEL_SCALE       = 100   # distance calibration %  (100 = 1:1, raise if undershooting)
+_AUTO_DRIVE_TIMEOUT_MS  = 30000 # safety timeout for distance-based drives (ms)
 
 _main_menu_items = ["Motor Moves", "Stepper Test", "Servo Test", "Settings", "Sensor Test", "Auto Drive", "About", "Exit"]

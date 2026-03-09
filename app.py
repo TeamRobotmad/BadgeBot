@@ -49,11 +49,14 @@ from .constants import (
     _EEPROM_ADDR, _EEPROM_NUM_ADDRESS_BYTES, _EEPROM_PAGE_SIZE, _EEPROM_TOTAL_SIZE,
     _LOGGING, _ERASE_SLOT, _IS_SIMULATOR,
     _FWD_DIR_DEFAULT, _FWD_DIR_LABELS, _FRONT_FACE_DEFAULT, _FRONT_FACE_LABELS,
+    _DRIVE_MODE_DEFAULT, _DRIVE_MODE_LABELS, _DRIVE_STEP_MM,
+    _AUTO_ACCEL_SCALE,
     _AUTO_DRIVE_SPEED, _AUTO_OBSTACLE_MM, _AUTO_SCAN_SLOTS, _AUTO_SLOT_MS,
     _AUTO_MIN_FWD_MS,
     _main_menu_items,
 )
 from .models import StepperMode, ServoMode, HexDriveType, MySetting, Instruction
+from .motor_controller import MotorController
 from .stepper import Stepper
 
 
@@ -110,6 +113,9 @@ class BadgeBotApp(app.App):
         self._settings['auto_slot_ms']  = MySetting(self._settings, _AUTO_SLOT_MS, 50, 1000)
         self._settings['fwd_dir']       = MySetting(self._settings, _FWD_DIR_DEFAULT, 0, 1)      # 0=Normal, 1=Reversed
         self._settings['front_face']    = MySetting(self._settings, _FRONT_FACE_DEFAULT, 0, 11)  # LED front position 0=BtnA..11=Slot6
+        self._settings['drive_mode']    = MySetting(self._settings, _DRIVE_MODE_DEFAULT, 0, 1)   # 0=Time, 1=Distance (accel)
+        self._settings['drive_step_mm'] = MySetting(self._settings, _DRIVE_STEP_MM, 5, 500)      # mm per step in distance mode
+        self._settings['accel_scale']   = MySetting(self._settings, _AUTO_ACCEL_SCALE, 10, 500)  # distance calibration %
 
         self._edit_setting: int  = None
         self._edit_setting_value = None       
@@ -153,6 +159,8 @@ class BadgeBotApp(app.App):
         self._stepper: Stepper = None
         self.stepper_mode = StepperMode()
         self.stepper_pos: int = 0
+        self.motor_controller = None                      # high-level motor API
+        self._run_task = None                               # async task for instruction execution
 
         # Servo Tester
         self._time_since_last_input: int = 0
@@ -268,13 +276,21 @@ class BadgeBotApp(app.App):
 
     def background_update(self, delta: int):
         if self.current_state == STATE_RUN:
-            # DC Motor Control
-            output = self.get_current_power_level(delta)
-            if output is None:
-                self.current_state = STATE_DONE
-                self._update_period = 50
-            elif self.hexdrive_app is not None:
-                self.hexdrive_app.set_motors(self._apply_fwd_dir(output))
+            if self.motor_controller is not None:
+                # MotorController handles motors via its own async task;
+                # we just check whether it has finished.
+                if self._run_task is not None and self._run_task.done():
+                    self.current_state = STATE_DONE
+                    self._update_period = 50
+                    self._run_task = None
+            else:
+                # Legacy power-plan path
+                output = self.get_current_power_level(delta)
+                if output is None:
+                    self.current_state = STATE_DONE
+                    self._update_period = 50
+                elif self.hexdrive_app is not None:
+                    self.hexdrive_app.set_motors(self._apply_fwd_dir(output))
         elif self.current_state == STATE_AUTO and self._auto is not None:
             self._auto.background_update(delta)
 
@@ -817,6 +833,7 @@ class BadgeBotApp(app.App):
                 print(f"Check: {self.hexdrive_port} lost")
                 self.hexdrive_port = None
                 self.hexdrive_app = None
+                self.motor_controller = None
             if self.hexdrive_port is None:
                 valid_port = next(iter(self.ports_with_latest_hexdrive))
                 # Find our running hexdrive app
@@ -824,6 +841,11 @@ class BadgeBotApp(app.App):
                 if hexdrive_app is not None:
                     self.hexdrive_port = valid_port
                     self.hexdrive_app = hexdrive_app
+                    self.motor_controller = MotorController(
+                        hexdrive_app, self._settings,
+                        fwd_dir_setting=self._settings.get('fwd_dir'),
+                        front_face_setting=self._settings.get('front_face'),
+                    )
                     if self.hexpansion_slot_type[valid_port-1] is not None:
                         self.num_motors   = self._HEXDRIVE_TYPES[self.hexpansion_slot_type[valid_port-1]].motors
                         self.num_servos   = self._HEXDRIVE_TYPES[self.hexpansion_slot_type[valid_port-1]].servos
@@ -850,7 +872,8 @@ class BadgeBotApp(app.App):
         elif self.hexdrive_port is not None:
             print(f"Check: {self.hexdrive_port} lost")
             self.hexdrive_port = None
-            self.hexdrive_app = None                      
+            self.hexdrive_app = None
+            self.motor_controller = None
             self.current_state = STATE_REMOVED
         else:
             self._animation_counter = 0                   
@@ -1027,9 +1050,16 @@ class BadgeBotApp(app.App):
         self.clear_leds()
         self.run_countdown_elapsed_ms += delta
         if self.run_countdown_elapsed_ms >= _RUN_COUNTDOWN_MS:
-            self.power_plan_iter = chain(*(instr.power_plan for instr in self.instructions))
-            if self.hexdrive_app is not None:
-                self.hexdrive_app.set_power(True)
+            if self.motor_controller is not None:
+                # Use the new MotorController for gyro-aided execution
+                self._run_task = asyncio.get_event_loop().create_task(
+                    self._run_instructions_async()
+                )
+            else:
+                # Fallback: old power-plan iterator
+                self.power_plan_iter = chain(*(instr.power_plan for instr in self.instructions))
+                if self.hexdrive_app is not None:
+                    self.hexdrive_app.set_power(True)
             self.current_state = STATE_RUN
             self._update_period = 10
 
@@ -1037,12 +1067,16 @@ class BadgeBotApp(app.App):
     def _update_state_done(self, delta: int):
         if self.button_states.get(BUTTON_TYPES["CANCEL"]):
             self.button_states.clear()
-            if self.hexdrive_app is not None:
+            if self.motor_controller is not None:
+                self.motor_controller.stop()
+            elif self.hexdrive_app is not None:
                 self.hexdrive_app.set_power(False)
             self.reset_robot()
         elif self.button_states.get(BUTTON_TYPES["CONFIRM"]):
             self.button_states.clear()
-            if self.hexdrive_app is not None:
+            if self.motor_controller is not None:
+                self.motor_controller.stop()
+            elif self.hexdrive_app is not None:
                 self.hexdrive_app.set_power(False)
             self.run_countdown_elapsed_ms = 1   # avoid "6" appearing on screen at all
             self.current_power_duration = ((0,0,0,0), 0)
@@ -1307,6 +1341,8 @@ class BadgeBotApp(app.App):
                     disp_val = _FWD_DIR_LABELS[self._edit_setting_value]
                 elif self._edit_setting == 'front_face':
                     disp_val = _FRONT_FACE_LABELS[self._edit_setting_value]
+                elif self._edit_setting == 'drive_mode':
+                    disp_val = _DRIVE_MODE_LABELS[self._edit_setting_value]
                 else:
                     disp_val = self._edit_setting_value
                 self.notification = Notification(f"  Setting:   {self._edit_setting}={disp_val}")
@@ -1385,6 +1421,8 @@ class BadgeBotApp(app.App):
                     disp_val = _FWD_DIR_LABELS[self._edit_setting_value]
                 elif self._edit_setting == 'front_face':
                     disp_val = _FRONT_FACE_LABELS[self._edit_setting_value]
+                elif self._edit_setting == 'drive_mode':
+                    disp_val = _DRIVE_MODE_LABELS[self._edit_setting_value]
                 else:
                     disp_val = str(self._edit_setting_value)
                 self.draw_message(ctx, ["Edit Setting",f"{self._edit_setting}:",disp_val], [(1,1,1),(0,0,1),(0,1,0)], label_font_size)
@@ -1942,6 +1980,11 @@ class BadgeBotApp(app.App):
         self.current_instruction = None
         self.current_power_duration = ((0,0,0,0), 0)
         self.power_plan_iter = iter([])
+        if self._run_task is not None:
+            self._run_task.cancel()
+            self._run_task = None
+        if self.motor_controller is not None:
+            self.motor_controller.stop()
 
 
     def get_current_power_level(self, delta: int) -> int:
@@ -1974,6 +2017,22 @@ class BadgeBotApp(app.App):
             if len(self.instructions) >= 5:
                 self.scroll_offset -= 1
             self.current_instruction = None
+
+
+    async def _run_instructions_async(self):
+        """Execute the recorded instruction list via MotorController.
+
+        Runs as an asyncio task spawned from the countdown state; the
+        background_update loop monitors the task and transitions to
+        STATE_DONE when it completes.
+        """
+        try:
+            await self.motor_controller.run_instructions(self.instructions)
+        except asyncio.CancelledError:
+            self.motor_controller.stop()
+        except Exception as e:
+            print(f"MotorController run error: {e}")
+            self.motor_controller.stop()
 
 
 __app_export__ = BadgeBotApp
