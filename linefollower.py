@@ -88,6 +88,7 @@ _BRIGHTNESS = 1.0
 _NUM_LINE_SENSORS = 2
 _LINE_SENSOR_DEFAULT_THRESHOLD = 500
 _LINE_SENSOR_TIMEOUT = 2000
+_LINE_SENSOR_READ_TIMEOUT_US = 10000  # µs: max time to wait for a sensor reading before allowing a retry
 FOLLOWER_HEXPANSION = 1  # Hexpansion slot for Line Follower Sensors - as it does not have an EEPROM to be detected automatically
 GESTURE_HEXPANSION = 2   # Hexpansion slot for Gesture Sensor - as it does not have an EEPROM to be detected automatically
 GESTURE_ADDRESS = 0x73
@@ -100,6 +101,10 @@ SENSOR_1_CTRL   = 3  # hs pin (HSI)
 SENSOR_1_SIGNAL = 2  # hs pin (HSH)
 SENSOR_2_CTRL   = 1  # hs pin (HSG)
 SENSOR_2_SIGNAL = 0  # hs pin (HSF)
+# Scalable sensor pin and name lists (extend these to add more sensors)
+SENSOR_CTRL_PINS   = [SENSOR_1_CTRL,   SENSOR_2_CTRL]
+SENSOR_SIGNAL_PINS = [SENSOR_1_SIGNAL, SENSOR_2_SIGNAL]
+SENSOR_NAMES       = ["Left", "Right"]
 
 # Motor Driver - Defaults
 _MAX_POWER = 30000
@@ -339,7 +344,7 @@ class LineFollowerApp(app.App):
         self._override = False
         self.num_line_sensors: int = _NUM_LINE_SENSORS
         self._s = [False, False]
-        self._line_sensors       = [None]*_NUM_LINE_SENSORS
+        self._line_sensors = None  # Will be a LineSensors instance when active
         self._hexpansion_config  = HexpansionConfig(FOLLOWER_HEXPANSION)  # There is no EEPROM on the Line Follower Sensor Hexpansion
         self._sample_count: int  = 0
         self._sample_time: int   = 0
@@ -470,33 +475,24 @@ class LineFollowerApp(app.App):
                 self._update_period = DEFAULT_UPDATE_PERIOD
             elif self.hexdrive_app is not None:
                 self.hexdrive_app.set_motors(output)
-        elif self.current_state == STATE_FOLLOWER:    
-            # Read the line sensors
-            #for i in range(self.num_line_sensors):
-            #    if self._line_sensors[i] is not None:
-            #        self._line_sensors[i].read()
-            #    else:
-            #        print(f"Line Sensor {i} not initialised")             
+        elif self.current_state == STATE_FOLLOWER:
+            # Read all line sensors simultaneously (single 10µs pulse for all)
             output = (0,0)
             # if _override is a bool
             if type(self._override) is bool:
                 if not self._override:
-                    # Line Follower Sensor
-                    # have either sensors changed their line detection status?
-                    s0 = self._line_sensors[0].value()
-                    s1 = self._line_sensors[1].value()
-                    self._line_sensors[0].read()
-                    self._line_sensors[1].read()     
-                    if (s0 != self._s[0] or s1 != self._s[1]):
-                        self._s[0] = s0
-                        self._s[1] = s1
-                        if s0 and not s1:
+                    # Line Follower Sensor - read all sensors at once, then check for changes
+                    s = self._line_sensors.values()
+                    self._line_sensors.read()
+                    if s != self._s:
+                        self._s = s
+                        if s[0] and not s[1]:
                             output = (-self._settings['max_power'].v, self._settings['max_power'].v)
-                        elif not s0 and s1:
+                        elif not s[0] and s[1]:
                             output = (self._settings['max_power'].v, -self._settings['max_power'].v)
                         else:
-                            output = (self._settings['max_power'].v, self._settings['max_power'].v)                   
-                        self._output = output                    
+                            output = (self._settings['max_power'].v, self._settings['max_power'].v)
+                        self._output = output
                     else:
                         output = self._output
             else:
@@ -1406,20 +1402,25 @@ class LineFollowerApp(app.App):
             self.button_states.clear()
             if self.hexdrive_app is not None:
                 self.hexdrive_app.set_power(False)
-            for i in range(self.num_line_sensors):
-                self._line_sensors[i].disable()
+            self._line_sensors.disable()
             self._update_period = DEFAULT_UPDATE_PERIOD
             self.current_state = STATE_MENU
             return
-        # Button/Gesture Commands:
-        #if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
-        #    self.button_states.clear()
-        #    self.override = True
-        # Does the line sensor data need refreshing on the display?        
-        for i in range(self.num_line_sensors):
-            if self._line_sensors[i].updated:
-                self._refresh = True
-                self._line_sensors[i].updated = False
+        # UP/DOWN buttons adjust the sensor threshold
+        elif self.button_states.get(BUTTON_TYPES["UP"]):
+            self.button_states.clear()
+            self._settings['line_threshold'].v = self._settings['line_threshold'].inc(self._settings['line_threshold'].v)
+            self._line_sensors.threshold = self._settings['line_threshold'].v
+            self._refresh = True
+        elif self.button_states.get(BUTTON_TYPES["DOWN"]):
+            self.button_states.clear()
+            self._settings['line_threshold'].v = self._settings['line_threshold'].dec(self._settings['line_threshold'].v)
+            self._line_sensors.threshold = self._settings['line_threshold'].v
+            self._refresh = True
+        # Does the line sensor data need refreshing on the display?
+        if self._line_sensors.updated:
+            self._refresh = True
+            self._line_sensors.clear_updated()
 
 
     def _update_state_servo(self, delta: int):            
@@ -1753,18 +1754,21 @@ class LineFollowerApp(app.App):
         # Line Follower
         # draw the two line follower sensor values on/off as green/white circles
         ctx.save()
-        # display the average sample rate (2 sensors) to 1 decimal place
+        # display the average sample rate
         if (self._sample_time > 2000):
             state = disable_irq()
-            self._rate = int(((1000/2) * self._sample_count) // self._sample_time)
+            # _sample_count is incremented once per sensor per read() cycle, so divide by
+            # num_line_sensors to get complete read cycles per second (Hz).
+            self._rate = int(((1000 / self.num_line_sensors) * self._sample_count) // self._sample_time)
             self._sample_count = 0
             enable_irq(state)
             self._sample_time = 0
             print(f"Rate: {self._rate} Hz")
-        ctx.rgb(1,1,1).move_to(-50, -2*label_font_size).text(f"{self._rate} Hz")
+        ctx.rgb(1,1,1).move_to(-50, -3*label_font_size).text(f"{self._rate} Hz")
+        ctx.rgb(1,1,1).move_to(-50, -2*label_font_size).text(f"Thr:{self._settings['line_threshold'].v}")
         for i in range(self.num_line_sensors):
             x = 40 - i * 80
-            colour = (0,1,0) if self._line_sensors[i].value() else (0,0,0)
+            colour = (0,1,0) if self._line_sensors.value(i) else (0,0,0)
             ctx.rgb(*colour).arc(x, 0, 30, 0, 2 * pi, True).fill()
             ctx.rgb(1,1,1).arc(x, 0, 31, 0, 2 * pi, True).stroke()
         ctx.restore()
@@ -1961,14 +1965,16 @@ class LineFollowerApp(app.App):
                 self.set_menu(None)
                 self.button_states.clear()
                 self._animation_counter = 0
-                for i in range(self.num_line_sensors):
-                    if self._line_sensors[i] is None:
-                        # Pins                                
-                        pins = {}
-                        pins["ctrl"] = self._hexpansion_config.pin[SENSOR_1_CTRL if i == 0 else SENSOR_2_CTRL]
-                        pins["sig"]  = self._hexpansion_config.pin[SENSOR_1_SIGNAL if i == 0 else SENSOR_2_SIGNAL]
-                        self._line_sensors[i] = LineSensor(self, pins, name = "Left" if i == 0 else "Right", threshold = self._settings['line_threshold'].v)
-                    self._line_sensors[i].enable()
+                if self._line_sensors is None:
+                    # Build sensor configs from the scalable pin lists
+                    sensor_configs = [
+                        {"pins": {"ctrl": self._hexpansion_config.pin[SENSOR_CTRL_PINS[i]],
+                                  "sig":  self._hexpansion_config.pin[SENSOR_SIGNAL_PINS[i]]},
+                         "name": SENSOR_NAMES[i]}
+                        for i in range(self.num_line_sensors)
+                    ]
+                    self._line_sensors = LineSensors(self, sensor_configs, threshold=self._settings['line_threshold'].v)
+                self._line_sensors.enable()
                 if self.hexdrive_app is not None:
                     self.hexdrive_app.set_logging(False)
                     if not self.hexdrive_app.set_power(True):
@@ -2156,6 +2162,110 @@ class LineFollowerApp(app.App):
             self.current_instruction = None
 
 
+######## LINE SENSORS (PLURAL) CLASS ########
+
+class LineSensors:
+    """Manages multiple QTRX line sensors efficiently.
+
+    All ctrl/sig pins are pulsed simultaneously (single 10µs charge for all)
+    and timing starts at the same moment, so all sensor responses are measured
+    in parallel rather than sequentially.  To add more sensors, extend the
+    SENSOR_CTRL_PINS, SENSOR_SIGNAL_PINS and SENSOR_NAMES lists at the top of
+    this file and increase _NUM_LINE_SENSORS accordingly.
+    """
+
+    def __init__(self, container, sensor_configs: list, threshold: int = _LINE_SENSOR_DEFAULT_THRESHOLD):
+        # sensor_configs: list of {"pins": {"ctrl": <Pin>, "sig": <Pin>}, "name": "..."}
+        self._container = container
+        self._threshold = threshold
+        self._sensors = [
+            LineSensor(container, cfg["pins"], name=cfg["name"], threshold=threshold)
+            for cfg in sensor_configs
+        ]
+
+    @property
+    def num_sensors(self) -> int:
+        """Number of sensors managed by this instance."""
+        return len(self._sensors)
+
+    @property
+    def threshold(self) -> int:
+        return self._threshold
+
+    @threshold.setter
+    def threshold(self, value: int):
+        self._threshold = value
+        for sensor in self._sensors:
+            sensor.threshold = value
+
+    def enable(self):
+        for sensor in self._sensors:
+            sensor.enable()
+
+    def disable(self):
+        for sensor in self._sensors:
+            sensor.disable()
+
+    def value(self, index: int) -> bool:
+        """Return the last measured value of sensor at position index."""
+        return self._sensors[index].value()
+
+    def values(self) -> list:
+        """Return a list of the last measured values for all sensors."""
+        return [sensor.value() for sensor in self._sensors]
+
+    @property
+    def updated(self) -> bool:
+        """True if any sensor has a new reading since the last clear_updated()."""
+        return any(sensor.updated for sensor in self._sensors)
+
+    def clear_updated(self):
+        """Clear the updated flag on all sensors."""
+        for sensor in self._sensors:
+            sensor.updated = False
+
+    def read(self) -> bool:
+        """Start a simultaneous reading of all sensors.
+
+        All ctrl/sig pins are charged together with a single 10µs pulse and
+        timing begins at the same moment, so all sensor discharge times are
+        measured in parallel.  Returns False if a reading is already in progress.
+        """
+        # Check that no sensor reading is still in progress
+        for sensor in self._sensors:
+            if sensor._start_time != 0:
+                if time.ticks_diff(time.ticks_us(), sensor._start_time) <= _LINE_SENSOR_READ_TIMEOUT_US:
+                    print(f"Sensor {sensor._name} already in progress")
+                    return False
+
+        # Clear updated flags on all sensors
+        for sensor in self._sensors:
+            sensor.updated = False
+
+        # Charge all ctrl and sig pins simultaneously
+        for sensor in self._sensors:
+            sensor._pins["ctrl"].on()
+            sensor._pins["sig"].init(mode=Pin.OUT)
+            sensor._pins["sig"].on()
+
+        # Single 10µs charge pulse shared by all sensors
+        time.sleep_us(10)
+
+        # Register IRQ handlers for all sensors before releasing the pins
+        for sensor in self._sensors:
+            sensor._pins["sig"].irq(trigger=Pin.IRQ_FALLING, handler=sensor._handler)
+
+        # Atomically record the shared start time and switch all sig pins to inputs
+        irq_state = disable_irq()
+        start_time = time.ticks_us()
+        for sensor in self._sensors:
+            sensor._start_time = start_time
+            sensor._pins["sig"].init(mode=Pin.IN, pull=None)
+        enable_irq(irq_state)
+
+        return True
+
+
 ######## LINE SENSOR CLASS ########
 
 class LineSensor:
@@ -2182,6 +2292,14 @@ class LineSensor:
         except Exception as e:
             print(f"{self._name} Init failed:{e}")
 
+    @property
+    def threshold(self) -> int:
+        return self._threshold
+
+    @threshold.setter
+    def threshold(self, value: int):
+        self._threshold = value
+
     def disable(self):
         # tidy up
         self._pins["ctrl"].off()
@@ -2200,11 +2318,7 @@ class LineSensor:
         # Compare the duration against the threshold
         if self._start_time != 0:
             # already in progress
-            # if the last start time was more than 10ms ago then the sensor is not active so allow new reading to be made
-            if time.ticks_diff(time.ticks_us(), self._start_time) > 10000:
-                pass
-            else:
-                # print a message to the console INCLUDING the name of the sensor
+            if time.ticks_diff(time.ticks_us(), self._start_time) <= _LINE_SENSOR_READ_TIMEOUT_US:
                 print(f"Sensor {self._name} already in progress")
                 return False
         else:
