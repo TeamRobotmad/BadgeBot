@@ -30,7 +30,6 @@ from tildagonos import tildagonos
 import app
 
 from .utils import chain, draw_logo_animated, parse_version
-from .gr10_30 import *
 
 #import micropython
 #micropython.alloc_emergency_exception_buf(100)
@@ -86,14 +85,13 @@ _BRIGHTNESS = 1.0
 
 # Line Follower
 _NUM_LINE_SENSORS = 2
-_LINE_SENSOR_DEFAULT_THRESHOLD = 500
+_LINE_SENSOR_DEFAULT_THRESHOLD = 200
 _LINE_SENSOR_TIMEOUT = 2000
 FOLLOWER_HEXPANSION = 1  # Hexpansion slot for Line Follower Sensors - as it does not have an EEPROM to be detected automatically
-GESTURE_HEXPANSION = 2   # Hexpansion slot for Gesture Sensor - as it does not have an EEPROM to be detected automatically
-GESTURE_ADDRESS = 0x73
 
 FOLLOWER_SENSOR_SCAN_PERIOD = 10  # ms
 DEFAULT_UPDATE_PERIOD  = 50  # ms
+SAMPLE_RATE_UPDATE_INTERVAL = 1000  # ms
 
 # Dedicated Pins
 SENSOR_1_CTRL   = 3  # hs pin (HSI)
@@ -345,32 +343,6 @@ class LineFollowerApp(app.App):
         self._sample_time: int   = 0
         self._rate: int = 0     # sample rate
 
-        # Gesture Sensor
-        self._gesture_sensor = DFRobot_GR30_10_I2C(GESTURE_HEXPANSION, GESTURE_ADDRESS)
-        if self._gesture_sensor.begin():
-            print("GR10_30 Sensor initialize success")
-            if (not self._gesture_sensor.en_gestures(GESTURE_UP|GESTURE_DOWN|GESTURE_LEFT|GESTURE_RIGHT)):
-                print("Sensor enable gestures failed!!")
-            time.sleep(0.1)
-            self._gesture_sensor.set_udlr_win(20, 20)
-            self._gesture_sensor.set_left_range(5)
-            self._gesture_sensor.set_right_range(5)
-            self._gesture_sensor.set_up_range(5)
-            self._gesture_sensor.set_down_range(5)
-
-            self._gesture_sensor.set_forward_range(15)
-            self._gesture_sensor.set_backward_range(15)
-            
-            #self._gesture_sensor.set_wave_number(5)
-            #self._gesture_sensor.set_hover_win(30, 30)
-            #self._gesture_sensor.set_hover_timer(20)    # Each value is about 10ms
-            #self._gesture_sensor.set_cws_angle(2)
-            #self._gesture_sensor.set_ccw_angle(2)
-            #self._gesture_sensor.set_cws_angle_count(4)
-            #self._gesture_sensor.set_ccw_angle_count(4)            
-        else:
-            print("GR10_30 Sensor initialize failed!!")
-            self._gesture_sensor = None
 
         # Overall app state (controls what is displayed and what user inputs are accepted)
         self.current_state = STATE_INIT
@@ -777,7 +749,6 @@ class LineFollowerApp(app.App):
         self._pattern_management()
         
         self._update_hexpansion_management(delta)
-        self._update_sensor(delta)
         self._update_main_application(delta)
 
 
@@ -842,56 +813,6 @@ class LineFollowerApp(app.App):
                 pass
             elif self.current_state == STATE_CHECK:
                 self._update_state_check(delta)
-
-
-    def _update_sensor(self, delta: int):
-        # GR10_30 Gesture Sensor
-        if self._gesture_sensor:
-            if self._gesture_sensor.get_exist() == True:
-                self._override = True
-                self._time_since_last_update = 0
-            else:
-                # wait for 2 seconds before reverting to False
-                self._time_since_last_update += delta
-                if self._time_since_last_update > 2000:
-                    self._time_since_last_update = 0                
-                    if type(self._override) is not bool or self._override == True:
-                        print("Timeout")
-                    self._override = False    
-            if self._gesture_sensor.get_data_ready() == True:
-                gesture = self._gesture_sensor.get_gestures()
-                self._time_since_last_update = 0
-                # Sensor is at 90 degrees to the badge - so the gestures are rotated
-                if gesture&GESTURE_UP != False:
-                    print("up\r\n")
-                    self._override = BUTTON_TYPES["LEFT"]
-                elif gesture&GESTURE_DOWN != False:
-                    print("down\r\n")
-                    self._override = BUTTON_TYPES["RIGHT"]
-                elif gesture&GESTURE_LEFT != False:
-                    print("left\r\n")
-                    self._override = BUTTON_TYPES["DOWN"]
-                elif gesture&GESTURE_RIGHT != False:
-                    print("right\r\n")
-                    self._override = BUTTON_TYPES["UP"]
-                elif gesture&GESTURE_FORWARD != False:
-                    print("forward\r\n")
-                elif gesture&GESTURE_BACKWARD != False:
-                    print("backward\r\n")
-                elif gesture&GESTURE_CLOCKWISE != False:
-                    print("clockwise\r\n")
-                elif gesture&GESTURE_COUNTERCLOCKWISE != False:
-                    print("counter clockwise\r\n")
-                elif gesture&GESTURE_WAVE != False:
-                    print("wave\r\n")
-                elif gesture&GESTURE_HOVER != False:
-                    print("hover\r\n")
-                elif gesture&GESTURE_UNKNOWN != False:
-                    print("unknown\r\n")
-                elif gesture&GESTURE_CLOCKWISE_C != False:
-                    print("continue clockwise\r\n")
-                elif gesture&GESTURE_COUNTERCLOCKWISE_C != False:
-                    print("counter continue clockwise\r\n")
 
     def _update_main_application(self, delta: int):
         if self.current_state == STATE_MENU:
@@ -1411,15 +1332,34 @@ class LineFollowerApp(app.App):
             self._update_period = DEFAULT_UPDATE_PERIOD
             self.current_state = STATE_MENU
             return
-        # Button/Gesture Commands:
-        #if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
-        #    self.button_states.clear()
-        #    self.override = True
+        # Up/Down adjust line sensor threshold by 1 per click.
+        if self.button_states.get(BUTTON_TYPES["UP"]):
+            self.button_states.clear()
+            self._settings['line_threshold'].v = self._settings['line_threshold'].inc(self._settings['line_threshold'].v, 0)
+            for i in range(self.num_line_sensors):
+                if self._line_sensors[i] is not None:
+                    self._line_sensors[i].set_threshold(self._settings['line_threshold'].v)
+            self._refresh = True
+        elif self.button_states.get(BUTTON_TYPES["DOWN"]):
+            self.button_states.clear()
+            self._settings['line_threshold'].v = self._settings['line_threshold'].dec(self._settings['line_threshold'].v, 0)
+            for i in range(self.num_line_sensors):
+                if self._line_sensors[i] is not None:
+                    self._line_sensors[i].set_threshold(self._settings['line_threshold'].v)
+            self._refresh = True
         # Does the line sensor data need refreshing on the display?        
         for i in range(self.num_line_sensors):
             if self._line_sensors[i].updated:
                 self._refresh = True
                 self._line_sensors[i].updated = False
+        # Is it time to calculate the sample rate?
+        if (self._sample_time > SAMPLE_RATE_UPDATE_INTERVAL):
+            state = disable_irq()
+            self._rate = int(((SAMPLE_RATE_UPDATE_INTERVAL/_NUM_LINE_SENSORS) * self._sample_count) // self._sample_time)
+            self._sample_count = 0
+            enable_irq(state)
+            self._sample_time = 0
+            self._refresh = True
 
 
     def _update_state_servo(self, delta: int):            
@@ -1753,13 +1693,10 @@ class LineFollowerApp(app.App):
         # Line Follower
         # draw the two line follower sensor values on/off as green/white circles
         ctx.save()
-        # display the average sample rate (2 sensors) to 1 decimal place
-        if (self._sample_time > 2000):
-            state = disable_irq()
-            self._rate = int(((1000/2) * self._sample_count) // self._sample_time)
-            self._sample_count = 0
-            enable_irq(state)
-            self._sample_time = 0
+        # Show the current threshold for the sensors, to help with calibration.
+        ctx.rgb(1,1,0).move_to(-50, -3*label_font_size).text(f"TH:{self._settings['line_threshold'].v}")
+        # show the average sample rate
+        if self._settings['logging'].v:
             print(f"Rate: {self._rate} Hz")
         ctx.rgb(1,1,1).move_to(-50, -2*label_font_size).text(f"{self._rate} Hz")
         for i in range(self.num_line_sensors):
@@ -1767,7 +1704,13 @@ class LineFollowerApp(app.App):
             colour = (0,1,0) if self._line_sensors[i].value() else (0,0,0)
             ctx.rgb(*colour).arc(x, 0, 30, 0, 2 * pi, True).fill()
             ctx.rgb(1,1,1).arc(x, 0, 31, 0, 2 * pi, True).stroke()
+            # show the sensor raw value below the circle, to help with calibration
+            ctx.rgb(1,1,0).move_to(x-20, 3*label_font_size).text(f"{self._line_sensors[i].raw_value():4}")
+            if self._settings['logging'].v:
+                # Latest sensor values for calibration purposes
+                print(f"Sensor {i}: {self._line_sensors[i].value()} (raw: {self._line_sensors[i].raw_value()})")
         ctx.restore()
+        button_labels(ctx, up_label="+", down_label="-", cancel_label="Cancel")
 
 
     def _draw_state_servo(self, ctx):                 
@@ -2228,6 +2171,12 @@ class LineSensor:
 
     def value(self) -> bool:
         return self._state
+
+    def raw_value(self) -> int:
+        return self._diff
+
+    def set_threshold(self, threshold: int):
+        self._threshold = threshold
 
     def _handler(self, _):
         # This is the interrupt handler for the line sensor
