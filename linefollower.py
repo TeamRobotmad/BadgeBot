@@ -99,7 +99,9 @@ FOLLOWER_SENSOR_SCAN_PERIOD = 10  # ms
 FOLLOWER_SENSOR_TRIGGER_DURATION_US = 10  # µs - duration to set the sensor pin high for to trigger a reading
 DEFAULT_UPDATE_PERIOD  = 50  # ms
 SAMPLE_RATE_UPDATE_INTERVAL = 1000  # ms
-FOLLOWER_PROPORTIONAL_SCALE_FACTOR = 10  # Scale factor for proportional control in differential mode - this is a tuning parameter that may need adjusting based on the specific robot and sensors being used
+FOLLOWER_PID_KP_DEFAULT = 10  # Default proportional gain for PID control in differential mode
+FOLLOWER_PID_KI_DEFAULT = 0   # Default integral gain for PID control in differential mode
+FOLLOWER_PID_KD_DEFAULT = 0   # Default derivative gain for PID control in differential mode
 
 # Line Follower Modes
 FOLLOWER_MODE_DIFFERENTIAL = 0
@@ -292,6 +294,9 @@ class LineFollowerApp(app.App):
         self._settings['erase_slot']    = MySetting(self._settings, _ERASE_SLOT, 0, 6)
         self._settings['step_max_pos']  = MySetting(self._settings, _STEPPER_MAX_POSITION, 0, 65535)
         self._settings['line_threshold'] = MySetting(self._settings, _LINE_SENSOR_DEFAULT_THRESHOLD, 0, 65535)
+        self._settings['pid_kp']         = MySetting(self._settings, FOLLOWER_PID_KP_DEFAULT, 0, 65535)
+        self._settings['pid_ki']         = MySetting(self._settings, FOLLOWER_PID_KI_DEFAULT, 0, 65535)
+        self._settings['pid_kd']         = MySetting(self._settings, FOLLOWER_PID_KD_DEFAULT, 0, 65535)
 
         self._edit_setting: int  = None
         self._edit_setting_value = None       
@@ -361,6 +366,8 @@ class LineFollowerApp(app.App):
         self._rate: int = 0     # sample rate
         self._follower_mode: int = FOLLOWER_MODE_DIFFERENTIAL  # Default follower mode
         self._forward_power: int = 3000  # Default forward power for line follower
+        self._pid_integral: int = 0      # Accumulated integral term for PID controller
+        self._pid_previous_error: int = 0  # Previous error for derivative term of PID controller
 
         # Overall app state (controls what is displayed and what user inputs are accepted)
         self.current_state = STATE_INIT
@@ -453,6 +460,42 @@ class LineFollowerApp(app.App):
 
     ### NON-ASYNC FUCNTIONS ###
 
+    def _compute_differential_output(self):
+        """Compute motor output using a full PID controller for differential line following.
+        
+        Uses the difference between left and right sensor readings as the error signal,
+        and applies proportional, integral, and derivative terms to compute a steering correction.
+        Returns a tuple of (left_motor, right_motor) power values, clamped to max_power.
+        """
+        # Calculate the error as the difference between the two sensor readings
+        error = self._line_sensors.raw_value(0) - self._line_sensors.raw_value(1)
+
+        # Proportional term
+        p_term = self._settings['pid_kp'].v * error
+
+        # Integral term - accumulate error over time
+        self._pid_integral += error
+        i_term = self._settings['pid_ki'].v * self._pid_integral
+
+        # Derivative term - rate of change of error
+        d_term = self._settings['pid_kd'].v * (error - self._pid_previous_error)
+        self._pid_previous_error = error
+
+        # Combined PID output
+        correction = p_term + i_term + d_term
+
+        # Combine correction with base forward power to get output for each motor
+        output = (self._forward_power + correction, self._forward_power - correction)
+
+        # Limit output to max power
+        max_pwr = self._settings['max_power'].v
+        output = (max(min(output[0], max_pwr), -max_pwr), max(min(output[1], max_pwr), -max_pwr))
+
+        if self._settings['logging'].v:
+            print(f"PID: err={error} P={p_term} I={i_term} D={d_term} corr={correction} out={output}")
+
+        return output
+
     def background_update(self, delta: int):
         if self.current_state == STATE_RUN:
             # DC Motor Contorl
@@ -472,12 +515,7 @@ class LineFollowerApp(app.App):
                     s = self._line_sensors.values()
                     self._line_sensors.read()
                     if self._follower_mode == FOLLOWER_MODE_DIFFERENTIAL:
-                        # scale the difference
-                        difference = FOLLOWER_PROPORTIONAL_SCALE_FACTOR * (self._line_sensors.raw_value(0) - self._line_sensors.raw_value(1))
-                        # combine scaled difference with base power to get output for each motor
-                        output = (self._forward_power + difference, self._forward_power - difference)
-                        # limit output to max power
-                        output = (max(min(output[0], self._settings['max_power'].v), -self._settings['max_power'].v), max(min(output[1], self._settings['max_power'].v), -self._settings['max_power'].v))
+                        output = self._compute_differential_output()
                     else: # FOLLOWER_MODE_BINARY
                         if s != self._s:
                             self._s = s
@@ -1351,6 +1389,8 @@ class LineFollowerApp(app.App):
                 self.hexdrive_app.set_power(False)
             self._line_sensors.disable()
             self._update_period = DEFAULT_UPDATE_PERIOD
+            self._pid_integral = 0
+            self._pid_previous_error = 0
             self.current_state = STATE_MENU
             return
         # UP/DOWN buttons adjust the sensor threshold
