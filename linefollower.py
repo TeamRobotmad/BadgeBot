@@ -473,8 +473,12 @@ class LineFollowerApp(app.App):
         # Proportional term
         p_term = self._settings['pid_kp'].v * error
 
-        # Integral term - accumulate error over time
+        # Integral term - accumulate error over time with anti-windup clamping
         self._pid_integral += error
+        max_pwr = self._settings['max_power'].v
+        if self._settings['pid_ki'].v > 0:
+            integral_limit = max_pwr // self._settings['pid_ki'].v
+            self._pid_integral = max(min(self._pid_integral, integral_limit), -integral_limit)
         i_term = self._settings['pid_ki'].v * self._pid_integral
 
         # Derivative term - rate of change of error
@@ -488,7 +492,6 @@ class LineFollowerApp(app.App):
         output = (self._forward_power + correction, self._forward_power - correction)
 
         # Limit output to max power
-        max_pwr = self._settings['max_power'].v
         output = (max(min(output[0], max_pwr), -max_pwr), max(min(output[1], max_pwr), -max_pwr))
 
         if self._settings['logging'].v:
