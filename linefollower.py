@@ -93,13 +93,14 @@ _NUM_LINE_SENSORS = 2
 _LINE_SENSOR_DEFAULT_THRESHOLD = 200
 _LINE_SENSOR_TIMEOUT = 2000
 _LINE_SENSOR_READ_TIMEOUT_US = 10000  # µs: max time to wait for a sensor reading before allowing a retry
-FOLLOWER_HEXPANSION = 1  # Hexpansion slot for Line Follower Sensors - as it does not have an EEPROM to be detected automatically
+FOLLOWER_HEXPANSION = 2  # Hexpansion slot for Line Follower Sensors - as it does not have an EEPROM to be detected automatically
 
 FOLLOWER_SENSOR_SCAN_PERIOD = 10  # ms
 FOLLOWER_SENSOR_TRIGGER_DURATION_US = 10  # µs - duration to set the sensor pin high for to trigger a reading
 DEFAULT_UPDATE_PERIOD  = 50  # ms
 SAMPLE_RATE_UPDATE_INTERVAL = 1000  # ms
 FOLLOWER_PROPORTIONAL_SCALE_FACTOR = 10  # Scale factor for proportional control in differential mode - this is a tuning parameter that may need adjusting based on the specific robot and sensors being used
+FOLLOWER_FORWARD_POWER = 25000  # Base forward power for line follower - this is a tuning parameter that may need adjusting based on the specific robot and sensors being used
 
 # Line Follower Modes
 FOLLOWER_MODE_DIFFERENTIAL = 0
@@ -355,12 +356,12 @@ class LineFollowerApp(app.App):
         self.num_line_sensors: int = _NUM_LINE_SENSORS
         self._s = [False, False]
         self._line_sensors = None  # Will be a LineSensors instance when active
-        self._hexpansion_config  = HexpansionConfig(FOLLOWER_HEXPANSION)  # There is no EEPROM on the Line Follower Sensor Hexpansion
+        self._line_sensors_hexpansion_config  = HexpansionConfig(FOLLOWER_HEXPANSION)  # There is no EEPROM on the Line Follower Sensor Hexpansion
         self._sample_count: int  = 0
         self._sample_time: int   = 0
         self._rate: int = 0     # sample rate
         self._follower_mode: int = FOLLOWER_MODE_DIFFERENTIAL  # Default follower mode
-        self._forward_power: int = 3000  # Default forward power for line follower
+        self._forward_power: int = -FOLLOWER_FORWARD_POWER     # Default forward power for line follower (sign sets direction)
 
         # Overall app state (controls what is displayed and what user inputs are accepted)
         self.current_state = STATE_INIT
@@ -475,7 +476,7 @@ class LineFollowerApp(app.App):
                         # scale the difference
                         difference = FOLLOWER_PROPORTIONAL_SCALE_FACTOR * (self._line_sensors.raw_value(0) - self._line_sensors.raw_value(1))
                         # combine scaled difference with base power to get output for each motor
-                        output = (self._forward_power + difference, self._forward_power - difference)
+                        output = (self._forward_power - difference, self._forward_power + difference)
                         # limit output to max power
                         output = (max(min(output[0], self._settings['max_power'].v), -self._settings['max_power'].v), max(min(output[1], self._settings['max_power'].v), -self._settings['max_power'].v))
                     else: # FOLLOWER_MODE_BINARY
@@ -1917,24 +1918,27 @@ class LineFollowerApp(app.App):
                 self.set_menu(None)
                 self.button_states.clear()
                 self._animation_counter = 0
-                if self._line_sensors is None:
+                if self._line_sensors is None and self._line_sensors_hexpansion_config is not None:
                     # Build sensor configs from the scalable pin lists
                     sensor_configs = [
-                        {"pins": {"ctrl": self._hexpansion_config.pin[SENSOR_CTRL_PINS[i]],
-                                  "sig":  self._hexpansion_config.pin[SENSOR_SIGNAL_PINS[i]]},
+                        {"pins": {"ctrl": self._line_sensors_hexpansion_config.pin[SENSOR_CTRL_PINS[i]],
+                                  "sig":  self._line_sensors_hexpansion_config.pin[SENSOR_SIGNAL_PINS[i]]},
                          "name": SENSOR_NAMES[i]}
                         for i in range(self.num_line_sensors)
                     ]
                     self._line_sensors = LineSensors(self, sensor_configs, threshold=self._settings['line_threshold'].v)
-                self._line_sensors.enable()
-                if self.hexdrive_app is not None:
-                    self.hexdrive_app.set_logging(False)
-                    if not self.hexdrive_app.set_power(True):
-                        print("Failed to enable HexDrive power")
+                if self._line_sensors is None:
+                    self.notification = Notification("No Line Sensors")
                 else:
-                    print("No HexDrive App")                    
-                self.current_state = STATE_FOLLOWER
-                self._update_period = FOLLOWER_SENSOR_SCAN_PERIOD
+                    self._line_sensors.enable()
+                    if self.hexdrive_app is not None:
+                        self.hexdrive_app.set_logging(False)
+                        if not self.hexdrive_app.set_power(True):
+                            print("Failed to enable HexDrive power")
+                    else:
+                        print("No HexDrive App")                    
+                    self.current_state = STATE_FOLLOWER
+                    self._update_period = FOLLOWER_SENSOR_SCAN_PERIOD
                 self._refresh = True
         elif item == _main_menu_items[MENU_ITEM_MOTOR_MOVES]: # Motor Test - Turtle/Logo mode
             if self.num_motors == 0:
