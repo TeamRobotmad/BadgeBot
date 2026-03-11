@@ -19,19 +19,19 @@ files_to_keep = {
     Path("autotune.mpy"),
 }
 
-def _cosntruct_filepaths(dirname, filenames):
+def _construct_filepaths(dirname, filenames):
     return [Path(dirname, filename) for filename in filenames]
 
 def find_files(top_level_dir):
     walkerator = iter(os.walk(top_level_dir))
     dirname, dirnames, filenames = next(walkerator)
 
-    found_files = _cosntruct_filepaths(dirname, filenames)
+    found_files = _construct_filepaths(dirname, filenames)
 
     for dirname, dirnames, filenames  in walkerator:
         # if dirname not in dirs_to_keep:
         if dirname != "./.git" and ".git/" not in dirname:
-            found_files.extend(_cosntruct_filepaths(dirname, filenames))
+            found_files.extend(_construct_filepaths(dirname, filenames))
 
     return found_files
 
