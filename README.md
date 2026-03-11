@@ -49,6 +49,16 @@ The main menu includes a sub-menu of Settings which can be adjusted.
 | logging          | Enable or disable logging                 | False          | False  | True   |
 | erase_slot       | Slot to offer erase function              | 0 (i.e. none)  | 0      | 6      |
 | stepper_max_pos  | Maximum stepper position                  | 6200           | 0      | 65535  | 
+#### PID Auto Tune Settings ####
+| Setting          | Description                               | Default        | Min    | Max      |
+|------------------|-------------------------------------------|----------------|--------|----------|
+| pid_kp           | Proportional gain for line following      | 0.0            | 0.0    | 100000.0 |
+| pid_ki           | Integral gain for line following          | 0.0            | 0.0    | 100000.0 |
+| pid_kd           | Derivative gain for line following        | 0.0            | 0.0    | 100000.0 |
+
+The PID gains are best set by using the "PID Auto Tune" menu option.  Place the robot on a line and press C to start the tuning process.  The auto-tuner uses relay feedback (Åström-Hägglund method) to determine the ultimate gain and period of oscillation, then calculates PID gains using Ziegler-Nichols tuning rules.  The tuning process includes a quality score (0-100%) indicating how consistent the oscillation data was.  Results are automatically saved to settings.
+
+The training line should ideally include gentle curves so that the controller is exercised across a range of error magnitudes, but a straight line will also work for basic tuning.
 
 ### Limitations ###
 
