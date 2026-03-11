@@ -31,6 +31,7 @@ import app
 
 from .utils import chain, draw_logo_animated, parse_version
 from .gr10_30 import *
+from .autotune import PIDAutoTuner, compute_error, METHOD_ZIEGLER_NICHOLS
 
 #import micropython
 #micropython.alloc_emergency_exception_buf(100)
@@ -110,6 +111,11 @@ SENSOR_NAMES       = ["Left", "Right"]
 _MAX_POWER = 30000
 _POWER_STEP_PER_TICK = 7500  # effectively the acceleration
 
+# PID Gains - Defaults (zero = PID disabled, bang-bang used instead)
+_PID_KP = 0.0
+_PID_KI = 0.0
+_PID_KD = 0.0
+
 # Servo Tester - Defaults
 _SERVO_DEFAULT_STEP    = 10         # us per step    
 _SERVO_DEFAULT_CENTRE  = 1500       # us
@@ -164,6 +170,7 @@ STATE_SERVO = 16          # Servo test
 STATE_STEPPER = 17        # Stepper test
 STATE_SETTINGS = 18       # Edit Settings
 STATE_FOLLOWER = 19       # Line Follower
+STATE_AUTOTUNE = 20       # PID Auto Tune
 
 # App states where user can minimise app
 _MINIMISE_VALID_STATES = [0, 1, 7, 12, 13, 14, 15]
@@ -180,14 +187,15 @@ _LOGGING = False
 _ERASE_SLOT = 0   # Slot for user to set if they want to erase EEPROMs on HexDrives
 
 # Main Menu Items
-_main_menu_items = ["Line Follower","Motor Moves", "Stepper Test", "Servo Test", "Settings", "About","Exit"]
+_main_menu_items = ["Line Follower","Motor Moves", "PID Auto Tune", "Stepper Test", "Servo Test", "Settings", "About","Exit"]
 MENU_ITEM_LINE_FOLLOWER = 0
 MENU_ITEM_MOTOR_MOVES = 1
-MENU_ITEM_STEPPER_TEST = 2
-MENU_ITEM_SERVO_TEST = 3
-MENU_ITEM_SETTINGS = 4
-MENU_ITEM_ABOUT = 5
-MENU_ITEM_EXIT = 6
+MENU_ITEM_PID_AUTOTUNE = 2
+MENU_ITEM_STEPPER_TEST = 3
+MENU_ITEM_SERVO_TEST = 4
+MENU_ITEM_SETTINGS = 5
+MENU_ITEM_ABOUT = 6
+MENU_ITEM_EXIT = 7
 
 class StepperMode:
     OFF = 0
@@ -282,6 +290,9 @@ class LineFollowerApp(app.App):
         self._settings['erase_slot']    = MySetting(self._settings, _ERASE_SLOT, 0, 6)
         self._settings['step_max_pos']  = MySetting(self._settings, _STEPPER_MAX_POSITION, 0, 65535)
         self._settings['line_threshold'] = MySetting(self._settings, _LINE_SENSOR_DEFAULT_THRESHOLD, 0, 65535)
+        self._settings['pid_kp']         = MySetting(self._settings, _PID_KP, 0.0, 100000.0)
+        self._settings['pid_ki']         = MySetting(self._settings, _PID_KI, 0.0, 100000.0)
+        self._settings['pid_kd']         = MySetting(self._settings, _PID_KD, 0.0, 100000.0)
 
         self._edit_setting: int  = None
         self._edit_setting_value = None       
@@ -349,6 +360,9 @@ class LineFollowerApp(app.App):
         self._sample_count: int  = 0
         self._sample_time: int   = 0
         self._rate: int = 0     # sample rate
+
+        # PID Auto Tune
+        self._autotuner = None
 
         # Gesture Sensor
         self._gesture_sensor = DFRobot_GR30_10_I2C(GESTURE_HEXPANSION, GESTURE_ADDRESS)
@@ -505,6 +519,33 @@ class LineFollowerApp(app.App):
                 elif self._override == BUTTON_TYPES["RIGHT"]:
                     output = (self._settings['max_power'].v, -self._settings['max_power'].v)
             self.hexdrive_app.set_motors(output)
+        elif self.current_state == STATE_AUTOTUNE:
+            # PID Auto Tune - relay feedback control
+            if self._autotuner is not None and self._autotuner.is_running:
+                self._line_sensors.read()
+                # Compute continuous error from raw sensor timings
+                left_raw  = self._line_sensors.raw_value(0)
+                right_raw = self._line_sensors.raw_value(1)
+                error = compute_error(left_raw, right_raw)
+                now = time.ticks_ms()
+                output = self._autotuner.update(error, now)
+                if self._autotuner.is_running:
+                    self.hexdrive_app.set_motors(output)
+                else:
+                    # Tuning just finished - stop motors
+                    self.hexdrive_app.set_motors((0, 0))
+                    self._refresh = True
+                    if self._autotuner.is_complete:
+                        gains = self._autotuner.get_gains()
+                        if gains is not None:
+                            self._settings['pid_kp'].v = gains[0]
+                            self._settings['pid_ki'].v = gains[1]
+                            self._settings['pid_kd'].v = gains[2]
+                            self._settings['pid_kp'].persist()
+                            self._settings['pid_ki'].persist()
+                            self._settings['pid_kd'].persist()
+                            print(f"AUTOTUNE: Gains saved to settings: Kp={gains[0]:.4f} Ki={gains[1]:.6f} Kd={gains[2]:.4f}")
+                        self.notification = Notification(" Tuning  Complete")
 
 
     def generate_new_qr(self):
@@ -921,6 +962,10 @@ class LineFollowerApp(app.App):
     ### Line Follower Application ###
         elif self.current_state == STATE_FOLLOWER:
             self._update_state_follower(delta)
+
+    ### PID Auto Tune Application ###
+        elif self.current_state == STATE_AUTOTUNE:
+            self._update_state_autotune(delta)
 
     ### Servo Tester Application ###
         elif self.current_state == STATE_SERVO:
@@ -1423,6 +1468,44 @@ class LineFollowerApp(app.App):
             self._line_sensors.clear_updated()
 
 
+    def _update_state_autotune(self, delta: int):
+        # PID Auto Tune:
+        self._sample_time += delta
+        # Cancel to exit (stop motors and return to menu)
+        if self.button_states.get(BUTTON_TYPES["CANCEL"]):
+            self.button_states.clear()
+            if self.hexdrive_app is not None:
+                self.hexdrive_app.set_motors((0, 0))
+                self.hexdrive_app.set_power(False)
+            self._line_sensors.disable()
+            self._autotuner = None
+            self._update_period = DEFAULT_UPDATE_PERIOD
+            self.current_state = STATE_MENU
+            print("AUTOTUNE: Cancelled by user")
+            return
+        # CONFIRM button: start tuning (if idle/done/failed) or restart
+        if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
+            self.button_states.clear()
+            if self._autotuner is None or not self._autotuner.is_running:
+                # Create and start a new auto-tuner
+                relay_amp = self._settings['max_power'].v // 2
+                base_power = self._settings['max_power'].v // 3
+                self._autotuner = PIDAutoTuner(
+                    relay_amplitude=relay_amp,
+                    base_power=base_power,
+                    hysteresis=0.05,
+                    target_cycles=12,
+                    method=METHOD_ZIEGLER_NICHOLS,
+                    logging=self._settings['logging'].v
+                )
+                self._autotuner.start()
+                print(f"AUTOTUNE: Starting with relay_amp={relay_amp} base_power={base_power}")
+                self._refresh = True
+        # Always refresh to show progress
+        if self._autotuner is not None:
+            self._refresh = True
+
+
     def _update_state_servo(self, delta: int):            
         # Servo Tester:
         # Up/Down to select Servo
@@ -1663,6 +1746,8 @@ class LineFollowerApp(app.App):
                 button_labels(ctx, confirm_label="Replay", cancel_label="Restart")
             elif self.current_state == STATE_FOLLOWER:
                 self._draw_state_follower(ctx)
+            elif self.current_state == STATE_AUTOTUNE:
+                self._draw_state_autotune(ctx)
             elif self.current_state == STATE_SERVO:
                 self._draw_state_servo(ctx)
             elif self.current_state == STATE_STEPPER:
@@ -1771,6 +1856,45 @@ class LineFollowerApp(app.App):
             colour = (0,1,0) if self._line_sensors.value(i) else (0,0,0)
             ctx.rgb(*colour).arc(x, 0, 30, 0, 2 * pi, True).fill()
             ctx.rgb(1,1,1).arc(x, 0, 31, 0, 2 * pi, True).stroke()
+        ctx.restore()
+
+
+    def _draw_state_autotune(self, ctx):
+        # PID Auto Tune display
+        ctx.save()
+        if self._autotuner is None:
+            # Not started yet
+            self.draw_message(ctx,
+                ["PID Auto Tune", "Place on line", "Press C to start"],
+                [(1,1,1), (1,1,0), (0,1,0)], label_font_size)
+            button_labels(ctx, confirm_label="Start", cancel_label="Exit")
+        elif self._autotuner.is_running:
+            diag = self._autotuner.get_diagnostics()
+            status = self._autotuner.get_status_text()
+            self.draw_message(ctx,
+                ["PID Auto Tune", status,
+                 f"Cross: {diag['crossings']}/{diag['target']}",
+                 f"T={diag['elapsed']//1000}s"],
+                [(1,1,1), (1,1,0), (0,1,1), (0.7,0.7,0.7)], label_font_size)
+            button_labels(ctx, cancel_label="Stop")
+        elif self._autotuner.is_complete:
+            diag = self._autotuner.get_diagnostics()
+            q = diag['quality']
+            q_colour = (0,1,0) if q >= 60 else (1,1,0) if q >= 30 else (1,0,0)
+            self.draw_message(ctx,
+                ["Tune Complete",
+                 f"Q={q:.0f}%",
+                 f"Kp={diag['Kp']:.2f}",
+                 f"Ki={diag['Ki']:.4f}",
+                 f"Kd={diag['Kd']:.2f}"],
+                [(0,1,0), q_colour, (1,1,1), (1,1,1), (1,1,1)], label_font_size)
+            button_labels(ctx, confirm_label="Retry", cancel_label="Exit")
+        else:
+            # Failed
+            self.draw_message(ctx,
+                ["Tune Failed", "Check line", "and retry"],
+                [(1,0,0), (1,1,0), (1,1,0)], label_font_size)
+            button_labels(ctx, confirm_label="Retry", cancel_label="Exit")
         ctx.restore()
 
 
@@ -1931,8 +2055,11 @@ class LineFollowerApp(app.App):
             if self.num_motors == 0:
                 menu_items.remove(_main_menu_items[MENU_ITEM_MOTOR_MOVES])
                 menu_items.remove(_main_menu_items[MENU_ITEM_LINE_FOLLOWER])
+                menu_items.remove(_main_menu_items[MENU_ITEM_PID_AUTOTUNE])
             if self.num_line_sensors == 0:
                 menu_items.remove(_main_menu_items[MENU_ITEM_LINE_FOLLOWER])
+                if _main_menu_items[MENU_ITEM_PID_AUTOTUNE] in menu_items:
+                    menu_items.remove(_main_menu_items[MENU_ITEM_PID_AUTOTUNE])
             self.menu = Menu(
                     self,
                     menu_items,
@@ -1995,6 +2122,37 @@ class LineFollowerApp(app.App):
                 self._animation_counter = 0
                 self.current_state = STATE_HELP
                 self._refresh = True
+        elif item == _main_menu_items[MENU_ITEM_PID_AUTOTUNE]: # PID Auto Tune
+            if self.num_motors == 0:
+                self.notification = Notification("No Motors")
+            elif self.num_motors == 1:
+                self.notification = Notification(" 2 Motors  Required")
+            else:
+                self.set_menu(None)
+                self.button_states.clear()
+                self._animation_counter = 0
+                if self._line_sensors is None:
+                    sensor_configs = [
+                        {"pins": {"ctrl": self._hexpansion_config.pin[SENSOR_CTRL_PINS[i]],
+                                  "sig":  self._hexpansion_config.pin[SENSOR_SIGNAL_PINS[i]]},
+                         "name": SENSOR_NAMES[i]}
+                        for i in range(self.num_line_sensors)
+                    ]
+                    self._line_sensors = LineSensors(self, sensor_configs, threshold=self._settings['line_threshold'].v)
+                self._line_sensors.enable()
+                if self.hexdrive_app is not None:
+                    self.hexdrive_app.set_logging(False)
+                    if not self.hexdrive_app.set_power(True):
+                        print("Failed to enable HexDrive power")
+                else:
+                    print("No HexDrive App")
+                self._autotuner = None  # Reset - user will press CONFIRM to start
+                self._sample_time = 0
+                self._sample_count = 0
+                self.current_state = STATE_AUTOTUNE
+                self._update_period = FOLLOWER_SENSOR_SCAN_PERIOD
+                self._refresh = True
+                print("AUTOTUNE: Entered PID Auto Tune mode")
         elif item == _main_menu_items[MENU_ITEM_STEPPER_TEST]: # Stepper Test
             if self.num_steppers == 0:
                 self.notification = Notification("No Steppers")
@@ -2213,6 +2371,14 @@ class LineSensors:
     def values(self) -> list:
         """Return a list of the last measured values for all sensors."""
         return [sensor.value() for sensor in self._sensors]
+
+    def raw_value(self, index: int) -> int:
+        """Return the raw discharge time (µs) of sensor at position index."""
+        return self._sensors[index]._diff
+
+    def raw_values(self) -> list:
+        """Return a list of raw discharge times (µs) for all sensors."""
+        return [sensor._diff for sensor in self._sensors]
 
     @property
     def updated(self) -> bool:

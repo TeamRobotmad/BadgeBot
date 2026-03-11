@@ -7,6 +7,7 @@ import mpy_cross
 files_to_mpy = {
     Path("hexdrive.py"),
     Path("utils.py"),
+    Path("autotune.py"),
 }
 
 files_to_keep = {
@@ -14,7 +15,8 @@ files_to_keep = {
     Path("tildagon.toml"),
     Path("metadata.json"),
     Path("hexdrive.mpy"),
-    Path("utils.mpy")
+    Path("utils.mpy"),
+    Path("autotune.mpy"),
 }
 
 def _cosntruct_filepaths(dirname, filenames):
