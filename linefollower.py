@@ -51,7 +51,8 @@ from .utils import chain, draw_logo_animated, parse_version
 # Hard coded to talk to EEPROMs on address 0x50 - because we know that is what is on the HexDrive Hexpansion
 # makes it a lot more efficient than scanning the I2C bus for devices and working out what they are
 
-CURRENT_APP_VERSION = 6 # HEXDRIVE.PY Integer Version Number - checked against the EEPROM app.py version to determine if it needs updating
+CURRENT_HEXDRIVE_APP_VERSION = 6 # HEXDRIVE.PY Integer Version Number - checked against the EEPROM app.py version to determine if it needs updating
+
 
 _APP_VERSION = "0.1" # BadgeBot App Version Number
 
@@ -93,7 +94,6 @@ _NUM_LINE_SENSORS = 2
 _LINE_SENSOR_DEFAULT_THRESHOLD = 500
 _LINE_SENSOR_TIMEOUT = 2000
 _LINE_SENSOR_READ_TIMEOUT_US = 10000  # µs: max time to wait for a sensor reading before allowing a retry
-FOLLOWER_HEXPANSION = 2  # Hexpansion slot for Line Follower Sensors - as it does not have an EEPROM to be detected automatically
 
 FOLLOWER_SENSOR_SCAN_PERIOD = 10  # ms
 FOLLOWER_SENSOR_TRIGGER_DURATION_US = 10  # µs - duration to set the sensor pin high for to trigger a reading
@@ -315,11 +315,12 @@ class LineFollowerApp(app.App):
             pass
 
         # Hexpansion related
-        self._HEXDRIVE_TYPES = [HexDriveType(0xCBCB, motors=2, servos=4), 
-                                HexDriveType(0xCBCA, motors=2, name="2 Motor"), 
-                                HexDriveType(0xCBCC, servos=4, name="4 Servo"), 
-                                HexDriveType(0xCBCD, motors=1, servos=2, name="1 Mot 2 Srvo"),
-                                HexDriveType(0xCBCE, steppers=1, name="Stepper")]  
+        self._HEXPANSION_TYPES = [HexpansionType(0xCBCB, "HexDrive", motors=2, servos=4, app_mpy_name="hexdrive.mpy", app_mpy_version=CURRENT_HEXDRIVE_APP_VERSION, app_name="HexDriveApp"), 
+                                  HexpansionType(0xCBCA, "HexDrive", motors=2,           sub_type="2 Motor", app_mpy_name="hexdrive.mpy", app_mpy_version=CURRENT_HEXDRIVE_APP_VERSION, app_name="HexDriveApp"), 
+                                  HexpansionType(0xCBCC, "HexDrive", servos=4,           sub_type="4 Servo", app_mpy_name="hexdrive.mpy", app_mpy_version=CURRENT_HEXDRIVE_APP_VERSION, app_name="HexDriveApp"), 
+                                  HexpansionType(0xCBCD, "HexDrive", motors=1, servos=2, sub_type="1 Mot 2 Srvo", app_mpy_name="hexdrive.mpy", app_mpy_version=CURRENT_HEXDRIVE_APP_VERSION, app_name="HexDriveApp"),
+                                  HexpansionType(0xCBCE, "HexDrive", steppers=1,         sub_type="Stepper", app_mpy_name="hexdrive.mpy", app_mpy_version=CURRENT_HEXDRIVE_APP_VERSION, app_name="HexDriveApp"), 
+                                  HexpansionType(0xCBCF, "HexSense", sensors=2,          sub_type="2 Line Sensors")] # , app_mpy_name="hexsense.mpy", app_mpy_version=CURRENT_HEXSENSE_APP_VERSION, app_name="HexSenseApp")]  
         self.hexpansion_slot_type = [None]*6
         self.hexpansion_init_type: int = 0
         self.detected_port: int = None
@@ -329,6 +330,7 @@ class LineFollowerApp(app.App):
         self.hexdrive_port: int = None
         self.ports_with_blank_eeprom = set()
         self.ports_with_hexdrive = set()
+        self.ports_with_hexsense = set()
         self.ports_with_latest_hexdrive = set()
         self.hexdrive_app = None
         self.hexpansion_update_required: bool = False # flag from async to main loop
@@ -358,10 +360,10 @@ class LineFollowerApp(app.App):
 
         # Line Follower
         self._override = False
-        self.num_line_sensors: int = _NUM_LINE_SENSORS
+        self.num_line_sensors: int = 0 # initialised to 0 until we detect a HexSense Hexpansion and can set this based on the actual number of sensors it has 
         self._s = [False, False]
         self._line_sensors = None  # Will be a LineSensors instance when active
-        self._line_sensors_hexpansion_config  = HexpansionConfig(FOLLOWER_HEXPANSION)  # There is no EEPROM on the Line Follower Sensor Hexpansion
+        self._line_sensors_hexpansion_config  = None # HexpansionConfig(FOLLOWER_HEXPANSION)  # There is no EEPROM on the Line Follower Sensor Hexpansion
         self._sample_count: int  = 0
         self._sample_time: int   = 0
         self._rate: int = 0     # sample rate
@@ -404,6 +406,10 @@ class LineFollowerApp(app.App):
             if self._settings['logging'].v:
                 print(f"H:HexDrive removed from port {event.port}")
             self.ports_with_hexdrive.remove(event.port)
+        if event.port in self.ports_with_hexsense:
+            if self._settings['logging'].v:
+                print(f"H:HexSense removed from port {event.port}")
+            self.ports_with_hexsense.remove(event.port)            
         if event.port in self.ports_with_latest_hexdrive:
             if self._settings['logging'].v:
                 print(f"H:HexDrive V{_APP_VERSION} removed from port {event.port}")
@@ -421,7 +427,7 @@ class LineFollowerApp(app.App):
 
 
     async def _handle_hexpansion_insertion(self, event: HexpansionInsertionEvent):
-        if self.check_port_for_hexdrive(event.port):
+        if self.check_port_for_known_hexpansions(event.port):
             self.hexpansion_update_required = True
 
 
@@ -569,10 +575,10 @@ class LineFollowerApp(app.App):
     # Scan the Hexpansion ports for EEPROMs and HexDrives in case they are already plugged in when we start
     def scan_ports(self):
         for port in range(1, 7):
-            self.check_port_for_hexdrive(port)
+            self.check_port_for_known_hexpansions(port)
 
 
-    def check_port_for_hexdrive(self, port: int) -> bool:
+    def check_port_for_known_hexpansions(self, port: int) -> bool:
         # we know the EEPROM address so we can just read the header directly
         if port not in range(1, 7):
             return False
@@ -592,22 +598,33 @@ class LineFollowerApp(app.App):
             self.ports_with_blank_eeprom.add(port)
             return True
         # check is this is a HexDrive header by scanning the _HEXDRIVE_TYPES list
-        for index, hexpansion_type in enumerate(self._HEXDRIVE_TYPES):
+        for index, hexpansion_type in enumerate(self._HEXPANSION_TYPES):
             if hexpansion_header.vid == hexpansion_type.vid and hexpansion_header.pid == hexpansion_type.pid:
                 if self._settings['logging'].v:
-                    print(f"H:Found '{hexpansion_type.name}' HexDrive on port {port}")
-                if port not in self.ports_with_latest_hexdrive:
-                    self.ports_with_hexdrive.add(port)
-                self.hexpansion_slot_type[port-1] = index
+                    print(f"H:Found '{hexpansion_type.sub_type}' {hexpansion_type.name} on port {port}")
+                if hexpansion_type.name == self._HEXPANSION_TYPES[0].name:    # "HexDrive"
+                    # HexDrive needs to be checked for version before we can use it
+                    if port not in self.ports_with_latest_hexdrive:
+                        self.ports_with_hexdrive.add(port)  
+                elif hexpansion_type.name == self._HEXPANSION_TYPES[5].name: # "HexSense"
+                    self.num_line_sensors = hexpansion_type.sensors
+                    self._line_sensors_hexpansion_config = HexpansionConfig(port) 
+                    self.ports_with_hexsense.add(port)
+                self.hexpansion_slot_type[port-1] = index              
                 return True
         # we are not interested in this type of hexpansion
         return False
 
 
     def update_app_in_eeprom(self, port: int, addr: int) -> bool:
-        # Copy hexdrive.mpy to EEPROM as app.mpy
+        # Copy hexpansion app e.g. hexdrive.mpy to EEPROM as app.mpy
+        if self._HEXPANSION_TYPES[self.hexpansion_init_type].app_mpy_name is None:
+            if self._settings['logging'].v:
+                print(f"H:Hexpansion type {self._HEXPANSION_TYPES[self.hexpansion_init_type].name} does not have an app to copy to EEPROM")
+            return False
+        source_file = self._HEXPANSION_TYPES[self.hexpansion_init_type].app_mpy_name
         if self._settings['logging'].v:
-            print(f"H:Updating HexDrive app.mpy on port {port}")
+            print(f"H:Updating app.mpy on port {port} with {source_file}")
         try:
             i2c = I2C(port)
         except Exception as e:
@@ -637,10 +654,10 @@ class LineFollowerApp(app.App):
                     print(f"H:Error mounting: {e}")
             except Exception as e:
                 print(f"H:Error mounting: {e}")
-        source_path = "/" + __file__.rsplit("/", 1)[0] + "/hexdrive.mpy"
+        source_path = "/" + __file__.rsplit("/", 1)[0] + f"/{source_file}"
         dest_path   = f"{mountpoint}/app.mpy"
         try:
-            # delete the existing app.mpy file
+            # delete the existing app.mpy file first (otherwise the EEPROM file system may run out of space for the new file)
             if self._settings['logging'].v:
                 print(f"H:Deleting {dest_path}")
             os.remove(dest_path)
@@ -667,7 +684,7 @@ class LineFollowerApp(app.App):
         try:    
             appfile.write(template.read())                           
         except Exception as e:
-            print(f"H:Error updating HexDrive: {e}")
+            print(f"H:Error updating Hexpansion: {e}")
             return False
            
         try:
@@ -685,22 +702,22 @@ class LineFollowerApp(app.App):
                 print(f"H:Error unmounting {mountpoint}: {e}")
                 return False 
         if self._settings['logging'].v:
-            print(f"H:HexDrive app.mpy updated to version {CURRENT_APP_VERSION}")            
+            print(f"H:Hexpansion app.mpy updated to version {self._HEXPANSION_TYPES[self.hexpansion_init_type].app_mpy_version}")            
         return True
     
 
     def prepare_eeprom(self, port: int, addr: int) -> bool:
         if self._settings['logging'].v:
             print(f"H:Initialising EEPROM on port {port}")
-        hexdrive_header = HexpansionHeader(
+        hexpansion_header_to_write = HexpansionHeader(
             manifest_version="2024",
             fs_offset=32,
             eeprom_page_size=_EEPROM_PAGE_SIZE,
             eeprom_total_size=_EEPROM_TOTAL_SIZE,
-            vid=self._HEXDRIVE_TYPES[self.hexpansion_init_type].vid,
-            pid=self._HEXDRIVE_TYPES[self.hexpansion_init_type].pid,
+            vid=self._HEXPANSION_TYPES[self.hexpansion_init_type].vid,
+            pid=self._HEXPANSION_TYPES[self.hexpansion_init_type].pid,
             unique_id=0x0,
-            friendly_name="HexDrive",
+            friendly_name=self._HEXPANSION_TYPES[self.hexpansion_init_type].name,
         )        
         # Write and read back header efficiently
         try:
@@ -709,7 +726,7 @@ class LineFollowerApp(app.App):
             print(f"H:Error opening I2C port {port}: {e}")
             return False
         try:
-            write_header(port, hexdrive_header, addr_len = _EEPROM_NUM_ADDRESS_BYTES, page_size = _EEPROM_PAGE_SIZE)       
+            write_header(port, hexpansion_header_to_write, addr_len = _EEPROM_NUM_ADDRESS_BYTES, page_size = _EEPROM_PAGE_SIZE)       
         except Exception as e:
             print(f"H:Error writing header: {e}")
             return False
@@ -778,9 +795,10 @@ class LineFollowerApp(app.App):
         return True 
 
 
-    def find_hexdrive_app(self, port: int) -> app:                    
+    def find_hexpansion_app(self, port: int) -> app:                    
+        expected_app_name = self._HEXPANSION_TYPES[self.hexpansion_slot_type[port-1]].app_name
         for an_app in scheduler.apps:
-            if type(an_app).__name__ == 'HexDriveApp':
+            if type(an_app).__name__ == expected_app_name:
                 if hasattr(an_app, "config") and hasattr(an_app.config, "port") and  an_app.config.port == port:
                     return an_app
         return None
@@ -811,7 +829,7 @@ class LineFollowerApp(app.App):
 
         # manage PatternEnable/Disable for all states
         self._pattern_management()
-        
+
         self._update_hexpansion_management(delta)
         self._update_main_application(delta)
 
@@ -843,8 +861,10 @@ class LineFollowerApp(app.App):
                 # There are currently no possible HexDrives plugged in
                 self._animation_counter = 0
                 self.current_state = STATE_WARNING
-            else:      
+            else:
                 self.current_state = STATE_CHECK
+                if self._check_hexpansion_erase_port(delta):
+                    pass                          
             return
         
         if self.hexpansion_update_required:
@@ -870,7 +890,8 @@ class LineFollowerApp(app.App):
         elif self.current_state == STATE_UPGRADE:
             # We are currently asking the user if they want hexpansion App upgrading with latest App.mpy
             self._update_state_upgrade(delta)
-        elif self.current_state in _MINIMISE_VALID_STATES:                          
+        elif self.current_state in _MINIMISE_VALID_STATES:
+            # We need to loop over multiple hexpansion ports...                     
             if self._check_hexpansion_ports(delta):
                 pass     
             elif self._check_hexdrive_ports(delta):
@@ -912,12 +933,12 @@ class LineFollowerApp(app.App):
             self._update_state_follower(delta)
 
     ### Servo Tester Application ###
-        elif self.current_state == STATE_SERVO:
-            self._update_state_servo(delta)
+       elif self.current_state == STATE_SERVO:
+           self._update_state_servo(delta)
 
     ### Stepper Tester Application ###
-        elif self.current_state == STATE_STEPPER:
-            self._update_state_stepper(delta)
+       elif self.current_state == STATE_STEPPER:
+           self._update_state_stepper(delta)
 
     ### Settings Capability ###
         elif self.current_state == STATE_SETTINGS:
@@ -970,19 +991,22 @@ class LineFollowerApp(app.App):
 
     def _update_state_programming(self, delta: int):        
         if self.upgrade_port is not None:
-            if self.update_app_in_eeprom(self.upgrade_port, _EEPROM_ADDR):
+            if self._HEXPANSION_TYPES[self.hexpansion_init_type].app_mpy_name is None:
+                self.notification = Notification("No App", port = self.upgrade_port)
+                self.error_message = ["No App","for this","Hexpansion"]
+                self.current_state = STATE_MESSAGE
+            elif self.update_app_in_eeprom(self.upgrade_port, _EEPROM_ADDR):
                 self.notification = Notification("Upgraded", port = self.upgrade_port)
-                #self.ports_with_latest_hexdrive.add(self.upgrade_port)
                 # Try to trigger hexpansion managment app to restart the HexDrive
                 # by emit hexpansion insertion event
                 eventbus.emit(HexpansionInsertionEvent(self.upgrade_port))
                 self.error_message = ["Upgraded:","Please","reboop"]
                 self.current_state = STATE_MESSAGE                                     
                 if self._settings['logging'].v:
-                    print(f"H:HexDrive on port {self.upgrade_port} upgraded")
+                    print(f"H:Hexpansion on port {self.upgrade_port} upgraded")
             else:
                 self.notification = Notification("Failed", port = self.upgrade_port)
-                self.error_message = ["HexDrive","programming","failed"]
+                self.error_message = ["Hexpansion","programming","failed"]
                 self.current_state = STATE_ERROR
             self.upgrade_port = None
         elif self.detected_port is not None:
@@ -1014,11 +1038,11 @@ class LineFollowerApp(app.App):
             self.current_state = STATE_CHECK
         elif self.button_states.get(BUTTON_TYPES["UP"]):
             self.button_states.clear()
-            self.hexpansion_init_type = (self.hexpansion_init_type + 1) % len(self._HEXDRIVE_TYPES)
+            self.hexpansion_init_type = (self.hexpansion_init_type + 1) % len(self._HEXPANSION_TYPES)
             self._refresh = True
         elif self.button_states.get(BUTTON_TYPES["DOWN"]):
             self.button_states.clear()
-            self.hexpansion_init_type = (self.hexpansion_init_type - 1) % len(self._HEXDRIVE_TYPES)
+            self.hexpansion_init_type = (self.hexpansion_init_type - 1) % len(self._HEXPANSION_TYPES)
             self._refresh = True
         elif self.button_states.get(BUTTON_TYPES["LEFT"]):
             self.button_states.clear()
@@ -1038,19 +1062,31 @@ class LineFollowerApp(app.App):
             if self.erase_eeprom(self.erase_port, _EEPROM_ADDR):
                 self.error_message = ["Erased:","Please","reboop"]
                 self.notification = Notification("Erased", port = self.erase_port)
-                self.erase_port = None
+                self.ports_with_blank_eeprom.add(self.erase_port)    
                 self.current_state = STATE_MESSAGE                  
             else:
                 self.notification = Notification("Failed", port = self.erase_port)
                 self.error_message = ["EEPROM","erasure","failed"]
                 self.current_state = STATE_ERROR                       
+            # check if the erased port was our hexdrive port and if so remove it from our known hexdrive ports
+            if self.hexdrive_port == self.erase_port:
+                self.hexdrive_port = None
+                self.hexdrive_app = None
+                if self._settings['logging'].v:
+                    print(f"H:HexDrive on port {self.erase_port} erased!")
+                self.ports_with_hexdrive.discard(self.erase_port)
+                # check if the erased port was our hexsense port and if so remove it from our known hexsense ports
+            if self._line_sensors_hexpansion_config.port == self.erase_port:
+                self._line_sensors_hexpansion_config = None
+                self.ports_with_hexsense.discard(self.erase_port)
+            self.erase_port = None
         elif self.button_states.get(BUTTON_TYPES["CANCEL"]):
             # No
             if self._settings['logging'].v:
                 print("H:Erase Cancelled")
             self.button_states.clear()
             self.erase_port = None
-            self.current_state = STATE_CHECK  
+            self.current_state = STATE_CHECK
 
 
     def _update_state_upgrade(self, delta: int):                
@@ -1079,16 +1115,16 @@ class LineFollowerApp(app.App):
             if self.hexdrive_port is None:
                 valid_port = next(iter(self.ports_with_latest_hexdrive))
                 # Find our running hexdrive app
-                hexdrive_app = self.find_hexdrive_app(valid_port)
+                hexdrive_app = self.find_hexpansion_app(valid_port)
                 if hexdrive_app is not None:
                     self.hexdrive_port = valid_port
                     self.hexdrive_app = hexdrive_app
                     if self.hexpansion_slot_type[valid_port-1] is not None:
-                        self.num_motors   = self._HEXDRIVE_TYPES[self.hexpansion_slot_type[valid_port-1]].motors
-                        self.num_servos   = self._HEXDRIVE_TYPES[self.hexpansion_slot_type[valid_port-1]].servos
-                        self.num_steppers = self._HEXDRIVE_TYPES[self.hexpansion_slot_type[valid_port-1]].steppers
+                        self.num_motors   = self._HEXPANSION_TYPES[self.hexpansion_slot_type[valid_port-1]].motors
+                        self.num_servos   = self._HEXPANSION_TYPES[self.hexpansion_slot_type[valid_port-1]].servos
+                        self.num_steppers = self._HEXPANSION_TYPES[self.hexpansion_slot_type[valid_port-1]].steppers
                     # only intended for use with a single active HexDrive at once at present
-                    if (0 < self._HEXDRIVE_TYPES[self.hexpansion_slot_type[valid_port-1]].steppers) or self.hexdrive_app.get_status():
+                    if (0 < self._HEXPANSION_TYPES[self.hexpansion_slot_type[valid_port-1]].steppers) or self.hexdrive_app.get_status():
                         if self._settings['logging'].v:
                             print(f"H:HexDrive [{valid_port}] OK")
                         self.current_state = STATE_MENU
@@ -1115,6 +1151,29 @@ class LineFollowerApp(app.App):
             self._animation_counter = 0                   
             self.current_state = STATE_WARNING
 
+    def _check_hexpansion_erase_port(self, delta: int) -> bool:
+        # Is there an EEPROM to be erased?
+        erase_port = self._settings['erase_slot'].v
+        if erase_port != 0 and erase_port not in self.ports_with_blank_eeprom:
+            try:
+                hexpansion_header = read_header(erase_port, addr_len=_EEPROM_NUM_ADDRESS_BYTES)
+            except OSError:
+                # no EEPROM on this port
+                return False
+            except RuntimeError:
+                # not a valid header - likley blank or corrupted EEPROM which we can offer to erase
+                if _IS_SIMULATOR:
+                    # In the simulator there is no real EEPROM hardware, so skip the erase prompt
+                    return False                 
+                pass
+            # Show the UI prompt and wait for button press
+            if self._settings['logging'].v:
+                print(f"H:Hexpansion on port {erase_port} Erase?")
+            self.erase_port = erase_port
+            self.notification = Notification("Erase?", port = self.erase_port)
+            self.current_state = STATE_ERASE 
+            return True
+        return False    
 
     def _check_hexpansion_ports(self, delta: int) -> bool:
         if 0 < len(self.ports_with_blank_eeprom):
@@ -1123,38 +1182,28 @@ class LineFollowerApp(app.App):
             self.detected_port = self.ports_with_blank_eeprom.pop()
             self.notification = Notification("Initialise?", port = self.detected_port)
             self.current_state = STATE_DETECTED
-            return True     
+            return True    
         return False
 
 
     def _check_hexdrive_ports(self, delta: int) -> bool:
-        #print(f"Check HexDrive Ports: {self.waiting_app_port} {self.ports_with_hexdrive}")   
         if self.waiting_app_port is not None or (0 < len(self.ports_with_hexdrive)):
-            # if there are any ports with HexDrives - check if they need upgrading/erasing
+            # if there are any ports with HexDrives - check if they need upgrading
             if self.waiting_app_port is None:
                 self.waiting_app_port = self.ports_with_hexdrive.pop()
-                self._animation_counter = 0  #timeout
-            if self._settings['erase_slot'].v == self.waiting_app_port:
-                # if the user has set a port to erase EEPROMs on
-                # Show the UI prompt and wait for button press
-                if self._settings['logging'].v:
-                    print(f"H:HexDrive on port {self.waiting_app_port} Erase?")
-                self.erase_port = self.waiting_app_port
-                self.notification = Notification("Erase?", port = self.erase_port)
-                self.current_state = STATE_ERASE
-            else:                           
-                hexdrive_app = self.find_hexdrive_app(self.waiting_app_port)
+                self._animation_counter = 0  #timeout                       
+                hexpansion_app = self.find_hexpansion_app(self.waiting_app_port)
                 # the scheduler is updated asynchronously from hexpansion insertion so we may not find the app immediately
-                if hexdrive_app is not None:
+                if hexpansion_app is not None:
                     try:
-                        hexdrive_app_version = hexdrive_app.get_version()
+                        hexpansion_app_version = hexpansion_app.get_version()
                     except Exception as e:
-                        hexdrive_app_version = 0
-                        print(f"H:Error getting HexDrive app version - assume old: {e}")
+                        hexpansion_app_version = 0
+                        print(f"H:Error getting Hexpansion app version - assume old: {e}")
                 elif 5.0 < self._animation_counter:
                     if self._settings['logging'].v:
-                        print("H:Timeout waiting for HexDrive app to be started - assume it needs upgrading")
-                    hexdrive_app_version = 0
+                        print("H:Timeout waiting for Hexpansion app to be started - assume it needs upgrading")
+                    hexpansion_app_version = 0
                 else:
                     if 0 == self._animation_counter:
                         if self._settings['logging'].v:
@@ -1162,15 +1211,15 @@ class LineFollowerApp(app.App):
                     self.notification = Notification("Checking...", port = self.waiting_app_port)                            
                     self._animation_counter += delta/1000
                     return True                    
-                if hexdrive_app_version == CURRENT_APP_VERSION:    
+                if hexpansion_app_version == self._HEXPANSION_TYPES[self.hexpansion_slot_type[self.waiting_app_port-1]].app_mpy_version:    
                     if self._settings['logging'].v:
-                        print(f"H:HexDrive on port {self.waiting_app_port} has latest App")
+                        print(f"H:Hexpansion on port {self.waiting_app_port} has latest App")
                     self.ports_with_latest_hexdrive.add(self.waiting_app_port)
                     self.current_state = STATE_CHECK
                 else:    
                     # Show the UI prompt and wait for button press
                     if self._settings['logging'].v:
-                        print(f"H:HexDrive on port {self.waiting_app_port} needs upgrading from version {hexdrive_app_version}")
+                        print(f"H:Hexpansion app on port {self.waiting_app_port} needs upgrading from version {hexpansion_app_version} to {self._HEXPANSION_TYPES[self.hexpansion_slot_type[self.waiting_app_port-1]].app_mpy_version}")
                     self.upgrade_port = self.waiting_app_port
                     self.notification = Notification("Upgrade?", port = self.upgrade_port)
                     self.current_state = STATE_UPGRADE                             
@@ -1626,17 +1675,22 @@ class LineFollowerApp(app.App):
             elif self.current_state == STATE_REMOVED:
                 self.draw_message(ctx, ["HexDrive","removed.","Please reinsert"], [(1,1,0),(1,1,1),(1,1,1)], label_font_size)      
             elif self.current_state == STATE_DETECTED:
-                hexdrive_type = self._HEXDRIVE_TYPES[self.hexpansion_init_type].name
-                self.draw_message(ctx, ["Hexpansion",f"in slot {self.detected_port}:","Init EEPROM as",hexdrive_type,"HexDrive?"], [(1,1,1),(1,1,1),(1,1,1),(0,0,1),(1,1,0)], label_font_size)
-                button_labels(ctx, confirm_label="Yes", up_label="^", down_label="\u25BC", left_label=self._HEXDRIVE_TYPES[1].name, right_label=self._HEXDRIVE_TYPES[2].name,  cancel_label="No")
+                hexpansion_type = self._HEXPANSION_TYPES[self.hexpansion_init_type].name
+                hexpansion_sub_type = self._HEXPANSION_TYPES[self.hexpansion_init_type].sub_type
+                self.draw_message(ctx, ["Hexpansion",f"in slot {self.detected_port}:","Init EEPROM as", hexpansion_sub_type, f"{hexpansion_type}?"], [(1,1,1),(1,1,1),(1,1,1),(0,0,1),(1,1,0)], label_font_size)
+                button_labels(ctx, confirm_label="Yes", up_label="^", down_label="\u25BC", left_label=self._HEXPANSION_TYPES[1].name, right_label=self._HEXPANSION_TYPES[6].name,  cancel_label="No")
             elif self.current_state == STATE_ERASE:
-                self.draw_message(ctx, ["HexDrive",f"in slot {self.erase_port}:","Erase EEPROM?"], [(1,1,0),(1,1,1),(1,0,0)], label_font_size)
+                hexpansion_type = self._HEXPANSION_TYPES[self.hexpansion_init_type].name
+                self.draw_message(ctx, [hexpansion_type,f"in slot {self.erase_port}:","Erase EEPROM?"], [(1,1,0),(1,1,1),(1,0,0)], label_font_size)
                 button_labels(ctx, confirm_label="Yes", cancel_label="No")
             elif self.current_state == STATE_UPGRADE:
-                self.draw_message(ctx, ["HexDrive",f"in slot {self.upgrade_port}:","Upgrade","HexDrive app?"], [(1,1,0),(1,1,1),(1,1,1),(1,1,1)], label_font_size)             
+                hexpansion_type = self._HEXPANSION_TYPES[self.hexpansion_init_type].name
+                self.draw_message(ctx, [hexpansion_type,f"in slot {self.upgrade_port}:","Upgrade",f"{hexpansion_type} app?"], [(1,1,0),(1,1,1),(1,1,1),(1,1,1)], label_font_size)             
                 button_labels(ctx, confirm_label="Yes", cancel_label="No")
             elif self.current_state == STATE_PROGRAMMING:
-                self.draw_message(ctx, ["HexDrive:","Programming","EEPROM","Please wait..."], [(1,1,0),(1,1,1),(1,1,1),(1,1,1)], label_font_size)            
+                hexpansion_type = self._HEXPANSION_TYPES[self.hexpansion_init_type].name
+                self.draw_message(ctx, [f"{hexpansion_type}:","Programming","EEPROM","Please wait..."], [(1,1,0),(1,1,1),(1,1,1),(1,1,1)], label_font_size)
+            # Original Plan Programming                
             elif self.current_state == STATE_HELP:                
                 self.draw_message(ctx, ["BadgeBot","To program:","Press C","When finished:","Long press C"], [(1,1,0),(1,1,1),(1,1,1),(1,1,1),(1,1,1)], label_font_size)
             elif self.current_state == STATE_ERROR:
@@ -2327,8 +2381,8 @@ class LineSensor:
         self._diff = time.ticks_diff(time.ticks_us(), self._start_time)
         self._pins["sig"].irq(handler=None)
         enable_irq(self._irq_state)
-        #self._pins["sig"].off()
-        #self._pins["sig"].init(mode=Pin.OUT)
+        self._pins["sig"].off()
+        self._pins["sig"].init(mode=Pin.OUT)
         self._pins["ctrl"].off()
 
         if self._start_time == 0:
@@ -2548,14 +2602,19 @@ class Stepper:
 
 
 
-class HexDriveType:
-    def __init__(self, pid, vid = 0xCAFE, motors = 0, steppers = 0, servos = 0, name ="Unknown"):
+class HexpansionType:
+    def __init__(self, pid, name, vid = 0xCAFE, motors = 0, steppers = 0, servos = 0, sensors = 0, sub_type ="Unknown", app_mpy_name = None, app_mpy_version = None, app_name = None):
         self.vid = vid
         self.pid = pid
-        self.name = name
-        self.motors = motors
-        self.servos = servos
-        self.steppers = steppers
+        self.name = name                            # Primary name for the type of hexpansion - used in the UI and to determine which app.mpy to copy to the hexpansion
+        self.sub_type = sub_type                    # Sub-type/configuration variant of hexpansion
+        self.motors = motors                        # Number of motors supported by the hexpansion
+        self.servos = servos                        # Number of servos supported by the hexpansion
+        self.steppers = steppers                    # Number of stepper motors supported by the hexpansion
+        self.sensors = sensors                      # Number of sensors supported by the hexpansion
+        self.app_mpy_name = app_mpy_name            # name of the mpy file to be copied to the hexpansion as app.mpy
+        self.app_mpy_version = app_mpy_version      # version of the mpy file to be copied to the hexpansion as app.mpy - used to determine if the app.mpy on the hexpansion needs to be updated when it is inserted
+        self.app_name = app_name                    # Python App name which will be run on the badge when the hexpansion is inserted - used to determine if the app.mpy on the hexpansion needs to be updated when it is inserted       
 
 
 class MySetting:
