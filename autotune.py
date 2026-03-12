@@ -123,9 +123,7 @@ class PIDAutoTuner:
         self._start_ms = time.ticks_ms()
         if self.logging:
             print("AUTOTUNE: Started relay feedback auto-tune")
-            print(f"AUTOTUNE: relay_amp={self.relay_amplitude}  base_power={self.base_power}  "
-                  f"hysteresis={self.hysteresis}  target_cycles={self.target_cycles}  "
-                  f"method={_METHOD_NAMES[self.method]}")
+            print(f"AUTOTUNE: relay_amp={self.relay_amplitude}  base_power={self.base_power} hysteresis={self.hysteresis}  target_cycles={self.target_cycles} method={_METHOD_NAMES[self.method]}")
 
     def update(self, error, timestamp_ms):
         """Feed a new error measurement and return the motor output tuple.
@@ -163,9 +161,9 @@ class PIDAutoTuner:
             n = len(self._crossing_times)
             elapsed = time.ticks_diff(timestamp_ms, self._start_ms)
             if self.logging:
-                print(f"AUTOTUNE: crossing #{n}  t={elapsed}ms  error={error:.4f}  "
-                      f"relay→{'+'if self.relay_sign>0 else '-'}  "
-                      f"peaks={len(self._peaks)} troughs={len(self._troughs)}")
+                relay_symbol = '+' if self.relay_sign > 0 else '-'
+                print(f"AUTOTUNE: crossing #{n}  t={elapsed}ms  error={error:.4f} relay→{relay_symbol} peaks={len(self._peaks)} troughs={len(self._troughs)}")
+
             if n >= self.target_cycles:
                 self._finish()
                 return (0, 0)
@@ -255,15 +253,13 @@ class PIDAutoTuner:
         """Analyse collected oscillation data and compute PID gains."""
         if self.logging:
             print("AUTOTUNE: Finishing - analysing oscillation data")
-            print(f"AUTOTUNE: {len(self._crossing_times)} crossings, "
-                  f"{len(self._peaks)} peaks, {len(self._troughs)} troughs")
+            print(f"AUTOTUNE: {len(self._crossing_times)} crossings, {len(self._peaks)} peaks, {len(self._troughs)} troughs")
 
         # Need at least _MIN_CYCLES half-cycles after settling
         usable_crossings = len(self._crossing_times) - _SETTLE_IGNORE
         if usable_crossings < _MIN_CYCLES:
             if self.logging:
-                print(f"AUTOTUNE: FAILED - only {usable_crossings} usable crossings "
-                      f"(need {_MIN_CYCLES})")
+                print(f"AUTOTUNE: FAILED - only {usable_crossings} usable crossings (need {_MIN_CYCLES})")
             self.state = _AT_FAILED
             return
 
@@ -310,8 +306,7 @@ class PIDAutoTuner:
 
         if amplitude < _MIN_AMPLITUDE:
             if self.logging:
-                print(f"AUTOTUNE: FAILED - amplitude {amplitude:.4f} too small "
-                      f"(min {_MIN_AMPLITUDE})")
+                print(f"AUTOTUNE: FAILED - amplitude {amplitude:.4f} too small (min {_MIN_AMPLITUDE})")
             self.state = _AT_FAILED
             return
 
@@ -333,8 +328,7 @@ class PIDAutoTuner:
 
         self.state = _AT_DONE
         if self.logging:
-            print(f"AUTOTUNE: SUCCESS - Kp={self._Kp:.4f}  Ki={self._Ki:.6f}  "
-                  f"Kd={self._Kd:.4f}")
+            print(f"AUTOTUNE: SUCCESS - Kp={self._Kp:.4f}  Ki={self._Ki:.6f} Kd={self._Kd:.4f}")
             print(f"AUTOTUNE: Quality score = {self._quality:.1f}%")
             print(f"AUTOTUNE: Method = {_METHOD_NAMES[self.method]}")
 
@@ -411,9 +405,7 @@ class PIDAutoTuner:
         score = (period_score * 0.4 + amp_score * 0.4 + cycle_score * 0.2)
 
         if self.logging:
-            print(f"AUTOTUNE: Quality breakdown: period={period_score:.1f} "
-                  f"amplitude={amp_score:.1f} cycles={cycle_score:.1f} "
-                  f"total={score:.1f}%")
+            print(f"AUTOTUNE: Quality breakdown: period={period_score:.1f} amplitude={amp_score:.1f} cycles={cycle_score:.1f} total={score:.1f}%")
 
         return score
 
