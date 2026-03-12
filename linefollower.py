@@ -2410,17 +2410,17 @@ class LineSensors:
         for sensor in self._sensors:
             sensor.disable()
 
-    def raw_value(self, index: int) -> int:
-        """Return the last measured raw value (discharge time in µs) of sensor at position index."""
-        return self._sensors[index].raw_value()
+    #def raw_value(self, index: int) -> int:
+    #    """Return the last measured raw value (discharge time in µs) of sensor at position index."""
+    #    return self._sensors[index].raw_value()
 
     def value(self, index: int) -> bool:
         """Return the last measured value of sensor at position index."""
-        return self._sensors[index].value()
+        return self._sensors[index]._state
 
     def values(self) -> list:
         """Return a list of the last measured values for all sensors."""
-        return [sensor.value() for sensor in self._sensors]
+        return [sensor._state for sensor in self._sensors]
 
     def raw_value(self, index: int) -> int:
         """Return the raw discharge time (µs) of sensor at position index."""
@@ -2523,14 +2523,14 @@ class LineSensor:
     def enable(self):
         self._start_time = 0
 
-    def value(self) -> bool:
-        return self._state
+    #def value(self) -> bool:
+    #    return self._state
 
-    def raw_value(self) -> int:
-        return self._diff
+    #def raw_value(self) -> int:
+    #    return self._diff
 
-    def set_threshold(self, threshold: int):
-        self._threshold = threshold
+    #def set_threshold(self, threshold: int):
+    #    self._threshold = threshold
 
     def _handler(self, _):
         # This is the interrupt handler for the line sensor
