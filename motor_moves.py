@@ -138,7 +138,6 @@ class MotorMovesMgr:
         self.current_instruction = None
         self.current_power_duration = ((0, 0, 0, 0), 0)
         self.power_plan_iter = iter([])
-        self.run_countdown_elapsed_ms = 0
         self.is_scroll = False
         self.scroll_offset = 0
 
@@ -240,7 +239,6 @@ class MotorMovesMgr:
                 else:
                     self.finalize_instruction()
                     app._countdown_next_state = STATE_MOTOR_MOVES
-                    self.run_countdown_elapsed_ms = 0
                     app.run_countdown_elapsed_ms = 0
                     app.current_state = STATE_COUNTDOWN
                 self.is_scroll = False
@@ -299,7 +297,6 @@ class MotorMovesMgr:
             if app.hexdrive_app is not None:
                 app.hexdrive_app.set_power(False)
             app.run_countdown_elapsed_ms = 1
-            self.run_countdown_elapsed_ms = 1
             self.current_power_duration = ((0, 0, 0, 0), 0)
             app._countdown_next_state = STATE_MOTOR_MOVES
             app.current_state = STATE_COUNTDOWN
@@ -336,7 +333,7 @@ class MotorMovesMgr:
         app.long_press_delta = 0
         self.is_scroll = False
         self.scroll_offset = 0
-        self.run_countdown_elapsed_ms = 0
+        app.run_countdown_elapsed_ms = 0
         self.instructions = []
         self.current_instruction = None
         self.current_power_duration = ((0, 0), 0)

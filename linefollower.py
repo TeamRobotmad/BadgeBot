@@ -80,6 +80,9 @@ _QR_CODE = [0x1fcf67f,
 
 _BRIGHTNESS = 1.0
 
+# Screen positioning constant for scroll mode display
+H_START = -63
+
 # Timings
 _LONG_PRESS_MS = 750        # Time for long button press to register, in ms
 _RUN_COUNTDOWN_MS = 5000    # Time after running program until drive starts, in ms
@@ -575,7 +578,6 @@ class LineFollowerApp(app.App):
                 draw_logo_animated(ctx, self.rpm, self._animation_counter, [self.b_msg, self.t_msg], self.qr_code)
             # Scroll mode indicator (Motor Moves receive-instr state)
             elif self.current_state == STATE_MOTOR_MOVES and self._motor_moves_mgr.is_scroll:
-                H_START = -63
                 ctx.rgb(0,0.2,0).rectangle(     -120,-120, 115+H_START,240).fill()
                 ctx.rgb(0,0  ,0).rectangle(H_START-5,-120,10-2*H_START,240).fill()
                 ctx.rgb(0,0.2,0).rectangle(5-H_START,-120, 115+H_START,240).fill()
