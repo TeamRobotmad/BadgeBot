@@ -552,6 +552,29 @@ class LineFollowerApp(app.App):
                 tildagonos.leds[i] = (0,255,0) if self.current_state == STATE_MESSAGE else (255,0,0)       
 
 
+    def _update_state_countdown(self, delta: int):            
+        self.clear_leds()
+        self.run_countdown_elapsed_ms += delta
+        if self.run_countdown_elapsed_ms >= _RUN_COUNTDOWN_MS:
+            next_state = self._countdown_next_state
+            if next_state == STATE_RUN:
+                # Motor Moves: build the power plan and start running
+                self.power_plan_iter = chain(*(instr.power_plan for instr in self.instructions))
+                if self.hexdrive_app is not None:
+                    self.hexdrive_app.set_power(True)
+                self.current_state = STATE_RUN
+                self._update_period = 10
+            elif next_state == STATE_AUTOTUNE:
+                # PID AutoTune: start the tuner after countdown
+                self._autotune_mgr.begin_tuning()
+            else:
+                # Generic fallback
+                self.current_state = next_state
+
+
+
+
+
 
 
 
@@ -614,31 +637,97 @@ class LineFollowerApp(app.App):
 
 
 
-    def reset_servo(self):
-        # re-initialise the servo range for the servos
-        if self.hexdrive_app is not None:
-            self.hexdrive_app.set_power(True)
-            self.hexdrive_app.set_freq(1000 // self._settings['servo_period'].v)
-        # initialise the 4 servos
-        for i in range(4):
-            if self.hexdrive_app is not None:    # Apply Trim
-                self.hexdrive_app.set_servocentre(self.servo_centre[self.servo_selected], self.servo_selected)                            
+    # Value increment/decrement functions for positive integers only
+    def _inc(self, v: int, l: int):
+        if l==0:
+            return v+1
+        else:
+            d = 10**l
+            v = ((v // d) + 1) * d   # round up to the next multiple of 10^l
+            return v
+    
+    def _dec(self, v: int, l: int):
+        if l==0:
+            return v-1
+        else:
+            d = 10**l
+            v = (((v+(9*(10**(l-1)))) // d) - 1) * d   # round down to the next multiple of 10^l
+            return v
 
-            # update the servo range in case settigns have changed
-            self.servo_range[i] = self._settings['servo_range'].v     # only 1 setting actually for all servos at present
-            # check that the current position is within the new range
-            if self.servo[i] is not None:
-                if self.servo[i] > self.servo_range[i]:
-                    self.servo[i] = self.servo_range[i]
-                elif self.servo[i] < -self.servo_range[i]:
-                    self.servo[i] = -self.servo_range[i]
-                # leave the servo positions etc... as they are. but turn them back on
-                if self.hexdrive_app is not None:
-                    self.hexdrive_app.set_servoposition(i, int(self.servo[i]))
-            # leave the servo modes as they are
-        self.servo_selected = 0
-        self._time_since_last_update = 0
-        self._time_since_last_input = 0
+
+    def clear_leds(self):
+        for i in range(1,13):
+            tildagonos.leds[i] = (0, 0, 0)
+
+
+    def draw_message(self, ctx, message, colours, size=label_font_size):
+        ctx.font_size = size
+        num_lines = len(message)
+        for i_num, instr in enumerate(message):
+            text_line = str(instr)
+            width = ctx.text_width(text_line)
+            try:
+                colour = colours[i_num]
+            except IndexError:
+                colour = None
+            if colour is None:
+                colour = (1,1,1)
+            # Font is not central in the height allocated to it due to space for descenders etc...
+            # this is most obvious when there is only one line of text
+            # # position fine tuned to fit around button labels when showing 5 lines of text        
+            y_position = int(0.35 * ctx.font_size) if num_lines == 1 else int((i_num-((num_lines-2)/2)) * ctx.font_size - 2)
+            ctx.rgb(*colour).move_to(-width//2, y_position).text(text_line)
+
+
+    def _set_direction_leds(self, direction: Button):
+        if direction == BUTTON_TYPES["RIGHT"]:
+            # Green = Starboard = Right
+            self.clear_leds()
+            tildagonos.leds[2]  = (0, 255, 0)
+            tildagonos.leds[3]  = (0, 255, 0)                
+        elif direction ==BUTTON_TYPES["LEFT"]:
+            # Red = Port = Left
+            self.clear_leds()
+            tildagonos.leds[8]  = (255, 0, 0)
+            tildagonos.leds[9]  = (255, 0, 0)                
+        elif direction == BUTTON_TYPES["UP"]:
+            # Cyan
+            self.clear_leds()
+            tildagonos.leds[12] = (0, 255, 255)
+            tildagonos.leds[1]  = (0, 255, 255)                
+        elif direction == BUTTON_TYPES["DOWN"]:
+            # Magenta
+            self.clear_leds()
+            tildagonos.leds[6]  = (255, 0, 255)
+            tildagonos.leds[7]  = (255, 0, 255)                
+
+
+    # multi level auto repeat
+    # if speed_up is True, the auto repeat gets faster the longer the button is held
+    # otherwise it is a fixed rate, but the level is used to determine the scale of the increase in the setttings inc() and dec() functions
+    def _auto_repeat_check(self, delta: int, speed_up: bool = True) -> bool:                
+        self._auto_repeat += delta
+        # multi stage auto repeat - the repeat gets faster the longer the button is held
+        if self._auto_repeat > self._auto_repeat_intervals[self._auto_repeat_level if speed_up else 0]:
+            self._auto_repeat = 0
+            self._auto_repeat_count += 1
+            # variable threshold to count to increase level so that it is not too easy to get to the highest level as the auto repeat period is reduced
+            if self._auto_repeat_count > ((_AUTO_REPEAT_COUNT_THRES*_AUTO_REPEAT_MS) // self._auto_repeat_intervals[self._auto_repeat_level if speed_up else 0]):
+                self._auto_repeat_count = 0
+                if self._auto_repeat_level < (_AUTO_REPEAT_SPEED_LEVEL_MAX if speed_up else _AUTO_REPEAT_LEVEL_MAX):
+                    self._auto_repeat_level += 1
+                    if self._settings['logging'].v:
+                        print(f"Auto Repeat Level: {self._auto_repeat_level}")
+
+            return True
+        return False
+
+
+    def _auto_repeat_clear(self):                
+        self._auto_repeat = 1+ self._auto_repeat_intervals[0] # so that we trigger immediately on next press 
+
+        self._auto_repeat_count = 0 
+        self._auto_repeat_level = 0
 
 
 
