@@ -153,7 +153,7 @@ class PIDAutoTuner:
             n = len(self._crossing_times)
             if self.logging:
                 relay_symbol = '+' if self.relay_sign > 0 else '-'
-                print(f"AUTOTUNE: crossing #{n}  t={elapsed}ms  error={error:.4f} relay→{relay_symbol} peaks={len(self._peaks)} troughs={len(self._troughs)}")
+                print(f"AUTOTUNE: crossing #{n}  t={self._elapsed_ms}ms  error={error:.4f} relay={relay_symbol} peaks={len(self._peaks)} troughs={len(self._troughs)}")
 
             if n >= self.target_cycles:
                 self._finish()

@@ -364,17 +364,17 @@ class LineFollowerApp(app.App):
 
         # Line Follower
         self._override = False
-        self.num_line_sensors: int = 0 # initialised to 0 until we detect a HexSense Hexpansion and can set this based on the actual number of sensors it has 
+        self.num_line_sensors: int = 0                          # initialised to 0 until we detect a HexSense Hexpansion and can set this based on the actual number of sensors it has 
         self._s = [False, False]
-        self._line_sensors = None  # Will be a LineSensors instance when active
-        self._line_sensors_hexpansion_config  = None # HexpansionConfig(FOLLOWER_HEXPANSION)  # There is no EEPROM on the Line Follower Sensor Hexpansion
+        self._line_sensors = None                               # Will be a LineSensors instance when active
+        self._line_sensors_hexpansion_config  = None            # Store the HexpansionConfig of the HexSense that is providing the line sensors
         self._sample_count: int  = 0
         self._sample_time: int   = 0
         self._rate: int = 0     # sample rate
-        self._follower_mode: int = FOLLOWER_MODE_DIFFERENTIAL  # Default follower mode
-        self._forward_power: int = -FOLLOWER_FORWARD_POWER     # Default forward power for line follower (sign sets direction)
-        self._pid_integral: int = 0      # Accumulated integral term for PID controller
-        self._pid_previous_error: int = 0  # Previous error for derivative term of PID controller
+        self._follower_mode: int = FOLLOWER_MODE_DIFFERENTIAL   # Default follower mode
+        self._forward_power: int = -FOLLOWER_FORWARD_POWER      # Default forward power for line follower (sign sets direction)
+        self._pid_integral: int = 0                             # Accumulated integral term for PID controller
+        self._pid_previous_error: int = 0                       # Previous error for derivative term of PID controller
 
         # PID Auto Tune
         self._autotuner = None
@@ -580,7 +580,7 @@ class LineFollowerApp(app.App):
                             self._settings['pid_ki'].persist()
                             self._settings['pid_kd'].persist()
                             print(f"AUTOTUNE: Gains saved to settings: Kp={gains[0]:.4f} Ki={gains[1]:.6f} Kd={gains[2]:.4f}")
-                        self.notification = Notification(" Tuning  Complete")
+                        self.notification = Notification(" Tuning   Complete")
 
 
     def generate_new_qr(self):
@@ -1527,8 +1527,8 @@ class LineFollowerApp(app.App):
             self.button_states.clear()
             if self._autotuner is None or not self._autotuner.is_running:
                 # Create and start a new auto-tuner
-                relay_amp = self._settings['max_power'].v // 2
-                base_power = self._settings['max_power'].v // 3
+                relay_amp = self._settings['max_power'].v // 4
+                base_power = -self._settings['max_power'].v // 2    # motors facing backwards so negative power moves forward
                 self._autotuner = PIDAutoTuner(
                     relay_amplitude=relay_amp,
                     base_power=base_power,
@@ -2178,8 +2178,8 @@ class LineFollowerApp(app.App):
                 self._animation_counter = 0
                 if self._line_sensors is None:
                     sensor_configs = [
-                        {"pins": {"ctrl": self._hexpansion_config.pin[SENSOR_CTRL_PINS[i]],
-                                  "sig":  self._hexpansion_config.pin[SENSOR_SIGNAL_PINS[i]]},
+                        {"pins": {"ctrl": self._line_sensors_hexpansion_config.pin[SENSOR_CTRL_PINS[i]],
+                                  "sig":  self._line_sensors_hexpansion_config.pin[SENSOR_SIGNAL_PINS[i]]},
                          "name": SENSOR_NAMES[i]}
                         for i in range(self.num_line_sensors)
                     ]
