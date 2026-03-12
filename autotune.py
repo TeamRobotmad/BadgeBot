@@ -229,9 +229,9 @@ class PIDAutoTuner:
             return "Idle"
         elif self.state == _AT_RELAY:
             n = len(self._crossing_times)
-            return f"Tuning {n}/{self.target_cycles}"
+            return "Tuning " + str(n) + "/" + str(self.target_cycles)
         elif self.state == _AT_DONE:
-            return f"Done Q={self._quality:.0f}%"
+            return "Done Q=" + str(int(self._quality)) + "%"
         else:
             return "Failed"
 
@@ -270,8 +270,8 @@ class PIDAutoTuner:
 
         Tu = sum(periods) / len(periods)  # average period in ms
         if self.logging:
-            print(f"AUTOTUNE: Periods (ms): {periods}")
-            print(f"AUTOTUNE: Average period Tu = {Tu:.1f} ms")
+            print("AUTOTUNE: Periods (ms): " + str(periods))
+            print("AUTOTUNE: Average period Tu = " + str(Tu) + " ms")
 
         # --- Calculate oscillation amplitude ---
         # Use peaks/troughs after the settling window
@@ -292,7 +292,7 @@ class PIDAutoTuner:
         if self.logging:
             print("AUTOTUNE: Peaks: " + str(["%.4f" % p for p in valid_peaks]))
             print("AUTOTUNE: Troughs: " + str(["%.4f" % t for t in valid_troughs]))
-            print(f"AUTOTUNE: Average amplitude a = {amplitude:.4f}")
+            print("AUTOTUNE: Average amplitude a = " + str(amplitude))
 
         if amplitude < _MIN_AMPLITUDE:
             if self.logging:
@@ -307,8 +307,8 @@ class PIDAutoTuner:
         self._Tu = Tu
 
         if self.logging:
-            print(f"AUTOTUNE: Ultimate gain Ku = {self._Ku:.4f}")
-            print(f"AUTOTUNE: Ultimate period Tu = {self._Tu:.1f} ms")
+            print("AUTOTUNE: Ultimate gain Ku = " + str(self._Ku))
+            print("AUTOTUNE: Ultimate period Tu = " + str(self._Tu) + " ms")
 
         # --- Apply tuning rules ---
         self._apply_tuning_rules()
@@ -318,9 +318,9 @@ class PIDAutoTuner:
 
         self.state = _AT_DONE
         if self.logging:
-            print(f"AUTOTUNE: SUCCESS - Kp={self._Kp:.4f}  Ki={self._Ki:.6f}  Kd={self._Kd:.4f}")
-            print(f"AUTOTUNE: Quality score = {self._quality:.1f}%")
-            print(f"AUTOTUNE: Method = {_METHOD_NAMES[self.method]}")
+            print("AUTOTUNE: SUCCESS - Kp=" + str(self._Kp) + "  Ki=" + str(self._Ki) + "  Kd=" + str(self._Kd))
+            print("AUTOTUNE: Quality score = " + str(self._quality) + "%")
+            print("AUTOTUNE: Method = " + _METHOD_NAMES[self.method])
 
     def _apply_tuning_rules(self):
         """Compute Kp, Ki, Kd from Ku and Tu using the selected method."""
@@ -366,7 +366,7 @@ class PIDAutoTuner:
                 # Penalise: cv > 0.3 → score drops significantly
                 period_score = max(0, 100 - cv_period * 200)
                 if self.logging:
-                    print(f"AUTOTUNE: Period CV={cv_period:.3f}  period_score={period_score:.1f}")
+                    print("AUTOTUNE: Period CV=" + str(cv_period) + "  period_score=" + str(period_score))
             else:
                 period_score = 0
         else:
@@ -382,7 +382,7 @@ class PIDAutoTuner:
                 cv_amp = std_a / mean_a
                 amp_score = max(0, 100 - cv_amp * 200)
                 if self.logging:
-                    print(f"AUTOTUNE: Amplitude CV={cv_amp:.3f}  amp_score={amp_score:.1f}")
+                    print("AUTOTUNE: Amplitude CV=" + str(cv_amp) + "  amp_score=" + str(amp_score))
             else:
                 amp_score = 0
         else:
