@@ -94,7 +94,7 @@ def _simulate_oscillation(tuner, period_ms=200, amplitude=0.5, num_full_cycles=1
     total = period_ms * num_full_cycles
     for t_ms in range(0, total, dt):
         error = amplitude * math.sin(2 * math.pi * t_ms / period_ms)
-        out = tuner.update(error, t_ms)
+        out = tuner.update(error, dt)
         outputs.append(out)
         if not tuner.is_running:
             break
@@ -123,7 +123,7 @@ def test_autotune_fails_with_zero_amplitude():
     t.start()
     # Feed constant zero error — no crossings should happen
     for ms in range(0, 5000, 10):
-        t.update(0.0, ms)
+        t.update(0.0, 10)
     # Tuner should still be running (not enough crossings) or failed
     assert not t.is_complete
 
@@ -156,7 +156,7 @@ def test_relay_output_format():
     """update() should return a 2-tuple of ints."""
     t = PIDAutoTuner(10000, base_power=5000, logging=False)
     t.start()
-    out = t.update(0.3, 100)
+    out = t.update(0.3, 10)
     assert isinstance(out, tuple)
     assert len(out) == 2
 

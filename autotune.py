@@ -22,16 +22,6 @@
 #
 # Reference: https://github.com/lily-osp/AutoTunePID
 
-import time
-
-# MicroPython provides time.ticks_ms / time.ticks_diff; CPython does not.
-# Supply lightweight polyfills so the module works in both environments
-# (important for running tests on a development PC).
-if not hasattr(time, "ticks_ms"):
-    time.ticks_ms = lambda: int(time.time() * 1000)
-if not hasattr(time, "ticks_diff"):
-    time.ticks_diff = lambda a, b: a - b
-
 # Tuning method constants
 METHOD_ZIEGLER_NICHOLS  = 0
 METHOD_TYREUS_LUYBEN    = 1
@@ -91,7 +81,7 @@ class PIDAutoTuner:
         self.state = _AT_IDLE
         self.relay_sign = 1          # +1 or -1
         self._prev_error = 0.0
-        self._start_ms = 0
+        self._elapsed_ms = 0         # accumulated elapsed time (ms)
 
         # Oscillation measurement
         self._crossing_times = []    # timestamps (ms) of zero-crossings
@@ -120,14 +110,12 @@ class PIDAutoTuner:
         self._peaks = []
         self._troughs = []
         self._cur_extreme = 0.0
-        self._start_ms = time.ticks_ms()
+        self._elapsed_ms = 0
         if self.logging:
             print("AUTOTUNE: Started relay feedback auto-tune")
-            print(f"AUTOTUNE: relay_amp={self.relay_amplitude}  base_power={self.base_power}  "
-                  f"hysteresis={self.hysteresis}  target_cycles={self.target_cycles}  "
-                  f"method={_METHOD_NAMES[self.method]}")
+            print("AUTOTUNE: relay_amp=" + str(self.relay_amplitude) + "  base_power=" + str(self.base_power) + "  hysteresis=" + str(self.hysteresis) + "  target_cycles=" + str(self.target_cycles) + "  method=" + _METHOD_NAMES[self.method])
 
-    def update(self, error, timestamp_ms):
+    def update(self, error, delta):
         """Feed a new error measurement and return the motor output tuple.
 
         Parameters
@@ -135,8 +123,8 @@ class PIDAutoTuner:
         error : float
             Normalised line-position error in range [-1, +1].
             Negative = line is to the left, positive = line is to the right.
-        timestamp_ms : int
-            Current time in milliseconds (from time.ticks_ms()).
+        delta : int
+            Elapsed time in milliseconds since the last call to update().
 
         Returns
         -------
@@ -144,6 +132,8 @@ class PIDAutoTuner:
         """
         if self.state != _AT_RELAY:
             return (0, 0)
+
+        self._elapsed_ms += delta
 
         # --- Detect zero crossing with hysteresis ---
         crossed = False
@@ -158,14 +148,12 @@ class PIDAutoTuner:
 
         if crossed:
             self.relay_sign = -self.relay_sign
-            self._crossing_times.append(timestamp_ms)
+            self._crossing_times.append(self._elapsed_ms)
             self._cur_extreme = error  # reset extreme tracking
             n = len(self._crossing_times)
-            elapsed = time.ticks_diff(timestamp_ms, self._start_ms)
             if self.logging:
-                print(f"AUTOTUNE: crossing #{n}  t={elapsed}ms  error={error:.4f}  "
-                      f"relay→{'+'if self.relay_sign>0 else '-'}  "
-                      f"peaks={len(self._peaks)} troughs={len(self._troughs)}")
+                sign_ch = "+" if self.relay_sign > 0 else "-"
+                print("AUTOTUNE: crossing #" + str(n) + "  t=" + str(self._elapsed_ms) + "ms  error=" + str(error) + "  relay->" + sign_ch + "  peaks=" + str(len(self._peaks)) + " troughs=" + str(len(self._troughs)))
             if n >= self.target_cycles:
                 self._finish()
                 return (0, 0)
@@ -221,7 +209,7 @@ class PIDAutoTuner:
             "Kd":        self._Kd,
             "quality":   self._quality,
             "method":    _METHOD_NAMES[self.method],
-            "elapsed":   time.ticks_diff(time.ticks_ms(), self._start_ms) if self._start_ms else 0,
+            "elapsed":   self._elapsed_ms,
         }
 
     def get_quality(self):
@@ -255,15 +243,13 @@ class PIDAutoTuner:
         """Analyse collected oscillation data and compute PID gains."""
         if self.logging:
             print("AUTOTUNE: Finishing - analysing oscillation data")
-            print(f"AUTOTUNE: {len(self._crossing_times)} crossings, "
-                  f"{len(self._peaks)} peaks, {len(self._troughs)} troughs")
+            print("AUTOTUNE: " + str(len(self._crossing_times)) + " crossings, " + str(len(self._peaks)) + " peaks, " + str(len(self._troughs)) + " troughs")
 
         # Need at least _MIN_CYCLES half-cycles after settling
         usable_crossings = len(self._crossing_times) - _SETTLE_IGNORE
         if usable_crossings < _MIN_CYCLES:
             if self.logging:
-                print(f"AUTOTUNE: FAILED - only {usable_crossings} usable crossings "
-                      f"(need {_MIN_CYCLES})")
+                print("AUTOTUNE: FAILED - only " + str(usable_crossings) + " usable crossings (need " + str(_MIN_CYCLES) + ")")
             self.state = _AT_FAILED
             return
 
@@ -272,7 +258,7 @@ class PIDAutoTuner:
         periods = []
         ct = self._crossing_times
         for i in range(_SETTLE_IGNORE + 2, len(ct)):
-            p = time.ticks_diff(ct[i], ct[i - 2])
+            p = ct[i] - ct[i - 2]
             if p > 0:
                 periods.append(p)
 
@@ -304,14 +290,13 @@ class PIDAutoTuner:
         amplitude = (avg_peak + avg_trough) / 2.0  # average half-amplitude
 
         if self.logging:
-            print(f"AUTOTUNE: Peaks: {['%.4f'%p for p in valid_peaks]}")
-            print(f"AUTOTUNE: Troughs: {['%.4f'%t for t in valid_troughs]}")
+            print("AUTOTUNE: Peaks: " + str(["%.4f" % p for p in valid_peaks]))
+            print("AUTOTUNE: Troughs: " + str(["%.4f" % t for t in valid_troughs]))
             print(f"AUTOTUNE: Average amplitude a = {amplitude:.4f}")
 
         if amplitude < _MIN_AMPLITUDE:
             if self.logging:
-                print(f"AUTOTUNE: FAILED - amplitude {amplitude:.4f} too small "
-                      f"(min {_MIN_AMPLITUDE})")
+                print("AUTOTUNE: FAILED - amplitude " + str(amplitude) + " too small (min " + str(_MIN_AMPLITUDE) + ")")
             self.state = _AT_FAILED
             return
 
@@ -333,8 +318,7 @@ class PIDAutoTuner:
 
         self.state = _AT_DONE
         if self.logging:
-            print(f"AUTOTUNE: SUCCESS - Kp={self._Kp:.4f}  Ki={self._Ki:.6f}  "
-                  f"Kd={self._Kd:.4f}")
+            print(f"AUTOTUNE: SUCCESS - Kp={self._Kp:.4f}  Ki={self._Ki:.6f}  Kd={self._Kd:.4f}")
             print(f"AUTOTUNE: Quality score = {self._quality:.1f}%")
             print(f"AUTOTUNE: Method = {_METHOD_NAMES[self.method]}")
 
@@ -411,9 +395,7 @@ class PIDAutoTuner:
         score = (period_score * 0.4 + amp_score * 0.4 + cycle_score * 0.2)
 
         if self.logging:
-            print(f"AUTOTUNE: Quality breakdown: period={period_score:.1f} "
-                  f"amplitude={amp_score:.1f} cycles={cycle_score:.1f} "
-                  f"total={score:.1f}%")
+            print("AUTOTUNE: Quality breakdown: period=" + str(period_score) + " amplitude=" + str(amp_score) + " cycles=" + str(cycle_score) + " total=" + str(score) + "%")
 
         return score
 

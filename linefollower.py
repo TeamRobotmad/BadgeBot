@@ -527,8 +527,7 @@ class LineFollowerApp(app.App):
                 left_raw  = self._line_sensors.raw_value(0)
                 right_raw = self._line_sensors.raw_value(1)
                 error = compute_error(left_raw, right_raw)
-                now = time.ticks_ms()
-                output = self._autotuner.update(error, now)
+                output = self._autotuner.update(error, delta)
                 if self._autotuner.is_running:
                     self.hexdrive_app.set_motors(output)
                 else:
