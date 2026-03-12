@@ -22,16 +22,6 @@
 #
 # Reference: https://github.com/lily-osp/AutoTunePID
 
-import time
-
-# MicroPython provides time.ticks_ms / time.ticks_diff; CPython does not.
-# Supply lightweight polyfills so the module works in both environments
-# (important for running tests on a development PC).
-if not hasattr(time, "ticks_ms"):
-    time.ticks_ms = lambda: int(time.time() * 1000)
-if not hasattr(time, "ticks_diff"):
-    time.ticks_diff = lambda a, b: a - b
-
 # Tuning method constants
 METHOD_ZIEGLER_NICHOLS  = 0
 METHOD_TYREUS_LUYBEN    = 1
@@ -91,7 +81,7 @@ class PIDAutoTuner:
         self.state = _AT_IDLE
         self.relay_sign = 1          # +1 or -1
         self._prev_error = 0.0
-        self._start_ms = 0
+        self._elapsed_ms = 0         # accumulated elapsed time (ms)
 
         # Oscillation measurement
         self._crossing_times = []    # timestamps (ms) of zero-crossings
@@ -120,12 +110,12 @@ class PIDAutoTuner:
         self._peaks = []
         self._troughs = []
         self._cur_extreme = 0.0
-        self._start_ms = time.ticks_ms()
+        self._elapsed_ms = 0
         if self.logging:
             print("AUTOTUNE: Started relay feedback auto-tune")
             print(f"AUTOTUNE: relay_amp={self.relay_amplitude}  base_power={self.base_power} hysteresis={self.hysteresis}  target_cycles={self.target_cycles} method={_METHOD_NAMES[self.method]}")
 
-    def update(self, error, timestamp_ms):
+    def update(self, error, delta):
         """Feed a new error measurement and return the motor output tuple.
 
         Parameters
@@ -133,8 +123,8 @@ class PIDAutoTuner:
         error : float
             Normalised line-position error in range [-1, +1].
             Negative = line is to the left, positive = line is to the right.
-        timestamp_ms : int
-            Current time in milliseconds (from time.ticks_ms()).
+        delta : int
+            Elapsed time in milliseconds since the last call to update().
 
         Returns
         -------
@@ -142,6 +132,8 @@ class PIDAutoTuner:
         """
         if self.state != _AT_RELAY:
             return (0, 0)
+
+        self._elapsed_ms += delta
 
         # --- Detect zero crossing with hysteresis ---
         crossed = False
@@ -156,10 +148,9 @@ class PIDAutoTuner:
 
         if crossed:
             self.relay_sign = -self.relay_sign
-            self._crossing_times.append(timestamp_ms)
+            self._crossing_times.append(self._elapsed_ms)
             self._cur_extreme = error  # reset extreme tracking
             n = len(self._crossing_times)
-            elapsed = time.ticks_diff(timestamp_ms, self._start_ms)
             if self.logging:
                 relay_symbol = '+' if self.relay_sign > 0 else '-'
                 print(f"AUTOTUNE: crossing #{n}  t={elapsed}ms  error={error:.4f} relay→{relay_symbol} peaks={len(self._peaks)} troughs={len(self._troughs)}")
@@ -219,7 +210,7 @@ class PIDAutoTuner:
             "Kd":        self._Kd,
             "quality":   self._quality,
             "method":    _METHOD_NAMES[self.method],
-            "elapsed":   time.ticks_diff(time.ticks_ms(), self._start_ms) if self._start_ms else 0,
+            "elapsed":   self._elapsed_ms,
         }
 
     def get_quality(self):
@@ -239,9 +230,9 @@ class PIDAutoTuner:
             return "Idle"
         elif self.state == _AT_RELAY:
             n = len(self._crossing_times)
-            return f"Tuning {n}/{self.target_cycles}"
+            return "Tuning " + str(n) + "/" + str(self.target_cycles)
         elif self.state == _AT_DONE:
-            return f"Done Q={self._quality:.0f}%"
+            return "Done Q=" + str(int(self._quality)) + "%"
         else:
             return "Failed"
 
@@ -268,7 +259,7 @@ class PIDAutoTuner:
         periods = []
         ct = self._crossing_times
         for i in range(_SETTLE_IGNORE + 2, len(ct)):
-            p = time.ticks_diff(ct[i], ct[i - 2])
+            p = ct[i] - ct[i - 2]
             if p > 0:
                 periods.append(p)
 
@@ -280,8 +271,8 @@ class PIDAutoTuner:
 
         Tu = sum(periods) / len(periods)  # average period in ms
         if self.logging:
-            print(f"AUTOTUNE: Periods (ms): {periods}")
-            print(f"AUTOTUNE: Average period Tu = {Tu:.1f} ms")
+            print("AUTOTUNE: Periods (ms): " + str(periods))
+            print("AUTOTUNE: Average period Tu = " + str(Tu) + " ms")
 
         # --- Calculate oscillation amplitude ---
         # Use peaks/troughs after the settling window
@@ -300,9 +291,9 @@ class PIDAutoTuner:
         amplitude = (avg_peak + avg_trough) / 2.0  # average half-amplitude
 
         if self.logging:
-            print(f"AUTOTUNE: Peaks: {['%.4f'%p for p in valid_peaks]}")
-            print(f"AUTOTUNE: Troughs: {['%.4f'%t for t in valid_troughs]}")
-            print(f"AUTOTUNE: Average amplitude a = {amplitude:.4f}")
+            print("AUTOTUNE: Peaks: " + str(["%.4f" % p for p in valid_peaks]))
+            print("AUTOTUNE: Troughs: " + str(["%.4f" % t for t in valid_troughs]))
+            print("AUTOTUNE: Average amplitude a = " + str(amplitude))
 
         if amplitude < _MIN_AMPLITUDE:
             if self.logging:
@@ -317,8 +308,8 @@ class PIDAutoTuner:
         self._Tu = Tu
 
         if self.logging:
-            print(f"AUTOTUNE: Ultimate gain Ku = {self._Ku:.4f}")
-            print(f"AUTOTUNE: Ultimate period Tu = {self._Tu:.1f} ms")
+            print("AUTOTUNE: Ultimate gain Ku = " + str(self._Ku))
+            print("AUTOTUNE: Ultimate period Tu = " + str(self._Tu) + " ms")
 
         # --- Apply tuning rules ---
         self._apply_tuning_rules()
@@ -376,7 +367,7 @@ class PIDAutoTuner:
                 # Penalise: cv > 0.3 → score drops significantly
                 period_score = max(0, 100 - cv_period * 200)
                 if self.logging:
-                    print(f"AUTOTUNE: Period CV={cv_period:.3f}  period_score={period_score:.1f}")
+                    print("AUTOTUNE: Period CV=" + str(cv_period) + "  period_score=" + str(period_score))
             else:
                 period_score = 0
         else:
@@ -392,7 +383,7 @@ class PIDAutoTuner:
                 cv_amp = std_a / mean_a
                 amp_score = max(0, 100 - cv_amp * 200)
                 if self.logging:
-                    print(f"AUTOTUNE: Amplitude CV={cv_amp:.3f}  amp_score={amp_score:.1f}")
+                    print("AUTOTUNE: Amplitude CV=" + str(cv_amp) + "  amp_score=" + str(amp_score))
             else:
                 amp_score = 0
         else:
