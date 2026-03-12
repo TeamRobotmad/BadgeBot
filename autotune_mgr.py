@@ -25,7 +25,7 @@ from app_components.notification import Notification
 from .autotune import PIDAutoTuner, compute_error, METHOD_ZIEGLER_NICHOLS
 from .line_follow import (LineSensors, SENSOR_CTRL_PINS, SENSOR_SIGNAL_PINS,
                           SENSOR_NAMES, FOLLOWER_SENSOR_SCAN_PERIOD,
-                          DEFAULT_UPDATE_PERIOD)
+                          DEFAULT_UPDATE_PERIOD, create_line_sensors)
 
 
 class AutotuneMgr:
@@ -51,14 +51,7 @@ class AutotuneMgr:
         app.button_states.clear()
         app._animation_counter = 0
         if app._line_sensors is None:
-            sensor_configs = [
-                {"pins": {"ctrl": app._line_sensors_hexpansion_config.pin[SENSOR_CTRL_PINS[i]],
-                          "sig":  app._line_sensors_hexpansion_config.pin[SENSOR_SIGNAL_PINS[i]]},
-                 "name": SENSOR_NAMES[i]}
-                for i in range(app.num_line_sensors)
-            ]
-            app._line_sensors = LineSensors(app, sensor_configs,
-                                            threshold=app._settings['line_threshold'].v)
+            app._line_sensors = create_line_sensors(app)
         app._line_sensors.enable()
         if app.hexdrive_app is not None:
             app.hexdrive_app.set_logging(False)
@@ -142,11 +135,12 @@ class AutotuneMgr:
     # ------------------------------------------------------------------
 
     def background_update(self, delta):
-        """PID auto-tune relay feedback control during STATE_AUTOTUNE."""
+        """PID auto-tune relay feedback control during STATE_AUTOTUNE.
+        Returns motor output tuple, or None if not active."""
         app = self.app
         from .linefollower import STATE_AUTOTUNE
         if app.current_state != STATE_AUTOTUNE:
-            return
+            return None
         if app._autotuner is not None and app._autotuner.is_running:
             app._line_sensors.read()
             left_raw = app._line_sensors.raw_value(0)
@@ -154,9 +148,8 @@ class AutotuneMgr:
             error = compute_error(left_raw, right_raw)
             output = app._autotuner.update(error, delta)
             if app._autotuner.is_running:
-                app.hexdrive_app.set_motors(output)
+                return output
             else:
-                app.hexdrive_app.set_motors((0, 0))
                 app._refresh = True
                 if app._autotuner.is_complete:
                     gains = app._autotuner.get_gains()
@@ -169,6 +162,8 @@ class AutotuneMgr:
                         app._settings['pid_kd'].persist()
                         print(f"AUTOTUNE: Gains saved to settings: Kp={gains[0]:.4f} Ki={gains[1]:.6f} Kd={gains[2]:.4f}")
                     app.notification = Notification(" Tuning   Complete")
+                return (0, 0)
+        return None
 
     # ------------------------------------------------------------------
     # Draw

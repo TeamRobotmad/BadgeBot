@@ -9,7 +9,10 @@
 #   start()                 – enter line follower from menu
 #   update(delta)           – per-tick state machine update
 #   draw(ctx)               – render line follower UI
-#   background_update(delta)– called from the fast background loop
+#   background_update(delta)– called from the fast background loop;
+#                             returns motor output tuple or None
+#   init_settings(settings) – register line-follower specific settings
+#   create_line_sensors()   – create LineSensors from hexpansion config
 
 import time
 from math import pi
@@ -197,6 +200,36 @@ class LineSensor:
         self._container._sample_count += 1
 
 
+# ---- Settings initialisation -----------------------------------------------
+
+def init_settings(s, MySetting):
+    """Register line-follower-specific settings in the shared settings dict."""
+    s['line_threshold'] = MySetting(s, _LINE_SENSOR_DEFAULT_THRESHOLD, 0, 65535)
+    s['pid_kp']         = MySetting(s, FOLLOWER_PID_KP_DEFAULT, 0.0, 1000.0)
+    s['pid_ki']         = MySetting(s, FOLLOWER_PID_KI_DEFAULT, 0.0, 1000.0)
+    s['pid_kd']         = MySetting(s, FOLLOWER_PID_KD_DEFAULT, 0.0, 1000.0)
+
+
+# ---- Shared helper: create LineSensors from hexpansion config --------------
+
+def create_line_sensors(app):
+    """Create a LineSensors instance from the app's hexpansion config.
+
+    Returns a new LineSensors or None if no config is available.
+    Used by both LineFollowMgr and AutotuneMgr to avoid duplicating
+    sensor initialisation code.
+    """
+    if app._line_sensors_hexpansion_config is None:
+        return None
+    sensor_configs = [
+        {"pins": {"ctrl": app._line_sensors_hexpansion_config.pin[SENSOR_CTRL_PINS[i]],
+                  "sig":  app._line_sensors_hexpansion_config.pin[SENSOR_SIGNAL_PINS[i]]},
+         "name": SENSOR_NAMES[i]}
+        for i in range(app.num_line_sensors)
+    ]
+    return LineSensors(app, sensor_configs, threshold=app._settings['line_threshold'].v)
+
+
 # ---- Line Follower Manager -------------------------------------------------
 
 class LineFollowMgr:
@@ -221,14 +254,8 @@ class LineFollowMgr:
         app.set_menu(None)
         app.button_states.clear()
         app._animation_counter = 0
-        if app._line_sensors is None and app._line_sensors_hexpansion_config is not None:
-            sensor_configs = [
-                {"pins": {"ctrl": app._line_sensors_hexpansion_config.pin[SENSOR_CTRL_PINS[i]],
-                          "sig":  app._line_sensors_hexpansion_config.pin[SENSOR_SIGNAL_PINS[i]]},
-                 "name": SENSOR_NAMES[i]}
-                for i in range(app.num_line_sensors)
-            ]
-            app._line_sensors = LineSensors(app, sensor_configs, threshold=app._settings['line_threshold'].v)
+        if app._line_sensors is None:
+            app._line_sensors = create_line_sensors(app)
         if app._line_sensors is None:
             from app_components.notification import Notification
             app.notification = Notification("No Line Sensors")
@@ -294,11 +321,12 @@ class LineFollowMgr:
     # ------------------------------------------------------------------
 
     def background_update(self, delta):
-        """Line follower motor control during STATE_FOLLOWER."""
+        """Line follower motor control during STATE_FOLLOWER.
+        Returns motor output tuple, or None if not active."""
         app = self.app
         from .linefollower import STATE_FOLLOWER
         if app.current_state != STATE_FOLLOWER:
-            return
+            return None
         output = (0, 0)
         if type(app._override) is bool:
             if not app._override:
@@ -327,7 +355,7 @@ class LineFollowMgr:
                 output = (-app._settings['max_power'].v, app._settings['max_power'].v)
             elif app._override == BUTTON_TYPES["RIGHT"]:
                 output = (app._settings['max_power'].v, -app._settings['max_power'].v)
-        app.hexdrive_app.set_motors(output)
+        return output
 
     # ------------------------------------------------------------------
     # Draw

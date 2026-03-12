@@ -28,6 +28,15 @@ _SERVO_MAX_TRIM        = 1000
 _MAX_SERVO_RANGE       = 1400
 
 
+# ---- Settings initialisation -----------------------------------------------
+
+def init_settings(s, MySetting):
+    """Register servo-test-specific settings in the shared settings dict."""
+    s['servo_step']    = MySetting(s, _SERVO_DEFAULT_STEP, 1, 100)
+    s['servo_range']   = MySetting(s, _SERVO_DEFAULT_RANGE, 100, _MAX_SERVO_RANGE)
+    s['servo_period']  = MySetting(s, _SERVO_DEFAULT_PERIOD, 5, 50)
+
+
 class ServoMode:
     OFF = 0
     TRIM = 1

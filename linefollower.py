@@ -10,8 +10,6 @@ from app_components import Menu
 from events.input import BUTTON_TYPES, Button, Buttons, ButtonUpEvent
 from frontboards.twentyfour import BUTTONS
 from system.eventbus import eventbus
-from system.hexpansion.events import (HexpansionInsertionEvent,
-                                      HexpansionRemovalEvent)
 from system.patterndisplay.events import PatternDisable, PatternEnable
 from system.scheduler.events import (RequestForegroundPopEvent,
                                      RequestForegroundPushEvent,
@@ -21,22 +19,25 @@ from tildagonos import tildagonos
 
 import app
 
-from .utils import chain, draw_logo_animated, parse_version
+from .utils import draw_logo_animated, parse_version
 
 # Import sub-modules for each functional area
-from .hexpansion_mgmt import HexpansionMgr, HexpansionType, _ERASE_SLOT, _EEPROM_ADDR
-from .motor_moves import MotorMovesMgr, Instruction
-from .servo_test import ServoTestMgr, ServoMode, _SERVO_DEFAULT_CENTRE, _SERVO_DEFAULT_RANGE, _SERVO_DEFAULT_RATE, _MAX_SERVO_RANGE
+from .hexpansion_mgmt import HexpansionMgr, HexpansionType, _EEPROM_ADDR
+from .motor_moves import MotorMovesMgr
+from .servo_test import ServoTestMgr, ServoMode, _SERVO_DEFAULT_CENTRE, _SERVO_DEFAULT_RANGE, _SERVO_DEFAULT_RATE
 from .step_test import StepperTestMgr, StepperMode, Stepper
 from .badgebot_settings import SettingsMgr, MySetting
-from .line_follow import (LineFollowMgr, LineSensors, LineSensor,
-                          FOLLOWER_SENSOR_SCAN_PERIOD, DEFAULT_UPDATE_PERIOD,
-                          FOLLOWER_PID_KP_DEFAULT, FOLLOWER_PID_KI_DEFAULT,
-                          FOLLOWER_PID_KD_DEFAULT, FOLLOWER_FORWARD_POWER,
-                          FOLLOWER_MODE_DIFFERENTIAL, FOLLOWER_MODE_BINARY,
-                          SENSOR_CTRL_PINS, SENSOR_SIGNAL_PINS, SENSOR_NAMES,
-                          _LINE_SENSOR_DEFAULT_THRESHOLD, _NUM_LINE_SENSORS)
+from .line_follow import (LineFollowMgr, DEFAULT_UPDATE_PERIOD,
+                          FOLLOWER_FORWARD_POWER,
+                          FOLLOWER_MODE_DIFFERENTIAL)
 from .autotune_mgr import AutotuneMgr
+
+# Each module registers its own settings via init_settings()
+from .motor_moves import init_settings as _motor_moves_init_settings
+from .servo_test import init_settings as _servo_test_init_settings
+from .step_test import init_settings as _step_test_init_settings
+from .hexpansion_mgmt import init_settings as _hexpansion_init_settings
+from .line_follow import init_settings as _line_follow_init_settings
 
 #import micropython
 #micropython.alloc_emergency_exception_buf(100)
@@ -79,21 +80,7 @@ _QR_CODE = [0x1fcf67f,
 
 _BRIGHTNESS = 1.0
 
-# Motor Driver - Defaults (remain here as they are used in settings init)
-_MAX_POWER = 30000
-_POWER_STEP_PER_TICK = 7500  # effectively the acceleration
-
-# Servo Tester - Defaults (remain here for settings init)
-_SERVO_DEFAULT_STEP    = 10
-_SERVO_DEFAULT_PERIOD  = 20
-
-# Stepper Tester - Defaults (remain here for settings init)
-_STEPPER_MAX_POSITION  = 3100
-
 # Timings
-_TICK_MS       =  10        # Smallest unit of change for power, in ms
-_USER_DRIVE_MS =  50        # User specifed drive durations, in ms
-_USER_TURN_MS  =  20        # User specifed turn durations, in ms
 _LONG_PRESS_MS = 750        # Time for long button press to register, in ms
 _RUN_COUNTDOWN_MS = 5000    # Time after running program until drive starts, in ms
 _AUTO_REPEAT_MS = 200       # Time between auto-repeats, in ms
@@ -106,11 +93,8 @@ _AUTO_REPEAT_LEVEL_MAX = 3  # Maximum level of auto-repeat digit increases
 STATE_INIT = -1
 STATE_WARNING = 0
 STATE_MENU = 1
-STATE_HELP = 2
-STATE_RECEIVE_INSTR = 3
-STATE_COUNTDOWN = 4
-STATE_RUN = 5
-STATE_DONE = 6
+STATE_MOTOR_MOVES = 2     # Motor Moves (sub-states managed by MotorMovesMgr)
+STATE_COUNTDOWN = 4       # Shared countdown (Motor Moves & PID AutoTune)
 STATE_CHECK = 7           # Checks for EEPROMs and HexDrives
 STATE_DETECTED = 8        # Hexpansion ready for EEPROM initialisation
 STATE_UPGRADE = 9         # Hexpansion ready for EEPROM upgrade
@@ -128,7 +112,7 @@ STATE_AUTOTUNE = 20       # PID Auto Tune
 
 # App states where user can minimise app
 _MINIMISE_VALID_STATES = [0, 1, 7, 12, 13, 14, 15]
-_LED_CONTROL_STATES    = [0, 3, 4, 5, 6, 12, 13, 14, 15, 19]
+_LED_CONTROL_STATES    = [0, 2, 4, 12, 13, 14, 15, 19]
 
 #Misceallaneous Settings
 _LOGGING = False
@@ -176,38 +160,25 @@ class LineFollowerApp(app.App):
         self._APP_VERSION = _APP_VERSION
         self.b_msg: str = f"BadgeBot V{_APP_VERSION}"
         self.t_msg: str = "RobotMad"
-        self.is_scroll: bool = False
-        self.scroll_offset: int = 0
         self.notification: Notification = None
         self.error_message = []
         self.current_menu: str = None
         self.menu: Menu = None
 
-        # BadgeBot Control Sequence Variables
+        # Shared countdown (Motor Moves & PID AutoTune)
         self.run_countdown_elapsed_ms: int = 0
-        self._countdown_next_state: int = STATE_RUN  # which state to go to after countdown
-        self.instructions = []
-        self.current_instruction: Instruction = None
-        self.current_power_duration = ((0,0,0,0), 0)
-        self.power_plan_iter = iter([])
+        self._countdown_next_state: int = STATE_MOTOR_MOVES  # which state to go to after countdown
 
-        # Settings
+        # Settings - common settings first, then each module registers its own
         self._settings = {}
-        self._settings['acceleration']  = MySetting(self._settings, _POWER_STEP_PER_TICK, 1, 65535)
-        self._settings['max_power']     = MySetting(self._settings, _MAX_POWER, 1000, 65535)
-        self._settings['drive_step_ms'] = MySetting(self._settings, _USER_DRIVE_MS, 5, 200)
-        self._settings['turn_step_ms']  = MySetting(self._settings, _USER_TURN_MS, 5, 200)
-        self._settings['servo_step']    = MySetting(self._settings, _SERVO_DEFAULT_STEP, 1, 100)
-        self._settings['servo_range']   = MySetting(self._settings, _SERVO_DEFAULT_RANGE, 100, _MAX_SERVO_RANGE)  # one setting for all servos
-        self._settings['servo_period']  = MySetting(self._settings, _SERVO_DEFAULT_PERIOD, 5, 50)
         self._settings['brightness']    = MySetting(self._settings, _BRIGHTNESS, 0.1, 1.0)
         self._settings['logging']       = MySetting(self._settings, _LOGGING, False, True)
-        self._settings['erase_slot']    = MySetting(self._settings, _ERASE_SLOT, 0, 6)
-        self._settings['step_max_pos']  = MySetting(self._settings, _STEPPER_MAX_POSITION, 0, 65535)
-        self._settings['line_threshold'] = MySetting(self._settings, _LINE_SENSOR_DEFAULT_THRESHOLD, 0, 65535)
-        self._settings['pid_kp']         = MySetting(self._settings, FOLLOWER_PID_KP_DEFAULT, 0.0, 1000.0)
-        self._settings['pid_ki']         = MySetting(self._settings, FOLLOWER_PID_KI_DEFAULT, 0.0, 1000.0)
-        self._settings['pid_kd']         = MySetting(self._settings, FOLLOWER_PID_KD_DEFAULT, 0.0, 1000.0)
+        # Module-specific settings
+        _motor_moves_init_settings(self._settings, MySetting)
+        _servo_test_init_settings(self._settings, MySetting)
+        _step_test_init_settings(self._settings, MySetting)
+        _hexpansion_init_settings(self._settings, MySetting)
+        _line_follow_init_settings(self._settings, MySetting)
 
         self._edit_setting: int  = None
         self._edit_setting_value = None       
@@ -255,8 +226,26 @@ class LineFollowerApp(app.App):
         self._line_follow_mgr = LineFollowMgr(self)
         self._autotune_mgr = AutotuneMgr(self)
 
-        eventbus.on_async(HexpansionInsertionEvent, self._handle_hexpansion_insertion, self)
-        eventbus.on_async(HexpansionRemovalEvent, self._handle_hexpansion_removal, self)
+        # State → manager dispatch table (for efficient update/draw routing)
+        self._state_update_dispatch = {
+            STATE_MOTOR_MOVES: self._motor_moves_mgr.update,
+            STATE_FOLLOWER:    self._line_follow_mgr.update,
+            STATE_AUTOTUNE:    self._autotune_mgr.update,
+            STATE_SERVO:       self._servo_test_mgr.update,
+            STATE_STEPPER:     self._stepper_test_mgr.update,
+            STATE_SETTINGS:    self._settings_mgr.update,
+        }
+        self._state_draw_dispatch = {
+            STATE_MOTOR_MOVES: self._motor_moves_mgr.draw,
+            STATE_FOLLOWER:    self._line_follow_mgr.draw,
+            STATE_AUTOTUNE:    self._autotune_mgr.draw,
+            STATE_SERVO:       self._servo_test_mgr.draw,
+            STATE_STEPPER:     self._stepper_test_mgr.draw,
+            STATE_SETTINGS:    self._settings_mgr.draw,
+        }
+
+        # Hexpansion event handlers registered directly by hexpansion_mgr
+        self._hexpansion_mgr.register_events()
 
         # Motor Driver
         self.num_motors: int = 2       # Default assumed for a single HexDrive
@@ -310,18 +299,11 @@ class LineFollowerApp(app.App):
 
     ### ASYNC EVENT HANDLERS ###
 
-    async def _handle_hexpansion_removal(self, event: HexpansionRemovalEvent):
-        await self._hexpansion_mgr.handle_removal(event)
-
-    async def _handle_hexpansion_insertion(self, event: HexpansionInsertionEvent):
-        await self._hexpansion_mgr.handle_insertion(event)
-
-
     async def _gain_focus(self, event: RequestForegroundPushEvent):
         if event.app is self:
             if self.current_state in _LED_CONTROL_STATES:
                 eventbus.emit(PatternDisable())
-            elif self.current_state == STATE_RECEIVE_INSTR:
+            elif self.current_state == STATE_MOTOR_MOVES:
                 eventbus.on_async(ButtonUpEvent, self._handle_button_up, self)
 
 
@@ -329,14 +311,15 @@ class LineFollowerApp(app.App):
         if event.app is self:
             eventbus.emit(PatternEnable())
             self._pattern_status = True
-            if self.current_state == STATE_RECEIVE_INSTR:
+            if self.current_state == STATE_MOTOR_MOVES:
                 eventbus.remove(ButtonUpEvent, self._handle_button_up, self)            
 
 
     async def _handle_button_up(self, event: ButtonUpEvent):
-        if self.current_state == STATE_RECEIVE_INSTR and event.button == BUTTONS["C"]:
-            self.is_scroll = not self.is_scroll
-            state = "yes" if self.is_scroll else "no"
+        if self.current_state == STATE_MOTOR_MOVES and event.button == BUTTONS["C"]:
+            mgr = self._motor_moves_mgr
+            mgr.is_scroll = not mgr.is_scroll
+            state = "yes" if mgr.is_scroll else "no"
             self.notification = Notification(f"Scroll {state}")
 
 
@@ -392,10 +375,22 @@ class LineFollowerApp(app.App):
 
         return output
 
+    # Background update dispatch table – maps state to the manager method
+    # that provides motor output.  Each returns a tuple or None.
+    _BG_DISPATCH = None  # initialised lazily after managers are created
+
     def background_update(self, delta: int):
-        self._motor_moves_mgr.background_update(delta)
-        self._line_follow_mgr.background_update(delta)
-        self._autotune_mgr.background_update(delta)
+        if self._BG_DISPATCH is None:
+            self._BG_DISPATCH = {
+                STATE_MOTOR_MOVES: self._motor_moves_mgr.background_update,
+                STATE_FOLLOWER:    self._line_follow_mgr.background_update,
+                STATE_AUTOTUNE:    self._autotune_mgr.background_update,
+            }
+        bg_fn = self._BG_DISPATCH.get(self.current_state)
+        if bg_fn is not None:
+            output = bg_fn(delta)
+            if output is not None and self.hexdrive_app is not None:
+                self.hexdrive_app.set_motors(output)
 
 
     def generate_new_qr(self):
@@ -486,26 +481,17 @@ class LineFollowerApp(app.App):
                     self._refresh = True
         elif self.button_states.get(BUTTON_TYPES["CANCEL"]) and self.current_state in _MINIMISE_VALID_STATES:
             self.button_states.clear()
-            self.is_scroll = False
             self.minimise()
 
     ### Shared Countdown (used by Motor Moves and PID AutoTune) ###
         elif self.current_state == STATE_COUNTDOWN:
             self._update_state_countdown(delta)
 
-    ### Delegate to functional area managers ###
-        elif self._motor_moves_mgr.update(delta):
-            pass
-        elif self._line_follow_mgr.update(delta):
-            pass
-        elif self._autotune_mgr.update(delta):
-            pass
-        elif self._servo_test_mgr.update(delta):
-            pass
-        elif self._stepper_test_mgr.update(delta):
-            pass
-        elif self._settings_mgr.update(delta):
-            pass
+    ### Delegate to functional area managers via dispatch table ###
+        else:
+            update_fn = self._state_update_dispatch.get(self.current_state)
+            if update_fn is not None:
+                update_fn(delta)
     ### End of Update ###
 
 
@@ -557,13 +543,9 @@ class LineFollowerApp(app.App):
         self.run_countdown_elapsed_ms += delta
         if self.run_countdown_elapsed_ms >= _RUN_COUNTDOWN_MS:
             next_state = self._countdown_next_state
-            if next_state == STATE_RUN:
-                # Motor Moves: build the power plan and start running
-                self.power_plan_iter = chain(*(instr.power_plan for instr in self.instructions))
-                if self.hexdrive_app is not None:
-                    self.hexdrive_app.set_power(True)
-                self.current_state = STATE_RUN
-                self._update_period = 10
+            if next_state == STATE_MOTOR_MOVES:
+                # Motor Moves: delegate to begin_moves
+                self._motor_moves_mgr.begin_moves()
             elif next_state == STATE_AUTOTUNE:
                 # PID AutoTune: start the tuner after countdown
                 self._autotune_mgr.begin_tuning()
@@ -591,11 +573,12 @@ class LineFollowerApp(app.App):
             ctx.text_baseline = ctx.BOTTOM            
             if self.current_state == STATE_LOGO:
                 draw_logo_animated(ctx, self.rpm, self._animation_counter, [self.b_msg, self.t_msg], self.qr_code)
-            # Scroll mode indicator
-            elif self.is_scroll:
-                ctx.rgb(0,0.2,0).rectangle(     -120,-120, 115+(-63),240).fill()
-                ctx.rgb(0,0  ,0).rectangle((-63)-5,-120,10-2*(-63),240).fill()
-                ctx.rgb(0,0.2,0).rectangle(5-(-63),-120, 115+(-63),240).fill()
+            # Scroll mode indicator (Motor Moves receive-instr state)
+            elif self.current_state == STATE_MOTOR_MOVES and self._motor_moves_mgr.is_scroll:
+                H_START = -63
+                ctx.rgb(0,0.2,0).rectangle(     -120,-120, 115+H_START,240).fill()
+                ctx.rgb(0,0  ,0).rectangle(H_START-5,-120,10-2*H_START,240).fill()
+                ctx.rgb(0,0.2,0).rectangle(5-H_START,-120, 115+H_START,240).fill()
             else:
                 ctx.rgb(0,0,0).rectangle(-120,-120,240,240).fill()
             # Common states (kept in main app)
@@ -610,21 +593,14 @@ class LineFollowerApp(app.App):
             elif self.current_state == STATE_COUNTDOWN:
                 countdown_val = 1 + ((_RUN_COUNTDOWN_MS - self.run_countdown_elapsed_ms) // 1000)
                 self.draw_message(ctx, [str(countdown_val)], [(1,1,0)], twentyfour_pt)
-            # Delegate to functional area managers
+            # Hexpansion states handled by hexpansion_mgr
             elif self._hexpansion_mgr.draw(ctx):
                 pass
-            elif self._motor_moves_mgr.draw(ctx):
-                pass
-            elif self._line_follow_mgr.draw(ctx):
-                pass
-            elif self._autotune_mgr.draw(ctx):
-                pass
-            elif self._servo_test_mgr.draw(ctx):
-                pass
-            elif self._stepper_test_mgr.draw(ctx):
-                pass
-            elif self._settings_mgr.draw(ctx):
-                pass
+            # Delegate to functional area managers via dispatch table
+            else:
+                draw_fn = self._state_draw_dispatch.get(self.current_state)
+                if draw_fn is not None:
+                    draw_fn(ctx)
             ctx.restore()
 
         # These need to be drawn every frame as they contain animations
@@ -824,8 +800,7 @@ class LineFollowerApp(app.App):
             self.current_state = STATE_LOGO
             self._refresh = True   
         elif item == _main_menu_items[MENU_ITEM_EXIT]: # Exit
-            eventbus.remove(HexpansionInsertionEvent, self._handle_hexpansion_insertion, self)
-            eventbus.remove(HexpansionRemovalEvent, self._handle_hexpansion_removal, self)
+            self._hexpansion_mgr.unregister_events()
             eventbus.remove(RequestForegroundPushEvent, self._gain_focus, self)
             eventbus.remove(RequestForegroundPopEvent, self._lose_focus, self)
             eventbus.emit(RequestStopAppEvent(self))

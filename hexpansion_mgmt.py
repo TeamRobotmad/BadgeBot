@@ -5,9 +5,9 @@
 # that the hexpansion-specific logic can be maintained independently.
 #
 # Public interface (called by the main app):
-#   __init__(app)          – wire up to the main LineFollowerApp instance
-#   handle_insertion(event)– async handler for HexpansionInsertionEvent
-#   handle_removal(event)  – async handler for HexpansionRemovalEvent
+#   __init__(app)            – wire up to the main LineFollowerApp instance
+#   register_events()       – register hexpansion insertion/removal handlers on eventbus
+#   unregister_events()     – unregister hexpansion event handlers
 #   scan_ports()           – initial port scan at startup
 #   update(delta)          – per-tick hexpansion state-machine update
 #   draw(ctx)              – render hexpansion-related UI states
@@ -40,6 +40,13 @@ _EEPROM_TOTAL_SIZE = 64 * 1024 // 8
 _ERASE_SLOT = 0
 
 _IS_SIMULATOR = sys.platform != "esp32"
+
+
+# ---- Settings initialisation -----------------------------------------------
+
+def init_settings(s, MySetting):
+    """Register hexpansion-management-specific settings in the shared settings dict."""
+    s['erase_slot']    = MySetting(s, _ERASE_SLOT, 0, 6)
 
 
 # ---- Hexpansion type descriptor -------------------------------------------
@@ -81,11 +88,23 @@ class HexpansionMgr:
     def __init__(self, app):
         self.app = app
 
+    def register_events(self):
+        """Register hexpansion insertion/removal event handlers directly."""
+        from system.hexpansion.events import HexpansionRemovalEvent
+        eventbus.on_async(HexpansionInsertionEvent, self._handle_insertion, self.app)
+        eventbus.on_async(HexpansionRemovalEvent, self._handle_removal, self.app)
+
+    def unregister_events(self):
+        """Unregister hexpansion event handlers."""
+        from system.hexpansion.events import HexpansionRemovalEvent
+        eventbus.remove(HexpansionInsertionEvent, self._handle_insertion, self.app)
+        eventbus.remove(HexpansionRemovalEvent, self._handle_removal, self.app)
+
     # ------------------------------------------------------------------
-    # Async event handlers (delegated from the main app)
+    # Async event handlers (registered directly on eventbus)
     # ------------------------------------------------------------------
 
-    async def handle_removal(self, event):
+    async def _handle_removal(self, event):
         app = self.app
         app.hexpansion_slot_type[event.port - 1] = None
         if event.port in app.ports_with_blank_eeprom:
@@ -115,7 +134,7 @@ class HexpansionMgr:
         elif app.erase_port is not None and event.port == app.erase_port:
             app.hexpansion_update_required = True
 
-    async def handle_insertion(self, event):
+    async def _handle_insertion(self, event):
         if self.check_port_for_known_hexpansions(event.port):
             self.app.hexpansion_update_required = True
 

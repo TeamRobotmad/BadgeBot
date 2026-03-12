@@ -27,6 +27,14 @@ _STEPPER_DEFAULT_SPEED = 50
 _STEPPER_NUM_PHASES    = 8
 _STEPPER_DEFAULT_SPR   = 200
 _STEPPER_DEFAULT_STEP  = 1
+_STEPPER_MAX_POSITION  = 3100
+
+
+# ---- Settings initialisation -----------------------------------------------
+
+def init_settings(s, MySetting):
+    """Register stepper-test-specific settings in the shared settings dict."""
+    s['step_max_pos']  = MySetting(s, _STEPPER_MAX_POSITION, 0, 65535)
 
 
 class StepperMode:
