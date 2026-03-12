@@ -134,7 +134,7 @@ class MotorMovesMgr:
         app = self.app
         from .linefollower import (STATE_HELP, STATE_RECEIVE_INSTR,
             STATE_COUNTDOWN, STATE_RUN, STATE_DONE, STATE_MENU,
-            DEFAULT_UPDATE_PERIOD, _RUN_COUNTDOWN_MS)
+            DEFAULT_UPDATE_PERIOD)
 
         if app.current_state == STATE_HELP:
             self._update_state_help(delta)
@@ -325,7 +325,7 @@ class MotorMovesMgr:
         """Render Motor Moves UI states.  Returns True if handled."""
         app = self.app
         from .linefollower import (STATE_HELP, STATE_RECEIVE_INSTR,
-            STATE_COUNTDOWN, STATE_RUN, STATE_DONE, _RUN_COUNTDOWN_MS)
+            STATE_COUNTDOWN, STATE_RUN, STATE_DONE)
 
         if app.current_state == STATE_HELP:
             app.draw_message(ctx, ["BadgeBot", "To program:", "Press C", "When finished:", "Long press C"], [(1, 1, 0), (1, 1, 1), (1, 1, 1), (1, 1, 1), (1, 1, 1)], label_font_size)

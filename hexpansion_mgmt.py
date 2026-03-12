@@ -478,7 +478,7 @@ class HexpansionMgr:
                 if app._settings['logging'].v:
                     print(f"H:HexDrive on port {app.erase_port} erased!")
                 app.ports_with_hexdrive.discard(app.erase_port)
-            if app._line_sensors_hexpansion_config.port == app.erase_port:
+            if app._line_sensors_hexpansion_config is not None and app._line_sensors_hexpansion_config.port == app.erase_port:
                 app._line_sensors_hexpansion_config = None
                 app.ports_with_hexsense.discard(app.erase_port)
             app.erase_port = None
