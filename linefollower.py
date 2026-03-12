@@ -1,31 +1,18 @@
 import asyncio
-#import aioble
-#import bluetooth
-import os
 import sys
 import time
 from math import cos, pi
 import ota
 import settings
-import vfs
 from app_components.notification import Notification
 from app_components.tokens import label_font_size, twentyfour_pt, clear_background, button_labels
 from app_components import Menu
 from events.input import BUTTON_TYPES, Button, Buttons, ButtonUpEvent
 from frontboards.twentyfour import BUTTONS
-from machine import I2C, Pin, disable_irq, enable_irq
-try:
-    from machine import Timer
-except ImportError:
-    Timer = None
 from system.eventbus import eventbus
 from system.hexpansion.events import (HexpansionInsertionEvent,
                                       HexpansionRemovalEvent)
-from system.hexpansion.header import HexpansionHeader, write_header, read_header
-from system.hexpansion.util import get_hexpansion_block_devices
-from system.hexpansion.config import HexpansionConfig
 from system.patterndisplay.events import PatternDisable, PatternEnable
-from system.scheduler import scheduler
 from system.scheduler.events import (RequestForegroundPopEvent,
                                      RequestForegroundPushEvent,
                                      RequestStopAppEvent)
@@ -35,18 +22,24 @@ from tildagonos import tildagonos
 import app
 
 from .utils import chain, draw_logo_animated, parse_version
-from .autotune import PIDAutoTuner, compute_error, METHOD_ZIEGLER_NICHOLS
+
+# Import sub-modules for each functional area
+from .hexpansion_mgmt import HexpansionMgr, HexpansionType, _ERASE_SLOT, _EEPROM_ADDR
+from .motor_moves import MotorMovesMgr, Instruction
+from .servo_test import ServoTestMgr, ServoMode, _SERVO_DEFAULT_CENTRE, _SERVO_DEFAULT_RANGE, _SERVO_DEFAULT_RATE, _MAX_SERVO_RANGE
+from .step_test import StepperTestMgr, StepperMode, Stepper
+from .badgebot_settings import SettingsMgr, MySetting
+from .line_follow import (LineFollowMgr, LineSensors, LineSensor,
+                          FOLLOWER_SENSOR_SCAN_PERIOD, DEFAULT_UPDATE_PERIOD,
+                          FOLLOWER_PID_KP_DEFAULT, FOLLOWER_PID_KI_DEFAULT,
+                          FOLLOWER_PID_KD_DEFAULT, FOLLOWER_FORWARD_POWER,
+                          FOLLOWER_MODE_DIFFERENTIAL, FOLLOWER_MODE_BINARY,
+                          SENSOR_CTRL_PINS, SENSOR_SIGNAL_PINS, SENSOR_NAMES,
+                          _LINE_SENSOR_DEFAULT_THRESHOLD, _NUM_LINE_SENSORS)
+from .autotune_mgr import AutotuneMgr
 
 #import micropython
 #micropython.alloc_emergency_exception_buf(100)
-
-# See the following for generating UUIDs:
-# https://www.uuidgenerator.net/
-#_BLE_SERVICE_UUID = bluetooth.UUID('19b10000-e8f2-537e-4f6c-d104768a1214')
-#_BLE_SENSOR_CHAR_UUID = bluetooth.UUID('19b10001-e8f2-537e-4f6c-d104768a1214')
-#_BLE_LED_UUID = bluetooth.UUID('19b10002-e8f2-537e-4f6c-d104768a1214')
-# How frequently to send advertising beacons.
-#_ADV_INTERVAL_MS = 250_000
 
 
 # Hard coded to talk to EEPROMs on address 0x50 - because we know that is what is on the HexDrive Hexpansion
@@ -84,65 +77,18 @@ _QR_CODE = [0x1fcf67f,
             0x0b57141,
             0x18bbd7f]
 
-# Screen positioning for movement sequence text
-H_START = -63
-V_START = -58
 _BRIGHTNESS = 1.0
 
-
-# Line Follower
-_NUM_LINE_SENSORS = 2
-_LINE_SENSOR_DEFAULT_THRESHOLD = 500
-_LINE_SENSOR_TIMEOUT = 2000
-_LINE_SENSOR_READ_TIMEOUT_US = 10000  # µs: max time to wait for a sensor reading before allowing a retry
-
-FOLLOWER_SENSOR_SCAN_PERIOD = 10  # ms
-FOLLOWER_SENSOR_TRIGGER_DURATION_US = 10  # µs - duration to set the sensor pin high for to trigger a reading
-DEFAULT_UPDATE_PERIOD  = 50  # ms
-SAMPLE_RATE_UPDATE_INTERVAL = 1000  # ms
-# PID Gains for line follower - these are tuning parameters that may need adjusting based on the specific robot and sensors being used
-FOLLOWER_PID_KP_DEFAULT = 10  # Default proportional gain for PID control in differential mode
-FOLLOWER_PID_KI_DEFAULT = 0   # Default integral gain for PID control in differential mode
-FOLLOWER_PID_KD_DEFAULT = 0   # Default derivative gain for PID control in differential mode
-FOLLOWER_FORWARD_POWER = 25000  # Base forward power for line follower - this is a tuning parameter that may need adjusting based on the specific robot and sensors being used
-
-# Line Follower Modes
-FOLLOWER_MODE_DIFFERENTIAL = 0
-FOLLOWER_MODE_BINARY = 1
-
-# Dedicated Pins
-SENSOR_1_CTRL   = 3  # hs pin (HSI)
-SENSOR_1_SIGNAL = 2  # hs pin (HSH)
-SENSOR_2_CTRL   = 1  # hs pin (HSG)
-SENSOR_2_SIGNAL = 0  # hs pin (HSF)
-# Scalable sensor pin and name lists (extend these to add more sensors)
-SENSOR_CTRL_PINS   = [SENSOR_1_CTRL,   SENSOR_2_CTRL]
-SENSOR_SIGNAL_PINS = [SENSOR_1_SIGNAL, SENSOR_2_SIGNAL]
-SENSOR_NAMES       = ["Left", "Right"]
-
-# Motor Driver - Defaults
+# Motor Driver - Defaults (remain here as they are used in settings init)
 _MAX_POWER = 30000
 _POWER_STEP_PER_TICK = 7500  # effectively the acceleration
 
-# Servo Tester - Defaults
-_SERVO_DEFAULT_STEP    = 10         # us per step    
-_SERVO_DEFAULT_CENTRE  = 1500       # us
-_SERVO_DEFAULT_RANGE   = 1000       # +/- 500us from centre
-_SERVO_DEFAULT_RATE    = 25         # *10us per s
-_SERVO_DEFAULT_MODE    = 0          # Off
-_SERVO_DEFAULT_PERIOD  = 20         # ms    
-_SERVO_MAX_RATE        = 1000       # *10us per s
-_SERVO_MIN_RATE        = 1          # *10us per s
-_SERVO_MAX_TRIM        = 1000       # us
-_MAX_SERVO_RANGE       = 1400       # 1400us either side of centre (VERY WIDE)
+# Servo Tester - Defaults (remain here for settings init)
+_SERVO_DEFAULT_STEP    = 10
+_SERVO_DEFAULT_PERIOD  = 20
 
-# Stepper Tester - Defaults
-_STEPPER_MAX_SPEED     = 200        # full steps per second
-_STEPPER_MAX_POSITION  = 3100       # full steps from one end to the other end
-_STEPPER_DEFAULT_SPEED = 50         # full steps per second
-_STEPPER_NUM_PHASES    = 8          # half steps
-_STEPPER_DEFAULT_SPR   = 200        # full steps per revolution
-_STEPPER_DEFAULT_STEP  = 1          # half steps, (2 = full steps)
+# Stepper Tester - Defaults (remain here for settings init)
+_STEPPER_MAX_POSITION  = 3100
 
 # Timings
 _TICK_MS       =  10        # Smallest unit of change for power, in ms
@@ -184,15 +130,8 @@ STATE_AUTOTUNE = 20       # PID Auto Tune
 _MINIMISE_VALID_STATES = [0, 1, 7, 12, 13, 14, 15]
 _LED_CONTROL_STATES    = [0, 3, 4, 5, 6, 12, 13, 14, 15, 19]
 
-# HexDrive Hexpansion constants
-_EEPROM_ADDR  = 0x50
-_EEPROM_NUM_ADDRESS_BYTES = 2
-_EEPROM_PAGE_SIZE = 32
-_EEPROM_TOTAL_SIZE = 64 * 1024 // 8
-
 #Misceallaneous Settings
 _LOGGING = False
-_ERASE_SLOT = 0   # Slot for user to set if they want to erase EEPROMs on HexDrives
 _IS_SIMULATOR = sys.platform != "esp32"  # True when running in the simulator, not on real badge hardware
 
 # Main Menu Items
@@ -206,52 +145,17 @@ MENU_ITEM_SETTINGS = 5
 MENU_ITEM_ABOUT = 6
 MENU_ITEM_EXIT = 7
 
-class StepperMode:
-    OFF = 0
-    POSITION = 1
-    SPEED = 2
-    stepper_modes = ["OFF", "POSITION", "SPEED"]
-
-    def __init__(self, mode = OFF):
-        self.mode = mode
-        
-    def set(self, mode):
-        self.mode = mode
-
-    def inc(self):
-        self.mode = (self.mode + 1) % 3
-
-    def __eq__(self, other):
-        return self.mode == other
-    
-    def __str__(self):
-        return self.stepper_modes[self.mode]
-
-
-class ServoMode:
-    OFF = 0
-    TRIM = 1
-    POSITION = 2
-    SCANNING = 3
-    servo_modes = ["OFF", "TRIM", "POSITION", "SCANNING"]
-    
-    def __init__(self, mode = OFF):
-        self.mode = mode
-
-    def set(self, mode):
-        self.mode = mode
-
-    def inc(self):
-        self.mode = (self.mode + 1) % 4
-    
-    def __eq__(self, other):
-        return self.mode == other
-    
-    def __str__(self):
-        return self.servo_modes[self.mode]
-
 
 class LineFollowerApp(app.App):
+    # Expose state constants as class attributes for sub-modules
+    STATE_INIT = STATE_INIT
+    STATE_WARNING = STATE_WARNING
+    STATE_DETECTED = STATE_DETECTED
+    STATE_UPGRADE = STATE_UPGRADE
+    STATE_CHECK = STATE_CHECK
+    STATE_REMOVED = STATE_REMOVED
+    STATE_MENU = STATE_MENU
+
     def __init__(self):
         super().__init__()
         # UI Button Controls
@@ -269,6 +173,7 @@ class LineFollowerApp(app.App):
         self._animation_counter: float = 0
         self._pattern_status: bool = True     # True = Pattern Enabled, False = Pattern Disabled
         self.qr_code = _QR_CODE
+        self._APP_VERSION = _APP_VERSION
         self.b_msg: str = f"BadgeBot V{_APP_VERSION}"
         self.t_msg: str = "RobotMad"
         self.is_scroll: bool = False
@@ -280,6 +185,7 @@ class LineFollowerApp(app.App):
 
         # BadgeBot Control Sequence Variables
         self.run_countdown_elapsed_ms: int = 0
+        self._countdown_next_state: int = STATE_RUN  # which state to go to after countdown
         self.instructions = []
         self.current_instruction: Instruction = None
         self.current_power_duration = ((0,0,0,0), 0)
@@ -338,9 +244,19 @@ class LineFollowerApp(app.App):
         self.ports_with_latest_hexdrive = set()
         self.hexdrive_app = None
         self.hexpansion_update_required: bool = False # flag from async to main loop
+        self._time_since_last_update: int = 0
+
+        # Functional area managers
+        self._hexpansion_mgr = HexpansionMgr(self)
+        self._motor_moves_mgr = MotorMovesMgr(self)
+        self._servo_test_mgr = ServoTestMgr(self)
+        self._stepper_test_mgr = StepperTestMgr(self)
+        self._settings_mgr = SettingsMgr(self)
+        self._line_follow_mgr = LineFollowMgr(self)
+        self._autotune_mgr = AutotuneMgr(self)
+
         eventbus.on_async(HexpansionInsertionEvent, self._handle_hexpansion_insertion, self)
         eventbus.on_async(HexpansionRemovalEvent, self._handle_hexpansion_removal, self)
-        self._time_since_last_update: int = 0
 
         # Motor Driver
         self.num_motors: int = 2       # Default assumed for a single HexDrive
@@ -387,16 +303,7 @@ class LineFollowerApp(app.App):
         eventbus.on_async(RequestForegroundPushEvent, self._gain_focus, self)
         eventbus.on_async(RequestForegroundPopEvent, self._lose_focus, self)
 
-        ### Bluetooth ### NOT WORKING YET
-        # Register GATT server, the service and characteristics
-        #self.ble_service = aioble.Service(_BLE_SERVICE_UUID)
-        #self.sensor_characteristic = aioble.Characteristic(self.ble_service, _BLE_SENSOR_CHAR_UUID, read=True, notify=True)
-        #self.led_characteristic = aioble.Characteristic(self.ble_service, _BLE_LED_UUID, read=True, write=True, notify=True, capture=True)
-        # Register service(s)
-        #aioble.register_services(self.ble_service)
-
         # We start with focus on launch, without an event emmited
-        #self._gain_focus(RequestForegroundPushEvent(self))  
         # This version is compatible with the simulator
         asyncio.get_event_loop().create_task(self._gain_focus(RequestForegroundPushEvent(self)))  
 
@@ -404,38 +311,10 @@ class LineFollowerApp(app.App):
     ### ASYNC EVENT HANDLERS ###
 
     async def _handle_hexpansion_removal(self, event: HexpansionRemovalEvent):
-        self.hexpansion_slot_type[event.port-1] = None
-        if event.port in self.ports_with_blank_eeprom:
-            if self._settinfs['logging'].v:
-                print(f"H:EEPROM removed from port {event.port}")
-            self.ports_with_blank_eeprom.remove(event.port)
-        if event.port in self.ports_with_hexdrive:
-            if self._settings['logging'].v:
-                print(f"H:HexDrive removed from port {event.port}")
-            self.ports_with_hexdrive.remove(event.port)
-        if event.port in self.ports_with_hexsense:
-            if self._settings['logging'].v:
-                print(f"H:HexSense removed from port {event.port}")
-            self.ports_with_hexsense.remove(event.port)            
-        if event.port in self.ports_with_latest_hexdrive:
-            if self._settings['logging'].v:
-                print(f"H:HexDrive V{_APP_VERSION} removed from port {event.port}")
-            self.ports_with_latest_hexdrive.remove(event.port)
-        if self.current_state == STATE_DETECTED and event.port == self.detected_port:
-            self.hexpansion_update_required = True
-        elif self.current_state == STATE_UPGRADE and event.port == self.upgrade_port:
-            self.hexpansion_update_required = True
-        elif self.hexdrive_port is not None and event.port == self.hexdrive_port:
-            self.hexpansion_update_required = True
-        elif self.waiting_app_port is not None and event.port == self.waiting_app_port:
-            self.hexpansion_update_required = True
-        elif self.erase_port is not None and event.port == self.erase_port:
-            self.hexpansion_update_required = True    
-
+        await self._hexpansion_mgr.handle_removal(event)
 
     async def _handle_hexpansion_insertion(self, event: HexpansionInsertionEvent):
-        if self.check_port_for_known_hexpansions(event.port):
-            self.hexpansion_update_required = True
+        await self._hexpansion_mgr.handle_insertion(event)
 
 
     async def _gain_focus(self, event: RequestForegroundPushEvent):
@@ -514,73 +393,9 @@ class LineFollowerApp(app.App):
         return output
 
     def background_update(self, delta: int):
-        if self.current_state == STATE_RUN:
-            # DC Motor Contorl
-            output = self.get_current_power_level(delta)
-            if output is None:
-                self.current_state = STATE_DONE
-                self._update_period = DEFAULT_UPDATE_PERIOD
-            elif self.hexdrive_app is not None:
-                self.hexdrive_app.set_motors(output)
-        elif self.current_state == STATE_FOLLOWER:
-            # Read all line sensors simultaneously
-            output = (0,0)
-            # if _override is a bool
-            if type(self._override) is bool:
-                if not self._override:
-                    # Line Follower Sensor - read all sensors at once, then check for changes
-                    s = self._line_sensors.values()
-                    self._line_sensors.read()
-                    if self._follower_mode == FOLLOWER_MODE_DIFFERENTIAL:
-                        output = self._compute_differential_output()
-                    else: # FOLLOWER_MODE_BINARY
-                        if s != self._s:
-                            self._s = s
-                            if s[0] and not s[1]:
-                                output = (-self._settings['max_power'].v, self._settings['max_power'].v)
-                            elif not s[0] and s[1]:
-                                output = (self._settings['max_power'].v, -self._settings['max_power'].v)
-                            else:
-                                output = (self._settings['max_power'].v, self._settings['max_power'].v)
-                            self._output = output
-                        else:
-                            output = self._output
-            else:
-                if self._override == BUTTON_TYPES["UP"]:
-                    output = (self._settings['max_power'].v, self._settings['max_power'].v)
-                elif self._override == BUTTON_TYPES["DOWN"]:
-                    output = (-self._settings['max_power'].v, -self._settings['max_power'].v)
-                elif self._override == BUTTON_TYPES["LEFT"]:
-                    output = (-self._settings['max_power'].v, self._settings['max_power'].v)
-                elif self._override == BUTTON_TYPES["RIGHT"]:
-                    output = (self._settings['max_power'].v, -self._settings['max_power'].v)
-            self.hexdrive_app.set_motors(output)
-        elif self.current_state == STATE_AUTOTUNE:
-            # PID Auto Tune - relay feedback control
-            if self._autotuner is not None and self._autotuner.is_running:
-                self._line_sensors.read()
-                # Compute continuous error from raw sensor timings
-                left_raw  = self._line_sensors.raw_value(0)
-                right_raw = self._line_sensors.raw_value(1)
-                error = compute_error(left_raw, right_raw)
-                output = self._autotuner.update(error, delta)
-                if self._autotuner.is_running:
-                    self.hexdrive_app.set_motors(output)
-                else:
-                    # Tuning just finished - stop motors
-                    self.hexdrive_app.set_motors((0, 0))
-                    self._refresh = True
-                    if self._autotuner.is_complete:
-                        gains = self._autotuner.get_gains()
-                        if gains is not None:
-                            self._settings['pid_kp'].v = gains[0]
-                            self._settings['pid_ki'].v = gains[1]
-                            self._settings['pid_kd'].v = gains[2]
-                            self._settings['pid_kp'].persist()
-                            self._settings['pid_ki'].persist()
-                            self._settings['pid_kd'].persist()
-                            print(f"AUTOTUNE: Gains saved to settings: Kp={gains[0]:.4f} Ki={gains[1]:.6f} Kd={gains[2]:.4f}")
-                        self.notification = Notification(" Tuning   Complete")
+        self._motor_moves_mgr.background_update(delta)
+        self._line_follow_mgr.background_update(delta)
+        self._autotune_mgr.background_update(delta)
 
 
     def generate_new_qr(self):
@@ -603,238 +418,7 @@ class LineFollowerApp(app.App):
             print("]")
 
 
-    ### HEXPANSION FUNCTIONS ###
-
-    # Scan the Hexpansion ports for EEPROMs and HexDrives in case they are already plugged in when we start
-    def scan_ports(self):
-        for port in range(1, 7):
-            self.check_port_for_known_hexpansions(port)
-
-
-    def check_port_for_known_hexpansions(self, port: int) -> bool:
-        # we know the EEPROM address so we can just read the header directly
-        if port not in range(1, 7):
-            return False
-        # We want to do this in two parts so that we detect if there is a valid EEPROM or not
-        try:
-            hexpansion_header = read_header(port, addr_len=_EEPROM_NUM_ADDRESS_BYTES)
-        except OSError:
-            # no EEPROM on this port
-            return False
-        except RuntimeError:
-            # not a valid header
-            if _IS_SIMULATOR:
-                # In the simulator there is no real EEPROM hardware, so skip the programming prompt
-                return False            
-            if self._settings['logging'].v:
-                print(f"H:Found EEPROM on port {port}")
-            self.ports_with_blank_eeprom.add(port)
-            return True
-        # check is this is a HexDrive header by scanning the _HEXDRIVE_TYPES list
-        for index, hexpansion_type in enumerate(self._HEXPANSION_TYPES):
-            if hexpansion_header.vid == hexpansion_type.vid and hexpansion_header.pid == hexpansion_type.pid:
-                if self._settings['logging'].v:
-                    print(f"H:Found '{hexpansion_type.sub_type}' {hexpansion_type.name} on port {port}")
-                if hexpansion_type.name == self._HEXPANSION_TYPES[0].name:    # "HexDrive"
-                    # HexDrive needs to be checked for version before we can use it
-                    if port not in self.ports_with_latest_hexdrive:
-                        self.ports_with_hexdrive.add(port)  
-                elif hexpansion_type.name == self._HEXPANSION_TYPES[5].name: # "HexSense"
-                    self.num_line_sensors = hexpansion_type.sensors
-                    self._line_sensors_hexpansion_config = HexpansionConfig(port) 
-                    self.ports_with_hexsense.add(port)
-                self.hexpansion_slot_type[port-1] = index              
-                return True
-        # we are not interested in this type of hexpansion
-        return False
-
-
-    def update_app_in_eeprom(self, port: int, addr: int) -> bool:
-        # Copy hexpansion app e.g. hexdrive.mpy to EEPROM as app.mpy
-        if self._HEXPANSION_TYPES[self.hexpansion_init_type].app_mpy_name is None:
-            if self._settings['logging'].v:
-                print(f"H:Hexpansion type {self._HEXPANSION_TYPES[self.hexpansion_init_type].name} does not have an app to copy to EEPROM")
-            return False
-        source_file = self._HEXPANSION_TYPES[self.hexpansion_init_type].app_mpy_name
-        if self._settings['logging'].v:
-            print(f"H:Updating app.mpy on port {port} with {source_file}")
-        try:
-            i2c = I2C(port)
-        except Exception as e:
-            print(f"H:Error opening I2C port {port}: {e}")
-            return False
-        header = read_header(port, addr_len = _EEPROM_NUM_ADDRESS_BYTES)
-        if header is None:
-            if self._settings['logging'].v:
-                print(f"H:Error reading header on port {port}")
-            return False
-        try:
-            _, partition = get_hexpansion_block_devices(i2c, header, addr, addr_len = _EEPROM_NUM_ADDRESS_BYTES)
-        except RuntimeError as e:
-            print(f"H:Error getting block devices: {e}")
-            return False              
-        mountpoint = '/hexpansion_' + str(port)
-        already_mounted = False
-        if not already_mounted:
-            if self._settings['logging'].v:
-                print(f"H:Mounting {partition} at {mountpoint}")
-            try:
-                vfs.mount(partition, mountpoint, readonly=False)
-            except OSError as e:
-                if e.args[0] == 1:
-                    already_mounted = True
-                else:
-                    print(f"H:Error mounting: {e}")
-            except Exception as e:
-                print(f"H:Error mounting: {e}")
-        source_path = "/" + __file__.rsplit("/", 1)[0] + f"/{source_file}"
-        dest_path   = f"{mountpoint}/app.mpy"
-        try:
-            # delete the existing app.mpy file first (otherwise the EEPROM file system may run out of space for the new file)
-            if self._settings['logging'].v:
-                print(f"H:Deleting {dest_path}")
-            os.remove(dest_path)
-        except Exception as e:
-            if e.args[0] != 2:
-                # ignore errors which will happen if the file does not exist
-                print(f"H:Error deleting {dest_path}: {e}")
-       
-        if self._settings['logging'].v:
-            print(f"H:Copying {source_path} to {dest_path}")
-
-        try:        
-            template = open(source_path, "rb")
-        except Exception as e:
-            print(f"H:Error opening {source_path}: {e}")
-            return False  
-        
-        try:
-            appfile = open(dest_path, "wb")
-        except Exception as e:
-            print(f"H:Error opening {dest_path}: {e}")
-            return False   
- 
-        try:    
-            appfile.write(template.read())                           
-        except Exception as e:
-            print(f"H:Error updating Hexpansion: {e}")
-            return False
-           
-        try:
-            appfile.close()
-            template.close()     
-        except Exception as e:
-            print(f"H:Error closing files: {e}")
-            return False
-        if not already_mounted:
-            try:
-                vfs.umount(mountpoint)
-                if self._settings['logging'].v:
-                    print(f"H:Unmounted {mountpoint}")                    
-            except Exception as e:
-                print(f"H:Error unmounting {mountpoint}: {e}")
-                return False 
-        if self._settings['logging'].v:
-            print(f"H:Hexpansion app.mpy updated to version {self._HEXPANSION_TYPES[self.hexpansion_init_type].app_mpy_version}")            
-        return True
-    
-
-    def prepare_eeprom(self, port: int, addr: int) -> bool:
-        if self._settings['logging'].v:
-            print(f"H:Initialising EEPROM on port {port}")
-        hexpansion_header_to_write = HexpansionHeader(
-            manifest_version="2024",
-            fs_offset=32,
-            eeprom_page_size=_EEPROM_PAGE_SIZE,
-            eeprom_total_size=_EEPROM_TOTAL_SIZE,
-            vid=self._HEXPANSION_TYPES[self.hexpansion_init_type].vid,
-            pid=self._HEXPANSION_TYPES[self.hexpansion_init_type].pid,
-            unique_id=0x0,
-            friendly_name=self._HEXPANSION_TYPES[self.hexpansion_init_type].name,
-        )        
-        # Write and read back header efficiently
-        try:
-            i2c = I2C(port)
-        except Exception as e:
-            print(f"H:Error opening I2C port {port}: {e}")
-            return False
-        try:
-            write_header(port, hexpansion_header_to_write, addr_len = _EEPROM_NUM_ADDRESS_BYTES, page_size = _EEPROM_PAGE_SIZE)       
-        except Exception as e:
-            print(f"H:Error writing header: {e}")
-            return False
-        try:
-            hexpansion_header = read_header(port, addr_len = _EEPROM_NUM_ADDRESS_BYTES)
-        except Exception as e:
-            print(f"H:Error reading header back: {e}")
-            return False
-        try:
-            # Get block devices
-            _, partition = get_hexpansion_block_devices(i2c, hexpansion_header, addr, addr_len = _EEPROM_NUM_ADDRESS_BYTES)
-        except RuntimeError as e:
-            print(f"H:Error getting block devices: {e}")
-            return False           
-        try:
-            # Format
-            vfs.VfsLfs2.mkfs(partition)
-            if self._settings['logging'].v:
-                print("H:EEPROM formatted")
-        except Exception as e:
-            print(f"H:Error formatting: {e}")
-            return False
-        try:
-            # And mount!
-            mountpoint = '/hexpansion_' + str(port)
-            vfs.mount(partition, mountpoint, readonly=False)
-            if self._settings['logging'].v:
-                print("H:EEPROM initialised")
-        except OSError as e:
-            if e.args[0] == 1:
-                #already_mounted
-                if self._settings['logging'].v:
-                    print("H:EEPROM initialised")                
-            else:
-                print(f"H:Error mounting: {e}")
-                return False
-        except Exception as e:
-            print(f"H:Error mounting: {e}")                
-            return False
-        return True 
-
-
-    def erase_eeprom(self, port: int, addr: int) -> bool:
-        if self._settings['logging'].v:
-            print(f"H:Erasing EEPROM on port {port}")
-        try:
-            i2c = I2C(port)
-            # loop through all pages and erase them
-            for page in range(_EEPROM_TOTAL_SIZE // _EEPROM_PAGE_SIZE):
-                mem_addr = page * _EEPROM_PAGE_SIZE
-                #generate a bit mask for the address based on the number of address bytes
-                mem_addr_mask = 1<<(_EEPROM_NUM_ADDRESS_BYTES*8)-1
-                i2c.writeto_mem((addr | (mem_addr >> (8*_EEPROM_NUM_ADDRESS_BYTES))), (mem_addr & mem_addr_mask), bytes([0xFF]*_EEPROM_PAGE_SIZE), addrsize = (8*_EEPROM_NUM_ADDRESS_BYTES))
-                # check Ack
-                while True:
-                    try:    # Poll Ack
-                        if i2c.writeto((addr | (mem_addr >> (8*_EEPROM_NUM_ADDRESS_BYTES))), bytes([mem_addr & 0xFF]) if _EEPROM_NUM_ADDRESS_BYTES == 1 else bytes([mem_addr >> 8, mem_addr & 0xFF])):
-                            break
-                    except OSError:
-                        pass
-                    finally:
-                        time.sleep_ms(1)
-        except Exception as e:
-            print(f"H:Error erasing EEPROM: {e}")
-            return False
-        return True 
-
-
-    def find_hexpansion_app(self, port: int) -> app:                    
-        expected_app_name = self._HEXPANSION_TYPES[self.hexpansion_slot_type[port-1]].app_name
-        for an_app in scheduler.apps:
-            if type(an_app).__name__ == expected_app_name:
-                if hasattr(an_app, "config") and hasattr(an_app.config, "port") and  an_app.config.port == port:
-                    return an_app
-        return None
+    ### HEXPANSION FUNCTIONS - delegated to HexpansionMgr ###
 
 
     def update_settings(self):
@@ -887,50 +471,7 @@ class LineFollowerApp(app.App):
     ### START UI FOR HEXPANSION INITIALISATION AND UPGRADE ###
 
     def _update_hexpansion_management(self, delta: int):
-        if self.current_state == STATE_INIT:
-            # One Time initialisation
-            self.scan_ports()
-            if (len(self.ports_with_hexdrive) == 0) and (len(self.ports_with_blank_eeprom) == 0):
-                # There are currently no possible HexDrives plugged in
-                self._animation_counter = 0
-                self.current_state = STATE_WARNING
-            else:
-                self.current_state = STATE_CHECK
-                if self._check_hexpansion_erase_port(delta):
-                    pass                          
-            return
-        
-        if self.hexpansion_update_required:
-            # something has changed in the hexpansion ports            
-            self.hexpansion_update_required = False
-            if self.current_state != STATE_CHECK:
-                print("H:Hexpansion Check")
-                self.set_menu(None)
-                self.current_state = STATE_CHECK
-        
-        if self.current_state == STATE_WARNING or self.current_state == STATE_LOGO:
-            self._update_state_warning(delta)                    
-        elif self.current_state == STATE_ERROR or self.current_state == STATE_MESSAGE or self.current_state == STATE_REMOVED: 
-            self._update_state_error(delta)
-        elif self.current_state == STATE_PROGRAMMING:
-            # Programming the Hexpansion
-            self._update_state_programming(delta)      
-        elif self.current_state == STATE_DETECTED:
-            # We have detected a Hexpansion with a blank EEPROM - asking the user if they want to initialise it
-            self._update_state_detected(delta)
-        elif self.current_state == STATE_ERASE:
-            self._update_state_erase(delta)                      
-        elif self.current_state == STATE_UPGRADE:
-            # We are currently asking the user if they want hexpansion App upgrading with latest App.mpy
-            self._update_state_upgrade(delta)
-        elif self.current_state in _MINIMISE_VALID_STATES:
-            # We need to loop over multiple hexpansion ports...                     
-            if self._check_hexpansion_ports(delta):
-                pass     
-            elif self._check_hexdrive_ports(delta):
-                pass
-            elif self.current_state == STATE_CHECK:
-                self._update_state_check(delta)
+        self._hexpansion_mgr.update(delta)
 
     def _update_main_application(self, delta: int):
         if self.current_state == STATE_MENU:
@@ -948,38 +489,23 @@ class LineFollowerApp(app.App):
             self.is_scroll = False
             self.minimise()
 
-    ### Motor Moves Application ###            
-        elif self.current_state == STATE_HELP:
-            self._update_state_help(delta)
-        elif self.current_state == STATE_RECEIVE_INSTR:
-            self._update_state_receive_instr(delta)
+    ### Shared Countdown (used by Motor Moves and PID AutoTune) ###
         elif self.current_state == STATE_COUNTDOWN:
             self._update_state_countdown(delta)
-        elif self.current_state == STATE_RUN:
-            self.clear_leds()
-            # Run is primarily managed in the background update
-        elif self.current_state == STATE_DONE:
-            self._update_state_done(delta)
 
-    ### Line Follower Application ###
-        elif self.current_state == STATE_FOLLOWER:
-            self._update_state_follower(delta)
-
-    ### PID Auto Tune Application ###
-        elif self.current_state == STATE_AUTOTUNE:
-            self._update_state_autotune(delta)
-
-    ### Servo Tester Application ###
-        elif self.current_state == STATE_SERVO:
-            self._update_state_servo(delta)
-
-    ### Stepper Tester Application ###
-        elif self.current_state == STATE_STEPPER:
-            self._update_state_stepper(delta)
-
-    ### Settings Capability ###
-        elif self.current_state == STATE_SETTINGS:
-            self._update_state_settings(delta)
+    ### Delegate to functional area managers ###
+        elif self._motor_moves_mgr.update(delta):
+            pass
+        elif self._line_follow_mgr.update(delta):
+            pass
+        elif self._autotune_mgr.update(delta):
+            pass
+        elif self._servo_test_mgr.update(delta):
+            pass
+        elif self._stepper_test_mgr.update(delta):
+            pass
+        elif self._settings_mgr.update(delta):
+            pass
     ### End of Update ###
 
 
@@ -1026,703 +552,8 @@ class LineFollowerApp(app.App):
                 tildagonos.leds[i] = (0,255,0) if self.current_state == STATE_MESSAGE else (255,0,0)       
 
 
-    def _update_state_programming(self, delta: int):        
-        if self.upgrade_port is not None:
-            if self._HEXPANSION_TYPES[self.hexpansion_init_type].app_mpy_name is None:
-                self.notification = Notification("No App", port = self.upgrade_port)
-                self.error_message = ["No App","for this","Hexpansion"]
-                self.current_state = STATE_MESSAGE
-            elif self.update_app_in_eeprom(self.upgrade_port, _EEPROM_ADDR):
-                self.notification = Notification("Upgraded", port = self.upgrade_port)
-                # Try to trigger hexpansion managment app to restart the HexDrive
-                # by emit hexpansion insertion event
-                eventbus.emit(HexpansionInsertionEvent(self.upgrade_port))
-                self.error_message = ["Upgraded:","Please","reboop"]
-                self.current_state = STATE_MESSAGE                                     
-                if self._settings['logging'].v:
-                    print(f"H:Hexpansion on port {self.upgrade_port} upgraded")
-            else:
-                self.notification = Notification("Failed", port = self.upgrade_port)
-                self.error_message = ["Hexpansion","programming","failed"]
-                self.current_state = STATE_ERROR
-            self.upgrade_port = None
-        elif self.detected_port is not None:
-            if self.prepare_eeprom(self.detected_port, _EEPROM_ADDR):
-                self.notification = Notification("Initialised", port = self.detected_port)
-                self.upgrade_port = self.detected_port
-                self.hexpansion_slot_type[self.detected_port-1] = self.hexpansion_init_type
-                self.current_state = STATE_UPGRADE                      
-            else:
-                self.notification = Notification("Failed", port = self.detected_port)
-                self.error_message = ["EEPROM","initialisation","failed"]
-                self.hexpansion_slot_type[self.detected_port-1] = None
-                self.current_state = STATE_ERROR
-            self.detected_port = None
-        elif self._settings['logging'].v:
-            print("H:Error - no port to program")    
 
 
-    def _update_state_detected(self, delta: int):            
-        # We are currently asking the user if they want hexpansion EEPROM initialising
-        if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
-            self.button_states.clear()
-            self.current_state = STATE_PROGRAMMING        
-        elif self.button_states.get(BUTTON_TYPES["CANCEL"]):
-            self.button_states.clear()
-            if self._settings['logging'].v:
-                print("H:Initialise Cancelled")
-            self.detected_port = None
-            self.current_state = STATE_CHECK
-        elif self.button_states.get(BUTTON_TYPES["UP"]):
-            self.button_states.clear()
-            self.hexpansion_init_type = (self.hexpansion_init_type + 1) % len(self._HEXPANSION_TYPES)
-            self._refresh = True
-        elif self.button_states.get(BUTTON_TYPES["DOWN"]):
-            self.button_states.clear()
-            self.hexpansion_init_type = (self.hexpansion_init_type - 1) % len(self._HEXPANSION_TYPES)
-            self._refresh = True
-        elif self.button_states.get(BUTTON_TYPES["LEFT"]):
-            self.button_states.clear()
-            self.hexpansion_init_type = 1
-            self._refresh = True
-        elif self.button_states.get(BUTTON_TYPES["RIGHT"]):
-            self.button_states.clear()
-            self.hexpansion_init_type = 2
-            self._refresh = True
-
-
-    def _update_state_erase(self, delta: int):
-        # We are currently asking the user if they want hexpansion EEPROM Erased                
-        if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
-            # Yes
-            self.button_states.clear()
-            if self.erase_eeprom(self.erase_port, _EEPROM_ADDR):
-                self.error_message = ["Erased:","Please","reboop"]
-                self.notification = Notification("Erased", port = self.erase_port)
-                self.ports_with_blank_eeprom.add(self.erase_port)    
-                self.current_state = STATE_MESSAGE                  
-            else:
-                self.notification = Notification("Failed", port = self.erase_port)
-                self.error_message = ["EEPROM","erasure","failed"]
-                self.current_state = STATE_ERROR                       
-            # check if the erased port was our hexdrive port and if so remove it from our known hexdrive ports
-            if self.hexdrive_port == self.erase_port:
-                self.hexdrive_port = None
-                self.hexdrive_app = None
-                if self._settings['logging'].v:
-                    print(f"H:HexDrive on port {self.erase_port} erased!")
-                self.ports_with_hexdrive.discard(self.erase_port)
-                # check if the erased port was our hexsense port and if so remove it from our known hexsense ports
-            if self._line_sensors_hexpansion_config.port == self.erase_port:
-                self._line_sensors_hexpansion_config = None
-                self.ports_with_hexsense.discard(self.erase_port)
-            self.erase_port = None
-        elif self.button_states.get(BUTTON_TYPES["CANCEL"]):
-            # No
-            if self._settings['logging'].v:
-                print("H:Erase Cancelled")
-            self.button_states.clear()
-            self.erase_port = None
-            self.current_state = STATE_CHECK
-
-
-    def _update_state_upgrade(self, delta: int):                
-        if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
-            # Yes
-            self.button_states.clear()
-            self.notification = Notification("Upgrading", port = self.upgrade_port)
-            self.current_state = STATE_PROGRAMMING
-        elif self.button_states.get(BUTTON_TYPES["CANCEL"]):
-            # No
-            if self._settings['logging'].v:
-                print("H:Upgrade Cancelled")
-            self.button_states.clear()
-            self.upgrade_port = None
-            self.current_state = STATE_CHECK
-
-
-    def _update_state_check(self, delta: int):
-        #print(f"Check: {self.ports_with_latest_hexdrive}")
-        if 0 < len(self.ports_with_latest_hexdrive):
-            # We have at least one HexDrive with the latest App.mpy
-            if self.hexdrive_port is not None and self.hexdrive_port not in self.ports_with_latest_hexdrive:
-                print(f"Check: {self.hexdrive_port} lost")
-                self.hexdrive_port = None
-                self.hexdrive_app = None
-            if self.hexdrive_port is None:
-                valid_port = next(iter(self.ports_with_latest_hexdrive))
-                # Find our running hexdrive app
-                hexdrive_app = self.find_hexpansion_app(valid_port)
-                if hexdrive_app is not None:
-                    self.hexdrive_port = valid_port
-                    self.hexdrive_app = hexdrive_app
-                    if self.hexpansion_slot_type[valid_port-1] is not None:
-                        self.num_motors   = self._HEXPANSION_TYPES[self.hexpansion_slot_type[valid_port-1]].motors
-                        self.num_servos   = self._HEXPANSION_TYPES[self.hexpansion_slot_type[valid_port-1]].servos
-                        self.num_steppers = self._HEXPANSION_TYPES[self.hexpansion_slot_type[valid_port-1]].steppers
-                    # only intended for use with a single active HexDrive at once at present
-                    if (0 < self._HEXPANSION_TYPES[self.hexpansion_slot_type[valid_port-1]].steppers) or self.hexdrive_app.get_status():
-                        if self._settings['logging'].v:
-                            print(f"H:HexDrive [{valid_port}] OK")
-                        self.current_state = STATE_MENU
-                        self._animation_counter = 0
-                    else:
-                        if self._settings['logging'].v:    
-                            print(f"H:HexDrive {valid_port}: Failed to initialise PWM resources")
-                        self.error_message = [f"HexDrive {valid_port}","PWM Init","Failed","Please","Reboop"]
-                        self.current_state = STATE_ERROR
-                else:
-                    if self._settings['logging'].v:
-                        print(f"H:HexDrive {valid_port}: App not found, please reboop")
-                    self.error_message = [f"HexDrive {valid_port}","App not found.","Please","reboop"]
-                    self.current_state = STATE_ERROR
-            else:
-                # Still have hexdrive on original port
-                self.current_state = STATE_MENU        
-        elif self.hexdrive_port is not None:
-            print(f"Check: {self.hexdrive_port} lost")
-            self.hexdrive_port = None
-            self.hexdrive_app = None                      
-            self.current_state = STATE_REMOVED
-        else:
-            self._animation_counter = 0                   
-            self.current_state = STATE_WARNING
-
-    def _check_hexpansion_erase_port(self, delta: int) -> bool:
-        # Is there an EEPROM to be erased?
-        erase_port = self._settings['erase_slot'].v
-        if erase_port != 0 and erase_port not in self.ports_with_blank_eeprom:
-            try:
-                hexpansion_header = read_header(erase_port, addr_len=_EEPROM_NUM_ADDRESS_BYTES)
-            except OSError:
-                # no EEPROM on this port
-                return False
-            except RuntimeError:
-                # not a valid header - likley blank or corrupted EEPROM which we can offer to erase
-                if _IS_SIMULATOR:
-                    # In the simulator there is no real EEPROM hardware, so skip the erase prompt
-                    return False                 
-                pass
-            # Show the UI prompt and wait for button press
-            if self._settings['logging'].v:
-                print(f"H:Hexpansion on port {erase_port} Erase?")
-            self.erase_port = erase_port
-            self.notification = Notification("Erase?", port = self.erase_port)
-            self.current_state = STATE_ERASE 
-            return True
-        return False    
-
-    def _check_hexpansion_ports(self, delta: int) -> bool:
-        if 0 < len(self.ports_with_blank_eeprom):
-            # if there are any ports with blank eeproms
-            # Show the UI prompt and wait for button press
-            self.detected_port = self.ports_with_blank_eeprom.pop()
-            self.notification = Notification("Initialise?", port = self.detected_port)
-            self.current_state = STATE_DETECTED
-            return True    
-        return False
-
-
-    def _check_hexdrive_ports(self, delta: int) -> bool:
-        if self.waiting_app_port is not None or (0 < len(self.ports_with_hexdrive)):
-            # if there are any ports with HexDrives - check if they need upgrading
-            if self.waiting_app_port is None:
-                self.waiting_app_port = self.ports_with_hexdrive.pop()
-                self._animation_counter = 0  #timeout                       
-                hexpansion_app = self.find_hexpansion_app(self.waiting_app_port)
-                # the scheduler is updated asynchronously from hexpansion insertion so we may not find the app immediately
-                if hexpansion_app is not None:
-                    try:
-                        hexpansion_app_version = hexpansion_app.get_version()
-                    except Exception as e:
-                        hexpansion_app_version = 0
-                        print(f"H:Error getting Hexpansion app version - assume old: {e}")
-                elif 5.0 < self._animation_counter:
-                    if self._settings['logging'].v:
-                        print("H:Timeout waiting for Hexpansion app to be started - assume it needs upgrading")
-                    hexpansion_app_version = 0
-                else:
-                    if 0 == self._animation_counter:
-                        if self._settings['logging'].v:
-                            print(f"H:No app found on port {self.waiting_app_port} - WAITING for app to appear in Scheduler")
-                    self.notification = Notification("Checking...", port = self.waiting_app_port)                            
-                    self._animation_counter += delta/1000
-                    return True                    
-                if hexpansion_app_version == self._HEXPANSION_TYPES[self.hexpansion_slot_type[self.waiting_app_port-1]].app_mpy_version:    
-                    if self._settings['logging'].v:
-                        print(f"H:Hexpansion on port {self.waiting_app_port} has latest App")
-                    self.ports_with_latest_hexdrive.add(self.waiting_app_port)
-                    self.current_state = STATE_CHECK
-                else:    
-                    # Show the UI prompt and wait for button press
-                    if self._settings['logging'].v:
-                        print(f"H:Hexpansion app on port {self.waiting_app_port} needs upgrading from version {hexpansion_app_version} to {self._HEXPANSION_TYPES[self.hexpansion_slot_type[self.waiting_app_port-1]].app_mpy_version}")
-                    self.upgrade_port = self.waiting_app_port
-                    self.notification = Notification("Upgrade?", port = self.upgrade_port)
-                    self.current_state = STATE_UPGRADE                             
-            self.waiting_app_port = None
-            self._animation_counter = 0
-            return True
-        return False
-
-
-    def _update_state_help(self, delta: int):            
-        if self.button_states.get(BUTTON_TYPES["CANCEL"]):
-            self.button_states.clear()
-            self.current_state = STATE_MENU
-        elif self.button_states.get(BUTTON_TYPES["CONFIRM"]):
-            self.button_states.clear()
-            self.is_scroll = True   # so that release of this button will CLEAR Scroll mode
-            eventbus.on_async(ButtonUpEvent, self._handle_button_up, self)
-            self.current_state = STATE_RECEIVE_INSTR
-        else:            
-            # Show the help for 10 seconds
-            self._animation_counter += delta/1000
-            if self._animation_counter > 10:
-                # after 10 seconds show the logo
-                self._animation_counter = 0
-                self.current_state = STATE_LOGO
-
-
-    def _update_state_receive_instr(self, delta: int):            
-        # Enable/disable scrolling and check for long press
-        if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
-            self.long_press_delta += delta
-            if self.long_press_delta >= _LONG_PRESS_MS:
-                # if there are no steps saved in the power plan then return to HELP, otherwise go to COUNTDOWN
-                if self.power_plan_iter is None:
-                    self.current_state = STATE_HELP
-                else:                            
-                    self.finalize_instruction()
-                    self.current_state = STATE_COUNTDOWN
-                self.is_scroll = False
-                eventbus.remove(ButtonUpEvent, self._handle_button_up, self)            
-        else:
-            # Confirm is not pressed. Reset long_press state
-            self.long_press_delta = 0
-            if self.button_states.get(BUTTON_TYPES["CANCEL"]):
-                self.button_states.clear()
-                self._animation_counter = 0
-                self.is_scroll = False
-                self.current_state = STATE_HELP
-                eventbus.remove(ButtonUpEvent, self._handle_button_up, self)            
-                return
-            # Manage scrolling
-            if self.is_scroll:
-                if self.button_states.get(BUTTON_TYPES["DOWN"]):
-                    self.button_states.clear()
-                    self.scroll_offset -= 1
-                    self._refresh = True                            
-                elif self.button_states.get(BUTTON_TYPES["UP"]):
-                    self.button_states.clear()
-                    self.scroll_offset += 1
-                    self._refresh = True
-            # Instruction button presses
-            elif self.button_states.get(BUTTON_TYPES["RIGHT"]):
-                self._handle_instruction_press(BUTTON_TYPES["RIGHT"])
-                self.button_states.clear()
-                self._set_direction_leds(BUTTON_TYPES["RIGHT"])              
-                self._refresh = True
-            elif self.button_states.get(BUTTON_TYPES["LEFT"]):
-                self._handle_instruction_press(BUTTON_TYPES["LEFT"])
-                self.button_states.clear()
-                self._set_direction_leds(BUTTON_TYPES["LEFT"])            
-                self._refresh = True
-            elif self.button_states.get(BUTTON_TYPES["UP"]):
-                self._handle_instruction_press(BUTTON_TYPES["UP"])
-                self.button_states.clear()
-                self._set_direction_leds(BUTTON_TYPES["UP"])               
-                self._refresh = True
-            elif self.button_states.get(BUTTON_TYPES["DOWN"]):
-                self._handle_instruction_press(BUTTON_TYPES["DOWN"])
-                self.button_states.clear()
-                self._set_direction_leds(BUTTON_TYPES["DOWN"])                 
-                self._refresh = True
-            else:
-                self._set_direction_leds(self.last_press)
-
-
-    def _set_direction_leds(self, direction: Button):
-        if direction == BUTTON_TYPES["RIGHT"]:
-            # Green = Starboard = Right
-            self.clear_leds()
-            tildagonos.leds[2]  = (0, 255, 0)
-            tildagonos.leds[3]  = (0, 255, 0)                
-        elif direction ==BUTTON_TYPES["LEFT"]:
-            # Red = Port = Left
-            self.clear_leds()
-            tildagonos.leds[8]  = (255, 0, 0)
-            tildagonos.leds[9]  = (255, 0, 0)                
-        elif direction == BUTTON_TYPES["UP"]:
-            # Cyan
-            self.clear_leds()
-            tildagonos.leds[12] = (0, 255, 255)
-            tildagonos.leds[1]  = (0, 255, 255)                
-        elif direction == BUTTON_TYPES["DOWN"]:
-            # Magenta
-            self.clear_leds()
-            tildagonos.leds[6]  = (255, 0, 255)
-            tildagonos.leds[7]  = (255, 0, 255)                
-
-
-    def _update_state_countdown(self, delta: int):            
-        self.clear_leds()
-        self.run_countdown_elapsed_ms += delta
-        if self.run_countdown_elapsed_ms >= _RUN_COUNTDOWN_MS:
-            self.power_plan_iter = chain(*(instr.power_plan for instr in self.instructions))
-            if self.hexdrive_app is not None:
-                self.hexdrive_app.set_power(True)
-            self.current_state = STATE_RUN
-            self._update_period = 10
-
-
-    def _update_state_done(self, delta: int):
-        if self.button_states.get(BUTTON_TYPES["CANCEL"]):
-            self.button_states.clear()
-            if self.hexdrive_app is not None:
-                self.hexdrive_app.set_power(False)
-            self.reset_robot()
-        elif self.button_states.get(BUTTON_TYPES["CONFIRM"]):
-            self.button_states.clear()
-            if self.hexdrive_app is not None:
-                self.hexdrive_app.set_power(False)
-            self.run_countdown_elapsed_ms = 1   # avoid "6" appearing on screen at all
-            self.current_power_duration = ((0,0,0,0), 0)
-            self.current_state = STATE_COUNTDOWN
-
-    # Stepper Tester:
-    def _update_state_stepper(self, delta: int):
-        # Left/Right to adjust position
-        if self.button_states.get(BUTTON_TYPES["RIGHT"]):
-            if self._auto_repeat_check(delta, True):
-                if self.stepper_mode == StepperMode.SPEED:                      # Speed
-                    speed = self._stepper.get_speed()
-                    speed = self._inc(speed, self._auto_repeat_level+1)
-                    if _STEPPER_MAX_SPEED < speed:
-                        speed = _STEPPER_MAX_SPEED
-                    self._stepper.speed(speed)
-                else:
-                    if self.stepper_mode != StepperMode.POSITION:               # Position Mode
-                        self.stepper_mode.set(StepperMode.POSITION)
-                        self._stepper.speed(_STEPPER_DEFAULT_SPEED)
-                        self._stepper.track_target()
-                    pos = self._stepper.get_pos()
-                    pos = self._inc(pos, self._auto_repeat_level+1)
-                    self._stepper.target(pos)
-                self._refresh = True
-        elif self.button_states.get(BUTTON_TYPES["LEFT"]):
-            if self._auto_repeat_check(delta, True):
-                if self.stepper_mode == StepperMode.SPEED:                      # Speed
-                    speed = self._stepper.get_speed()
-                    speed = self._dec(speed, self._auto_repeat_level+1)
-                    if -_STEPPER_MAX_SPEED > speed:
-                        speed = -_STEPPER_MAX_SPEED
-                    self._stepper.speed(speed)  
-                else:                                                           # Position Mode
-                    if self.stepper_mode != StepperMode.POSITION:
-                        self.stepper_mode.set(StepperMode.POSITION)
-                        self._stepper.speed(_STEPPER_DEFAULT_SPEED)
-                        self._stepper.track_target()
-                    pos = self._stepper.get_pos()
-                    pos = self._dec(pos, self._auto_repeat_level+1)
-                    self._stepper.target(pos)
-                self._refresh = True
-        else:
-            self._auto_repeat_clear()    
-            # non auto-repeating buttons
-            if self.button_states.get(BUTTON_TYPES["CANCEL"]):
-                self.button_states.clear()
-                if self.hexdrive_app is not None:
-                    self._stepper.enable(False)
-                self.current_state = STATE_MENU
-                return
-            elif self.button_states.get(BUTTON_TYPES["CONFIRM"]): #Cycle Through Modes
-                self.button_states.clear()
-                self.stepper_mode.inc()
-                if self.stepper_mode == StepperMode.POSITION:      # Position Mode
-                    self._stepper.speed(_STEPPER_DEFAULT_SPEED)
-                    self._stepper.target(self._stepper.get_pos())
-                    self._stepper.track_target()
-                elif self.stepper_mode == StepperMode.SPEED:        # Speed Mode
-                    self._stepper.speed(0)
-                    self._stepper.free_run(1)
-                else:                                               # Off
-                    self._stepper.stop()
-                self._refresh = True
-                self.notification = Notification(f"  Stepper:\n {self.stepper_mode}")
-                print(f"Stepper:{self.stepper_mode}")
-        if self._refresh:                
-            self._time_since_last_input = 0
-        else:
-            self._time_since_last_input += delta                
-            if self._time_since_last_input > self._timeout_period:
-                self._stepper.stop()
-                self._stepper.speed(0)
-                self._stepper.enable(False)
-                self.current_state = STATE_MENU
-                self.notification = Notification("  Stepper:\n Timeout")
-                print("Stepper:Timeout")            
-            elif self.stepper_mode == StepperMode.SPEED:    # Speed Mode
-                self._refresh = True
-        self._time_since_last_update += delta
-        if self._time_since_last_update > self._keep_alive_period:
-            self._stepper.step()
-            self._time_since_last_update = 0
-
-    def _update_state_follower(self, delta: int):
-        # Line Follower:
-        self._sample_time += delta
-        # Cancel to exit
-        if self.button_states.get(BUTTON_TYPES["CANCEL"]):
-            self.button_states.clear()
-            if self.hexdrive_app is not None:
-                self.hexdrive_app.set_power(False)
-            self._line_sensors.disable()
-            self._update_period = DEFAULT_UPDATE_PERIOD
-            self._pid_integral = 0
-            self._pid_previous_error = 0
-            self.current_state = STATE_MENU
-            return
-        # UP/DOWN buttons adjust the sensor threshold
-        elif self.button_states.get(BUTTON_TYPES["UP"]):
-            self.button_states.clear()
-            self._settings['line_threshold'].v = self._settings['line_threshold'].inc(self._settings['line_threshold'].v)
-            self._line_sensors.threshold = self._settings['line_threshold'].v
-            self._refresh = True
-        elif self.button_states.get(BUTTON_TYPES["DOWN"]):
-            self.button_states.clear()
-            self._settings['line_threshold'].v = self._settings['line_threshold'].dec(self._settings['line_threshold'].v)
-            self._line_sensors.threshold = self._settings['line_threshold'].v
-            self._refresh = True
-        # Does the line sensor data need refreshing on the display?
-        if self._line_sensors.updated:
-            self._refresh = True
-            self._line_sensors.clear_updated()
-        # Is it time to calculate the sample rate?
-        if (self._sample_time > SAMPLE_RATE_UPDATE_INTERVAL):
-            state = disable_irq()
-            self._rate = int(((SAMPLE_RATE_UPDATE_INTERVAL/_NUM_LINE_SENSORS) * self._sample_count) // self._sample_time)
-            self._sample_count = 0
-            enable_irq(state)
-            self._sample_time = 0
-            self._refresh = True
-
-    def _update_state_autotune(self, delta: int):
-        # PID Auto Tune:
-        self._sample_time += delta
-        # Cancel to exit (stop motors and return to menu)
-        if self.button_states.get(BUTTON_TYPES["CANCEL"]):
-            self.button_states.clear()
-            if self.hexdrive_app is not None:
-                self.hexdrive_app.set_motors((0, 0))
-                self.hexdrive_app.set_power(False)
-            self._line_sensors.disable()
-            self._autotuner = None
-            self._update_period = DEFAULT_UPDATE_PERIOD
-            self.current_state = STATE_MENU
-            print("AUTOTUNE: Cancelled by user")
-            return
-        # CONFIRM button: start tuning (if idle/done/failed) or restart
-        if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
-            self.button_states.clear()
-            if self._autotuner is None or not self._autotuner.is_running:
-                # Create and start a new auto-tuner
-                relay_amp = self._settings['max_power'].v // 4
-                base_power = -self._settings['max_power'].v // 2    # motors facing backwards so negative power moves forward
-                self._autotuner = PIDAutoTuner(
-                    relay_amplitude=relay_amp,
-                    base_power=base_power,
-                    hysteresis=0.05,
-                    target_cycles=12,
-                    method=METHOD_ZIEGLER_NICHOLS,
-                    logging=self._settings['logging'].v
-                )
-                self._autotuner.start()
-                print(f"AUTOTUNE: Starting with relay_amp={relay_amp} base_power={base_power}")
-                self._refresh = True
-        # Always refresh to show progress
-        if self._autotuner is not None:
-            self._refresh = True
-
-
-    def _update_state_servo(self, delta: int):            
-        # Servo Tester:
-        # Up/Down to select Servo
-        # Left/Right to adjust position
-        if self.button_states.get(BUTTON_TYPES["RIGHT"]):
-            if self._auto_repeat_check(delta, (self.servo_mode[self.servo_selected] != ServoMode.SCANNING)):
-                if self.servo_mode[self.servo_selected] == ServoMode.TRIM:
-                    # adjust the servo centre position
-                    self.servo_centre[self.servo_selected] += self._settings['servo_step'].v
-                    if  self.servo_centre[self.servo_selected] > (_SERVO_DEFAULT_CENTRE + _SERVO_MAX_TRIM):
-                        self.servo_centre[self.servo_selected] = _SERVO_DEFAULT_CENTRE + _SERVO_MAX_TRIM
-                    if self.hexdrive_app is not None:
-                        if not self.hexdrive_app.set_servocentre(self.servo_centre[self.servo_selected], self.servo_selected):
-                            print("H:Failed to set servo centre")
-                elif self.servo_mode[self.servo_selected] == ServoMode.SCANNING:
-                    # as the rate changes sign when it reaches the range, we must be careful to modify it in the correct direction
-                    if self.servo_rate[self.servo_selected] < 0:
-                        negative = True    
-                        rate = -self.servo_rate[self.servo_selected]
-                    else:
-                        negative = False
-                        rate = self.servo_rate[self.servo_selected]
-                    rate = self._inc(rate, self._auto_repeat_level)
-                    if _SERVO_MAX_RATE < rate:
-                        rate = _SERVO_MAX_RATE
-                    if negative:
-                        self.servo_rate[self.servo_selected] = -rate
-                    else:
-                        self.servo_rate[self.servo_selected] = rate
-                else:                                            # Position Mode
-                    if  self.servo[self.servo_selected] is None:
-                        self.servo[self.servo_selected] = 0
-                    self.servo_mode[self.servo_selected].set(ServoMode.POSITION)    
-                    self.servo[self.servo_selected] += self._settings['servo_step'].v
-                if self.servo[self.servo_selected] is not None:
-                    if self.servo_range[self.servo_selected] < (self.servo[self.servo_selected] + (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)):
-                        self.servo[self.servo_selected] = self.servo_range[self.servo_selected] - (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)
-                self._refresh = True
-        elif self.button_states.get(BUTTON_TYPES["LEFT"]):
-            if self._auto_repeat_check(delta, (self.servo_mode[self.servo_selected] != ServoMode.SCANNING)):
-                if self.servo_mode[self.servo_selected] == ServoMode.TRIM:
-                    # adjust the servo centre position
-                    self.servo_centre[self.servo_selected] -= self._settings['servo_step'].v
-                    if  self.servo_centre[self.servo_selected] < (_SERVO_DEFAULT_CENTRE - _SERVO_MAX_TRIM):
-                        self.servo_centre[self.servo_selected] = _SERVO_DEFAULT_CENTRE - _SERVO_MAX_TRIM
-                    if self.hexdrive_app is not None:
-                        if not self.hexdrive_app.set_servocentre(self.servo_centre[self.servo_selected], self.servo_selected):
-                            print("H:Failed to set servo centre")
-                elif self.servo_mode[self.servo_selected] == ServoMode.SCANNING:
-                    # as the rate changes sign when it reaches the range, we must be careful to modify it in the correct direction
-                    if self.servo_rate[self.servo_selected] < 0:
-                        negative = True    
-                        rate = -self.servo_rate[self.servo_selected]
-                    else:
-                        negative = False
-                        rate = self.servo_rate[self.servo_selected]
-                    rate = self._dec(rate, self._auto_repeat_level)
-                    if _SERVO_MIN_RATE > rate:
-                        rate = _SERVO_MIN_RATE
-                    if negative:
-                        self.servo_rate[self.servo_selected] = -rate
-                    else:
-                        self.servo_rate[self.servo_selected] = rate
-                else:                                           # Position Mode
-                    if  self.servo[self.servo_selected] is None:
-                        self.servo[self.servo_selected] = 0                        
-                    self.servo_mode[self.servo_selected].set(ServoMode.POSITION)    
-                    self.servo[self.servo_selected] -= self._settings['servo_step'].v
-                if self.servo[self.servo_selected] is not None:
-                    if -self.servo_range[self.servo_selected] > (self.servo[self.servo_selected] + (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)):
-                        self.servo[self.servo_selected] = -self.servo_range[self.servo_selected] - (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)
-                self._refresh = True
-        else:
-            self._auto_repeat_clear()    
-            # non auto-repeating buttons
-            if self.button_states.get(BUTTON_TYPES["UP"]):
-                self.button_states.clear()
-                self.servo_selected = (self.servo_selected - 1) % self.num_servos
-                self._refresh = True
-            elif self.button_states.get(BUTTON_TYPES["DOWN"]):
-                self.button_states.clear()
-                self.servo_selected = (self.servo_selected + 1) % self.num_servos
-                self._refresh = True
-            elif self.button_states.get(BUTTON_TYPES["CANCEL"]):
-                self.button_states.clear()
-                if self.hexdrive_app is not None:
-                    self.hexdrive_app.set_power(False)
-                    self.hexdrive_app.set_servoposition()   # All Off
-                self.current_state = STATE_MENU
-                return
-            elif self.button_states.get(BUTTON_TYPES["CONFIRM"]): #Cycle Through Modes
-                self.button_states.clear()
-                self.servo_mode[self.servo_selected].inc()
-                if self.servo_mode[self.servo_selected] == ServoMode.OFF:
-                    if self.hexdrive_app is not None:
-                        self.hexdrive_app.set_servoposition(self.servo_selected, None)
-                else:
-                    self._refresh = True
-                self.notification = Notification(f"  Servo {self.servo_selected}:\n {self.servo_mode[self.servo_selected]}")
-        
-        if self._refresh:                
-            self._time_since_last_input = 0
-        else:
-            self._time_since_last_input += delta                
-            if self._time_since_last_input > self._timeout_period:
-                if self.hexdrive_app is not None:
-                    self.hexdrive_app.set_power(False)
-                    self.hexdrive_app.set_servoposition()   # All Off                
-                self.current_state = STATE_MENU
-                self.notification = Notification("  Servo:\n Timeout")   
-
-        self._time_since_last_update += delta
-        if self._time_since_last_update > self._keep_alive_period:
-            self._time_since_last_update = 0
-            self._refresh = True
-
-        for i in range(self.num_servos):
-            _refresh = self._refresh
-            if self.servo_mode[i] == ServoMode.SCANNING:
-                # for any servo set to Scan mode, update the position
-                if self.servo[self.servo_selected] is None:
-                    self.servo[self.servo_selected] = 0                        
-                self.servo[i] = self.servo[i] + (10 * self.servo_rate[i] * delta / 1000)
-                if self.servo_range[i] < (self.servo[i] + (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE)):
-                    # swap direction
-                    self.servo_rate[i] = -self.servo_rate[i]
-                    self.servo[i] = self.servo_range[i] - (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE)
-                elif -self.servo_range[i] > (self.servo[i] + (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE)):
-                    # swap direction
-                    self.servo_rate[i] = -self.servo_rate[i]
-                    self.servo[i] = -self.servo_range[i] - (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE)
-                _refresh = True
-            if _refresh and self.hexdrive_app is not None and self.servo_mode[i] != ServoMode.OFF and self.servo[i] is not None:
-                # scanning servo or the selected servo
-                self.hexdrive_app.set_servoposition(i, int(self.servo[i]))
-
-
-    def _update_state_settings(self, delta: int):    
-        if self.button_states.get(BUTTON_TYPES["UP"]):
-            if self._auto_repeat_check(delta, False):
-                self._edit_setting_value = self._settings[self._edit_setting].inc(self._edit_setting_value, self._auto_repeat_level)
-                if self._settings['logging'].v:
-                    print(f"Setting: {self._edit_setting} (+) Value: {self._edit_setting_value}")
-                self._refresh = True
-        elif self.button_states.get(BUTTON_TYPES["DOWN"]):
-            if self._auto_repeat_check(delta, False):
-                self._edit_setting_value = self._settings[self._edit_setting].dec(self._edit_setting_value, self._auto_repeat_level)  
-                if self._settings['logging'].v:
-                    print(f"Setting: {self._edit_setting} (-) Value: {self._edit_setting_value}")
-                self._refresh = True            
-        else:
-            # non auto-repeating buttons
-            self._auto_repeat_clear()                           
-            if self.button_states.get(BUTTON_TYPES["RIGHT"]) or self.button_states.get(BUTTON_TYPES["LEFT"]):
-                self.button_states.clear() 
-                # Force default value    
-                self._edit_setting_value = self._settings[self._edit_setting].d
-                if self._settings['logging'].v:
-                    print(f"Setting: {self._edit_setting} Default: {self._edit_setting_value}")
-                self._refresh = True
-                self.notification = Notification("Default")
-            elif self.button_states.get(BUTTON_TYPES["CANCEL"]):
-                self.button_states.clear()
-                # leave setting unchanged
-                if self._settings['logging'].v:
-                    print(f"Setting: {self._edit_setting} Cancelled")
-                self.set_menu(_main_menu_items[MENU_ITEM_SETTINGS])
-                self.current_state = STATE_MENU
-            elif self.button_states.get(BUTTON_TYPES["CONFIRM"]):
-                self.button_states.clear()
-                # set setting
-                if self._settings['logging'].v:
-                    print(f"Setting: {self._edit_setting} = {self._edit_setting_value}")
-                self._settings[self._edit_setting].v = self._edit_setting_value
-                self._settings[self._edit_setting].persist()
-                self.notification = Notification(f"  Setting:   {self._edit_setting}={self._edit_setting_value}")
-                self.set_menu(_main_menu_items[MENU_ITEM_SETTINGS])
-                self.current_state = STATE_MENU
 
 
     def draw(self, ctx):
@@ -1739,66 +570,38 @@ class LineFollowerApp(app.App):
                 draw_logo_animated(ctx, self.rpm, self._animation_counter, [self.b_msg, self.t_msg], self.qr_code)
             # Scroll mode indicator
             elif self.is_scroll:
-                ctx.rgb(0,0.2,0).rectangle(     -120,-120, 115+H_START,240).fill()
-                ctx.rgb(0,0  ,0).rectangle(H_START-5,-120,10-2*H_START,240).fill()
-                ctx.rgb(0,0.2,0).rectangle(5-H_START,-120, 115+H_START,240).fill()
+                ctx.rgb(0,0.2,0).rectangle(     -120,-120, 115+(-63),240).fill()
+                ctx.rgb(0,0  ,0).rectangle((-63)-5,-120,10-2*(-63),240).fill()
+                ctx.rgb(0,0.2,0).rectangle(5-(-63),-120, 115+(-63),240).fill()
             else:
                 ctx.rgb(0,0,0).rectangle(-120,-120,240,240).fill()
-            # Main screen content 
+            # Common states (kept in main app)
             if   self.current_state == STATE_WARNING:
                 self.draw_message(ctx, ["BadgeBot requires","HexDrive hexpansion","from RobotMad","github.com","/TeamRobotmad","/BadgeBot"], [(1,1,1),(1,1,0),(1,1,0),(1,1,1),(1,1,1),(1,1,1)], label_font_size)
             elif self.current_state == STATE_REMOVED:
                 self.draw_message(ctx, ["HexDrive","removed.","Please reinsert"], [(1,1,0),(1,1,1),(1,1,1)], label_font_size)      
-            elif self.current_state == STATE_DETECTED:
-                hexpansion_type = self._HEXPANSION_TYPES[self.hexpansion_init_type].name
-                hexpansion_sub_type = self._HEXPANSION_TYPES[self.hexpansion_init_type].sub_type
-                self.draw_message(ctx, ["Hexpansion",f"in slot {self.detected_port}:","Init EEPROM as", hexpansion_sub_type, f"{hexpansion_type}?"], [(1,1,1),(1,1,1),(1,1,1),(0,0,1),(1,1,0)], label_font_size)
-                button_labels(ctx, confirm_label="Yes", up_label="^", down_label="\u25BC", left_label=self._HEXPANSION_TYPES[1].name, right_label=self._HEXPANSION_TYPES[6].name,  cancel_label="No")
-            elif self.current_state == STATE_ERASE:
-                hexpansion_type = self._HEXPANSION_TYPES[self.hexpansion_init_type].name
-                self.draw_message(ctx, [hexpansion_type,f"in slot {self.erase_port}:","Erase EEPROM?"], [(1,1,0),(1,1,1),(1,0,0)], label_font_size)
-                button_labels(ctx, confirm_label="Yes", cancel_label="No")
-            elif self.current_state == STATE_UPGRADE:
-                hexpansion_type = self._HEXPANSION_TYPES[self.hexpansion_init_type].name
-                self.draw_message(ctx, [hexpansion_type,f"in slot {self.upgrade_port}:","Upgrade",f"{hexpansion_type} app?"], [(1,1,0),(1,1,1),(1,1,1),(1,1,1)], label_font_size)             
-                button_labels(ctx, confirm_label="Yes", cancel_label="No")
-            elif self.current_state == STATE_PROGRAMMING:
-                hexpansion_type = self._HEXPANSION_TYPES[self.hexpansion_init_type].name
-                self.draw_message(ctx, [f"{hexpansion_type}:","Programming","EEPROM","Please wait..."], [(1,1,0),(1,1,1),(1,1,1),(1,1,1)], label_font_size)
-            # Original Plan Programming                
-            elif self.current_state == STATE_HELP:                
-                self.draw_message(ctx, ["BadgeBot","To program:","Press C","When finished:","Long press C"], [(1,1,0),(1,1,1),(1,1,1),(1,1,1),(1,1,1)], label_font_size)
             elif self.current_state == STATE_ERROR:
                 self.draw_message(ctx, self.error_message, [(1,0,0)]*len(self.error_message), label_font_size)
             elif self.current_state == STATE_MESSAGE:
                 self.draw_message(ctx, self.error_message, [(0,1,0)]*len(self.error_message), label_font_size)            
-            elif self.current_state == STATE_RECEIVE_INSTR:
-                self._draw_receive_instr(ctx)
-                # button labels clash with the instruction list - so not shown
-                #button_labels(ctx, confirm_label="Scroll", up_label="Fwd", down_label="Rev", left_label="Left", right_label="Right",  cancel_label="Cancel")
             elif self.current_state == STATE_COUNTDOWN:
                 countdown_val = 1 + ((_RUN_COUNTDOWN_MS - self.run_countdown_elapsed_ms) // 1000)
                 self.draw_message(ctx, [str(countdown_val)], [(1,1,0)], twentyfour_pt)
-            elif self.current_state == STATE_RUN:
-                # convert current_power_duration to string, dividing all four values down by 655 (to get a value from 0-100)
-                current_power, _ = self.current_power_duration
-                power_str = str(tuple([int(x/(self._settings['max_power'].v//100)) for x in current_power]))
-                self.draw_message(ctx, ["Running...",power_str], [(1,1,1),(1,1,0)], label_font_size)
-            elif self.current_state == STATE_DONE:
-                #self.draw_message(ctx, ["Program","complete!","Replay:Press C","Restart:Press F"], [(0,1,0),(0,1,0),(1,1,0),(0,1,1)], label_font_size)
-                self.draw_message(ctx, ["Program","complete!"], [(0,1,0),(0,1,0)], label_font_size)
-                button_labels(ctx, confirm_label="Replay", cancel_label="Restart")
-            elif self.current_state == STATE_FOLLOWER:
-                self._draw_state_follower(ctx)
-            elif self.current_state == STATE_AUTOTUNE:
-                self._draw_state_autotune(ctx)
-            elif self.current_state == STATE_SERVO:
-                self._draw_state_servo(ctx)
-            elif self.current_state == STATE_STEPPER:
-                self._draw_state_stepper(ctx)                
-            elif self.current_state == STATE_SETTINGS:
-                self.draw_message(ctx, ["Edit Setting",f"{self._edit_setting}:",f"{self._edit_setting_value}"], [(1,1,1),(0,0,1),(0,1,0)], label_font_size)
-                button_labels(ctx, up_label="+", down_label="-", confirm_label="Set", cancel_label="Cancel", right_label="Default")
+            # Delegate to functional area managers
+            elif self._hexpansion_mgr.draw(ctx):
+                pass
+            elif self._motor_moves_mgr.draw(ctx):
+                pass
+            elif self._line_follow_mgr.draw(ctx):
+                pass
+            elif self._autotune_mgr.draw(ctx):
+                pass
+            elif self._servo_test_mgr.draw(ctx):
+                pass
+            elif self._stepper_test_mgr.draw(ctx):
+                pass
+            elif self._settings_mgr.draw(ctx):
+                pass
             ctx.restore()
 
         # These need to be drawn every frame as they contain animations
@@ -1809,239 +612,6 @@ class LineFollowerApp(app.App):
         if self.notification:
             self.notification.draw(ctx)
 
-
-    def _draw_receive_instr(self, ctx):                
-        # Display list of movements
-        for i_num, instr in enumerate(["START"] + self.instructions + [self.current_instruction, "END"]):
-            # map the instruction to a colour & change language from up/down to fwd/rev
-            colour = (1,1,1)
-            if instr is not None:
-                direction = str(instr).split()[0]
-                #if self._settings['logging'].v:
-                #    print(direction)
-                if   direction == "UP":
-                    instr = "FWD " + str(instr).split()[1]
-                    colour = (0,1,1)
-                elif direction == "DOWN":
-                    instr = "REV " + str(instr).split()[1]
-                    colour = (1,0,1)
-                elif direction == "LEFT":
-                    colour = (1,0,0)
-                elif direction == "RIGHT":
-                    colour = (0,1,0)
-                elif direction == "START" or direction == "END":
-                    colour = (0.5,0.5,0.5)            
-            ctx.rgb(*colour).move_to(H_START, V_START + label_font_size * (self.scroll_offset + i_num)).text(str(instr))
-
-
-    def _draw_state_stepper(self, ctx):
-        stepper_text         = ["S"]*(1+self.num_steppers)              # Servo Text
-        stepper_text_colours = [(0.4,0.0,0.0)]*(1+self.num_steppers)    # Red
-        stepper_text[0]      = "Stepper Test"
-        stepper_text_colours[0] = (1,1,1)                       # Title - White
-        if self._stepper is not None:
-            i = 0
-            # Select Colour according to mode
-            if self.stepper_mode == StepperMode.OFF:
-                body_colour = (0.2,0.2,0.2)                    # Not activated - Grey
-                bar_colour  = (0.4,0.4,0.4)                    # Not activated - Grey
-            else:
-                body_colour = (0.1,0.1,0.5)                    # Active - Blue                    
-                bar_colour  = (0.1,0.1,1.0)                    # Active - Blue
-                stepper_text_colours[1] = (0.4,0.4,0.0)        # Active - Yellow                        
-
-            # draw the servo positions
-            ctx.save()
-            # y = i-1.5 for 4 servos, y = i-0.5 for 2 servos
-            ctx.translate(0, (i-(self.num_steppers/2)+0.5) * label_font_size)
-            # background for the servo position - grey
-            background_colour = (0.15,0.15,0.15)                        
-            ctx.rgb(*background_colour).rectangle(-100,1,200,label_font_size-2).fill() 
-            c = 0
-            # draw the stepper position (based on a centre halfway through the range)
-            x = 200 * (self._stepper.get_pos() / self._settings['step_max_pos'].v) - 100
-            # vertical bar at stepper position
-            ctx.rgb(*bar_colour).rectangle(x-2,1,5,label_font_size-2).fill()
-            # horizontal bar from 0 to stepper position, not covering the centre marker or the stepper position bar
-            ctx.rgb(*body_colour)                        
-            if   x > (c+4):
-                ctx.rectangle(c+1, 3, x-c-4, label_font_size-6).fill()
-            elif x < (c-4):
-                ctx.rectangle(x+4, 3, c-x-4, label_font_size-6).fill()
-            # marker for the centre - black (drawn last as it may have to go through the servo position bar)
-            ctx.rgb(0,0,0).move_to(c,0).line_to(c,label_font_size).stroke()                            
-            ctx.restore()
-            if self.stepper_mode == StepperMode.SPEED:                              # Speed
-                stepper_text[i+1] = f"{int(self._stepper.get_speed()):4}/s"   # Speed in steps per second
-            else:                                                   # Position
-                stepper_text[i+1] = "Off" if (self.stepper_mode == StepperMode.OFF) else f"{int(self._stepper.get_pos()):+6} "
-        self.draw_message(ctx, stepper_text, stepper_text_colours, label_font_size)
-        button_labels(ctx, confirm_label="Mode", cancel_label="Exit", left_label="<--", right_label="-->")
-
-
-    def _draw_state_follower(self, ctx):
-        # Line Follower
-        # draw the two line follower sensor values on/off as green/white circles
-        ctx.save()
-        # Show the current threshold for the sensors, to help with calibration.
-        ctx.rgb(1,1,0).move_to(0,   -1*label_font_size).text(f"TH:{self._settings['line_threshold'].v}") # Yellow text for threshold
-        # show the average sample rate
-        ctx.rgb(1,1,1).move_to(-70, -1*label_font_size).text(f"{self._rate} Hz")
-        for i in range(self.num_line_sensors):
-            x = 40 - i * 80
-            colour = (0,1,0) if self._line_sensors.value(i) else (0,0,0)
-            ctx.rgb(*colour).arc(x, 0, 24, 0, 2 * pi, True).fill()
-            ctx.rgb(1,1,1).arc(x, 0, 25, 0, 2 * pi, True).stroke()
-            # show the sensor raw value below the circle, to help with calibration
-            ctx.rgb(1,1,0).move_to(x-20, 2*label_font_size).text(f"{self._line_sensors.raw_value(i):4}")    # Yellow text for raw value
-            if self._settings['logging'].v:
-                # Latest sensor values for calibration purposes
-                print(f"Sensor {i}: {self._line_sensors.value(i)} (raw: {self._line_sensors.raw_value(i)})")
-        ctx.restore()
-        button_labels(ctx, up_label="+", down_label="-", cancel_label="Cancel")
-
-
-    def _draw_state_autotune(self, ctx):
-        # PID Auto Tune display
-        ctx.save()
-        if self._autotuner is None:
-            # Not started yet
-            self.draw_message(ctx,
-                ["PID Auto Tune", "Place on line", "Press C to start"],
-                [(1,1,1), (1,1,0), (0,1,0)], label_font_size)
-            button_labels(ctx, confirm_label="Start", cancel_label="Exit")
-        elif self._autotuner.is_running:
-            diag = self._autotuner.get_diagnostics()
-            status = self._autotuner.get_status_text()
-            self.draw_message(ctx,
-                ["PID Auto Tune", status,
-                 f"Cross: {diag['crossings']}/{diag['target']}",
-                 f"T={diag['elapsed']//1000}s"],
-                [(1,1,1), (1,1,0), (0,1,1), (0.7,0.7,0.7)], label_font_size)
-            button_labels(ctx, cancel_label="Stop")
-        elif self._autotuner.is_complete:
-            diag = self._autotuner.get_diagnostics()
-            q = diag['quality']
-            q_colour = (0,1,0) if q >= 60 else (1,1,0) if q >= 30 else (1,0,0)
-            self.draw_message(ctx,
-                ["Tune Complete",
-                 f"Q={q:.0f}%",
-                 f"Kp={diag['Kp']:.2f}",
-                 f"Ki={diag['Ki']:.4f}",
-                 f"Kd={diag['Kd']:.2f}"],
-                [(0,1,0), q_colour, (1,1,1), (1,1,1), (1,1,1)], label_font_size)
-            button_labels(ctx, confirm_label="Retry", cancel_label="Exit")
-        else:
-            # Failed
-            self.draw_message(ctx,
-                ["Tune Failed", "Check line", "and retry"],
-                [(1,0,0), (1,1,0), (1,1,0)], label_font_size)
-            button_labels(ctx, confirm_label="Retry", cancel_label="Exit")
-        ctx.restore()
-
-
-    def _draw_state_servo(self, ctx):                 
-        servo_text         = ["S"]*(1+self.num_servos)              # Servo Text
-        servo_text_colours = [(0.4,0.0,0.0)]*(1+self.num_servos)    # Red
-        servo_text[0]      = "Servo Test"
-        servo_text_colours[0] = (1,1,1)                       # Title - White
-        for i in range(self.num_servos):
-
-            # Select Colour according to mode
-            if self.servo[i] is None or self.servo_mode[i] == ServoMode.OFF:
-                body_colour = (0.2,0.2,0.2)                    # Not activated - Grey
-                bar_colour  = (0.4,0.4,0.4)                    # Not activated - Grey
-            elif self.servo_mode[i] == ServoMode.SCANNING:
-                body_colour = (0.1,0.5,0.1)                    # Scanning - Green 
-                bar_colour  = (0.1,1.0,0.1)                    # Scanning - Green
-                servo_text_colours[1+i] = (0.4,0.0,0.4)        # Scanning - Magenta
-            else:
-                body_colour = (0.1,0.1,0.5)                    # Active - Blue                    
-                bar_colour  = (0.1,0.1,1.0)                    # Active - Blue
-                servo_text_colours[1+i] = (0.4,0.4,0.0)        # Active - Yellow                        
-
-            # draw the servo positions
-            ctx.save()
-            # y = i-1.5 for 4 servos, y = i-0.5 for 2 servos
-            ctx.translate(0, (i-(self.num_servos/2)+0.5) * label_font_size)
-            # background for the servo position - grey
-            background_colour = (0.1,0.1,0.1) if i != self.servo_selected else (0.15,0.15,0.15)                        
-            ctx.rgb(*background_colour).rectangle(-100,1,200,label_font_size-2).fill() 
-            c = 100 * (self.servo_centre[i]-_SERVO_DEFAULT_CENTRE) / self.servo_range[i]
-            if self.servo[i] is not None:
-                #TODO refactor this into a reusable function for drawing sliders
-                # draw the servo position
-                x = 100 * (self.servo[i] + self.servo_centre[i] - _SERVO_DEFAULT_CENTRE) / self.servo_range[i]
-
-                # vertical bar at servo position
-                ctx.rgb(*bar_colour).rectangle(x-2,1,5,label_font_size-2).fill()
-                # horizontal bar from 0 to servo position, not covering the centre marker or the servo position bar
-                ctx.rgb(*body_colour)                        
-                if   x > (c+4):
-                    ctx.rectangle(c+1, 3, x-c-4, label_font_size-6).fill()
-                elif x < (c-4):
-                    ctx.rectangle(x+4, 3, c-x-4, label_font_size-6).fill()
-            # marker for the centre - black (drawn last as it may have to go through the servo position bar)
-            ctx.rgb(0,0,0).move_to(c,0).line_to(c,label_font_size).stroke()                            
-            ctx.restore()
-            if self.servo_mode[i] == ServoMode.SCANNING:
-                servo_text[i+1] = f"{int(abs(self.servo_rate[i])):4}/s"   # Scanning Rate
-            else:                                                   # Position
-                servo_text[i+1] = "Off" if (self.servo[i] is None or self.servo_mode[i] == ServoMode.OFF) else f"{int(self.servo[i]):+5} "
-        # Selected Servo - Brighter Text
-        servo_text_colours[1+self.servo_selected] = tuple(int(j * 2.5) for j in servo_text_colours[1+self.servo_selected])                            
-        self.draw_message(ctx, servo_text, servo_text_colours, label_font_size)
-        if self.servo_mode[self.servo_selected] == ServoMode.SCANNING:
-            # Scanning mode
-            button_labels(ctx, up_label="^", down_label="\u25BC", confirm_label="Mode", cancel_label="Exit", left_label="Slower", right_label="Faster")
-        elif self.servo_mode[self.servo_selected] == ServoMode.TRIM:
-            button_labels(ctx, up_label="^", down_label="\u25BC", confirm_label="Mode", cancel_label="Exit", left_label="Trim-", right_label="+Trim")
-        else:
-            #Position mode
-            button_labels(ctx, up_label="^", down_label="\u25BC", confirm_label="Mode", cancel_label="Exit", left_label="<--", right_label="-->")
-        # NB characters \u25B2, \u25C0, \u25BA, \u21A9, \u2611 do not exist, so ii seems \u25BC has been included as a special case
-
-
-    # Value increment/decrement functions for positive integers only
-    def _inc(self, v: int, l: int):
-        if l==0:
-            return v+1
-        else:
-            d = 10**l
-            v = ((v // d) + 1) * d   # round up to the next multiple of 10^l
-            return v
-    
-    def _dec(self, v: int, l: int):
-        if l==0:
-            return v-1
-        else:
-            d = 10**l
-            v = (((v+(9*(10**(l-1)))) // d) - 1) * d   # round down to the next multiple of 10^l
-            return v
-
-
-    def clear_leds(self):
-        for i in range(1,13):
-            tildagonos.leds[i] = (0, 0, 0)
-
-
-    def draw_message(self, ctx, message, colours, size=label_font_size):
-        ctx.font_size = size
-        num_lines = len(message)
-        for i_num, instr in enumerate(message):
-            text_line = str(instr)
-            width = ctx.text_width(text_line)
-            try:
-                colour = colours[i_num]
-            except IndexError:
-                colour = None
-            if colour is None:
-                colour = (1,1,1)
-            # Font is not central in the height allocated to it due to space for descenders etc...
-            # this is most obvious when there is only one line of text
-            # # position fine tuned to fit around button labels when showing 5 lines of text        
-            y_position = int(0.35 * ctx.font_size) if num_lines == 1 else int((i_num-((num_lines-2)/2)) * ctx.font_size - 2)
-            ctx.rgb(*colour).move_to(-width//2, y_position).text(text_line)
 
 
     def reset_servo(self):
@@ -2131,105 +701,31 @@ class LineFollowerApp(app.App):
             elif self.num_motors == 1:
                 self.notification = Notification(" 2 Motors  Required")
             else:
-                self.set_menu(None)
-                self.button_states.clear()
-                self._animation_counter = 0
-                if self._line_sensors is None and self._line_sensors_hexpansion_config is not None:
-                    # Build sensor configs from the scalable pin lists
-                    sensor_configs = [
-                        {"pins": {"ctrl": self._line_sensors_hexpansion_config.pin[SENSOR_CTRL_PINS[i]],
-                                  "sig":  self._line_sensors_hexpansion_config.pin[SENSOR_SIGNAL_PINS[i]]},
-                         "name": SENSOR_NAMES[i]}
-                        for i in range(self.num_line_sensors)
-                    ]
-                    self._line_sensors = LineSensors(self, sensor_configs, threshold=self._settings['line_threshold'].v)
-                if self._line_sensors is None:
-                    self.notification = Notification("No Line Sensors")
-                else:
-                    self._line_sensors.enable()
-                    if self.hexdrive_app is not None:
-                        self.hexdrive_app.set_logging(False)
-                        if not self.hexdrive_app.set_power(True):
-                            print("Failed to enable HexDrive power")
-                    else:
-                        print("No HexDrive App")                    
-                    self.current_state = STATE_FOLLOWER
-                    self._update_period = FOLLOWER_SENSOR_SCAN_PERIOD
-                self._refresh = True
-        elif item == _main_menu_items[MENU_ITEM_MOTOR_MOVES]: # Motor Test - Turtle/Logo mode
+                self._line_follow_mgr.start()
+        elif item == _main_menu_items[MENU_ITEM_MOTOR_MOVES]: # Motor Moves
             if self.num_motors == 0:
                 self.notification = Notification("No Motors")
             elif self.num_motors == 1:
                 self.notification = Notification(" 2 Motors  Required")
             else:
-                self.set_menu(None)
-                self.button_states.clear()
-                self._animation_counter = 0
-                self.current_state = STATE_HELP
-                self._refresh = True
+                self._motor_moves_mgr.start()
         elif item == _main_menu_items[MENU_ITEM_PID_AUTOTUNE]: # PID Auto Tune
             if self.num_motors == 0:
                 self.notification = Notification("No Motors")
             elif self.num_motors == 1:
                 self.notification = Notification(" 2 Motors  Required")
             else:
-                self.set_menu(None)
-                self.button_states.clear()
-                self._animation_counter = 0
-                if self._line_sensors is None:
-                    sensor_configs = [
-                        {"pins": {"ctrl": self._line_sensors_hexpansion_config.pin[SENSOR_CTRL_PINS[i]],
-                                  "sig":  self._line_sensors_hexpansion_config.pin[SENSOR_SIGNAL_PINS[i]]},
-                         "name": SENSOR_NAMES[i]}
-                        for i in range(self.num_line_sensors)
-                    ]
-                    self._line_sensors = LineSensors(self, sensor_configs, threshold=self._settings['line_threshold'].v)
-                self._line_sensors.enable()
-                if self.hexdrive_app is not None:
-                    self.hexdrive_app.set_logging(False)
-                    if not self.hexdrive_app.set_power(True):
-                        print("Failed to enable HexDrive power")
-                else:
-                    print("No HexDrive App")
-                self._autotuner = None  # Reset - user will press CONFIRM to start
-                self._sample_time = 0
-                self._sample_count = 0
-                self.current_state = STATE_AUTOTUNE
-                self._update_period = FOLLOWER_SENSOR_SCAN_PERIOD
-                self._refresh = True
-                print("AUTOTUNE: Entered PID Auto Tune mode")
+                self._autotune_mgr.start()
         elif item == _main_menu_items[MENU_ITEM_STEPPER_TEST]: # Stepper Test
             if self.num_steppers == 0:
                 self.notification = Notification("No Steppers")
             else:
-                if self._stepper is None:
-                    # try timer IDs 0-3 until one is free
-                    for i in range(4):
-                        try: 
-                            self._stepper = Stepper(self, self.hexdrive_app, step_size=1, timer_id=i, max_pos=self._settings['step_max_pos'].v)
-                            break
-                        except:
-                            pass
-                if self._stepper is None:
-                    self.notification = Notification("No Free Timers")
-                else:
-                    self.set_menu(None)
-                    self.button_states.clear()                    
-                    self.current_state = STATE_STEPPER 
-                    self._refresh = True
-                    self._auto_repeat_clear()
-                    self._stepper.enable(True)
-                    self._time_since_last_input = 0                                       
+                self._stepper_test_mgr.start()
         elif item == _main_menu_items[MENU_ITEM_SERVO_TEST]: # Servo Test
             if self.num_servos == 0:
                 self.notification = Notification("No Servos")
             else:
-                self.set_menu(None)
-                self.button_states.clear()
-                self.reset_servo()
-                self.current_state = STATE_SERVO
-                self._refresh = True
-                self._auto_repeat_clear()
+                self._servo_test_mgr.start()
         elif item == _main_menu_items[MENU_ITEM_SETTINGS]: # Settings
             self.set_menu(_main_menu_items[MENU_ITEM_SETTINGS])
         elif item == _main_menu_items[MENU_ITEM_ABOUT]: # About
@@ -2282,638 +778,6 @@ class LineFollowerApp(app.App):
 
 ### BADGEBOT DEMO FUNCTIONALITY ###
 
-    def _handle_instruction_press(self, press_type: Button):
-        if self.last_press == press_type:
-            self.current_instruction.inc()
-        else:
-            self.finalize_instruction()
-            self.current_instruction = Instruction(press_type)
-        self.last_press = press_type
-
-
-    # multi level auto repeat
-    # if speed_up is True, the auto repeat gets faster the longer the button is held
-    # otherwise it is a fixed rate, but the level is used to determine the scale of the increase in the setttings inc() and dec() functions
-    def _auto_repeat_check(self, delta: int, speed_up: bool = True) -> bool:                
-        self._auto_repeat += delta
-        # multi stage auto repeat - the repeat gets faster the longer the button is held
-        if self._auto_repeat > self._auto_repeat_intervals[self._auto_repeat_level if speed_up else 0]:
-            self._auto_repeat = 0
-            self._auto_repeat_count += 1
-            # variable threshold to count to increase level so that it is not too easy to get to the highest level as the auto repeat period is reduced
-            if self._auto_repeat_count > ((_AUTO_REPEAT_COUNT_THRES*_AUTO_REPEAT_MS) // self._auto_repeat_intervals[self._auto_repeat_level if speed_up else 0]):
-                self._auto_repeat_count = 0
-                if self._auto_repeat_level < (_AUTO_REPEAT_SPEED_LEVEL_MAX if speed_up else _AUTO_REPEAT_LEVEL_MAX):
-                    self._auto_repeat_level += 1
-                    if self._settings['logging'].v:
-                        print(f"Auto Repeat Level: {self._auto_repeat_level}")
-
-            return True
-        return False
-
-
-    def _auto_repeat_clear(self):                
-        self._auto_repeat = 1+ self._auto_repeat_intervals[0] # so that we trigger immediately on next press 
-
-        self._auto_repeat_count = 0 
-        self._auto_repeat_level = 0
-
-
-    def reset_robot(self):
-        self.current_state = STATE_HELP
-        self.last_press = BUTTON_TYPES["CONFIRM"]
-        self._animation_counter = 0
-        self.long_press_delta = 0
-        self.is_scroll = False
-        self.scroll_offset = 0
-        self.run_countdown_elapsed_ms = 0
-        self.instructions = []
-        self.current_instruction = None
-        self.current_power_duration = ((0,0), 0)
-        self.power_plan_iter = iter([])
-
-
-    def get_current_power_level(self, delta: int) -> int:
-        # takes in delta as ms since last call
-        # if delta was > 10... what to do
-        if delta >= _TICK_MS:
-            delta = _TICK_MS-1
-
-        current_power, current_duration = self.current_power_duration
-
-        updated_duration = current_duration - delta
-        if updated_duration <= 0:
-            try:
-                next_power, next_duration = next(self.power_plan_iter)
-            except StopIteration:
-                # returns None when complete
-                return None
-            next_duration += updated_duration
-            self.current_power_duration = next_power, next_duration
-            return next_power
-        else:
-            self.current_power_duration = current_power, updated_duration
-            return current_power
-
-
-    def finalize_instruction(self):
-        if self.current_instruction is not None:
-            self.current_instruction.make_power_plan(self._settings)
-            self.instructions.append(self.current_instruction)
-            if len(self.instructions) >= 5:
-                self.scroll_offset -= 1
-            self.current_instruction = None
-
-
-######## LINE SENSORS (PLURAL) CLASS ########
-
-class LineSensors:
-    """Manages multiple QTRX line sensors efficiently.
-
-    All ctrl/sig pins are pulsed simultaneously (single 10µs charge for all)
-    and timing starts at the same moment, so all sensor responses are measured
-    in parallel rather than sequentially.  To add more sensors, extend the
-    SENSOR_CTRL_PINS, SENSOR_SIGNAL_PINS and SENSOR_NAMES lists at the top of
-    this file and increase _NUM_LINE_SENSORS accordingly.
-    """
-
-    def __init__(self, container, sensor_configs: list, threshold: int = _LINE_SENSOR_DEFAULT_THRESHOLD):
-        # sensor_configs: list of {"pins": {"ctrl": <Pin>, "sig": <Pin>}, "name": "..."}
-        self._container = container
-        self._threshold = threshold
-        self._sensors = [
-            LineSensor(container, cfg["pins"], name=cfg["name"], threshold=threshold)
-            for cfg in sensor_configs
-        ]
-
-    @property
-    def num_sensors(self) -> int:
-        """Number of sensors managed by this instance."""
-        return len(self._sensors)
-
-    @property
-    def threshold(self) -> int:
-        return self._threshold
-
-    @threshold.setter
-    def threshold(self, value: int):
-        self._threshold = value
-        for sensor in self._sensors:
-            sensor.threshold = value
-
-    def enable(self):
-        for sensor in self._sensors:
-            sensor.enable()
-
-    def disable(self):
-        for sensor in self._sensors:
-            sensor.disable()
-
-    #def raw_value(self, index: int) -> int:
-    #    """Return the last measured raw value (discharge time in µs) of sensor at position index."""
-    #    return self._sensors[index].raw_value()
-
-    def value(self, index: int) -> bool:
-        """Return the last measured value of sensor at position index."""
-        return self._sensors[index]._state
-
-    def values(self) -> list:
-        """Return a list of the last measured values for all sensors."""
-        return [sensor._state for sensor in self._sensors]
-
-    def raw_value(self, index: int) -> int:
-        """Return the raw discharge time (µs) of sensor at position index."""
-        return self._sensors[index]._diff
-
-    def raw_values(self) -> list:
-        """Return a list of raw discharge times (µs) for all sensors."""
-        return [sensor._diff for sensor in self._sensors]
-
-    @property
-    def updated(self) -> bool:
-        """True if any sensor has a new reading since the last clear_updated()."""
-        return any(sensor.updated for sensor in self._sensors)
-
-    def clear_updated(self):
-        """Clear the updated flag on all sensors."""
-        for sensor in self._sensors:
-            sensor.updated = False
-
-    def read(self) -> bool:
-        """Start a simultaneous reading of all sensors.
-
-        All ctrl/sig pins are charged together with a single 10µs pulse and
-        timing begins at the same moment, so all sensor discharge times are
-        measured in parallel.  Returns False if a reading is already in progress.
-        """
-        # Check that no sensor reading is still in progress
-        for sensor in self._sensors:
-            if sensor._start_time != 0:
-                if time.ticks_diff(time.ticks_us(), sensor._start_time) <= _LINE_SENSOR_READ_TIMEOUT_US:
-                    print(f"Sensor {sensor._name} already in progress")
-                    return False
-
-        # Clear updated flags on all sensors
-        for sensor in self._sensors:
-            sensor.updated = False
-
-        # Enable all IR emitter ctrl pins and charge all sig pins simultaneously
-        for sensor in self._sensors:
-            sensor._pins["ctrl"].on()
-            sensor._pins["sig"].init(mode=Pin.OUT)
-            sensor._pins["sig"].on()
-
-        # Single 10µs charge pulse shared by all sensors
-        time.sleep_us(FOLLOWER_SENSOR_TRIGGER_DURATION_US)
-
-        # Register IRQ handlers for all sensors before releasing the pins
-        for sensor in self._sensors:
-            sensor._pins["sig"].irq(trigger=Pin.IRQ_FALLING, handler=sensor._handler)
-
-        # Atomically record the shared start time and switch all sig pins to inputs
-        irq_state = disable_irq()
-        start_time = time.ticks_us()
-        for sensor in self._sensors:
-            sensor._start_time = start_time
-            sensor._pins["sig"].init(mode=Pin.IN, pull=None)
-        enable_irq(irq_state)
-
-        return True
-
-
-######## LINE SENSOR CLASS ########
-
-class LineSensor:
-    def __init__(self, container, pins, name: str = "LineSensor", threshold: int = _LINE_SENSOR_DEFAULT_THRESHOLD):
-        try:
-            self._container = container
-            self._threshold = threshold
-            self._state: bool = False
-            self._prev_state: bool = False
-            self._name: str = name
-            self._start_time: int = 0
-            self._diff: int = 0
-            self._irq_state = None
-            self.updated: bool = False
-            self._phase: int = 0
-
-            # Pins for hardware
-            self._pins = pins
-            self._pins["ctrl"].init(mode=Pin.OUT)
-            self._pins["ctrl"].off()
-            self._pins["sig"].init(mode=Pin.IN, pull=Pin.PULL_UP)
-
-        except Exception as e:
-            print(f"{self._name} Init failed:{e}")
-
-    @property
-    def threshold(self) -> int:
-        return self._threshold
-
-    @threshold.setter
-    def threshold(self, value: int):
-        self._threshold = value
-
-    def disable(self):
-        # tidy up
-        self._pins["ctrl"].off()
-        self._pins["sig"].irq(handler=None)
-
-    def enable(self):
-        self._start_time = 0
-
-    #def value(self) -> bool:
-    #    return self._state
-
-    #def raw_value(self) -> int:
-    #    return self._diff
-
-    #def set_threshold(self, threshold: int):
-    #    self._threshold = threshold
-
-    def _handler(self, _):
-        # This is the interrupt handler for the line sensor
-        # read the time and compare to the start time
-        # if the time is less than the threshold then the sensor is active
-        self._irq_state = disable_irq()
-        self._diff = time.ticks_diff(time.ticks_us(), self._start_time)
-        self._pins["sig"].irq(handler=None)
-        enable_irq(self._irq_state)
-        self._pins["sig"].off()
-        self._pins["sig"].init(mode=Pin.OUT)
-        self._pins["ctrl"].off()
-
-        if self._start_time == 0:
-            #print(f"Sensor {self._name} {self._phase} spurious interrupt")
-            #self._phase = 4
-            # not expecting an interrupt
-            return
-        #self._phase = 5
-        self._prev_state = self._state
-        self._state = True if self._diff < self._threshold else False
-        if (self._prev_state != self._state):
-            self.updated = True
-        self._start_time = 0
-        self._container._sample_count += 1
-
-######## STEPPER MOTOR CLASS ########
-
-class Stepper:
-    def __init__(self, container, hexdrive_app, step_size: int = 1, steps_per_rev: int = _STEPPER_DEFAULT_SPR, speed_sps: int = _STEPPER_DEFAULT_SPEED, max_sps: int = _STEPPER_MAX_SPEED, max_pos: int = _STEPPER_MAX_POSITION, timer_id: int = 0):
-        self._container = container 
-        self._hexdrive_app = hexdrive_app
-        self._phase = 0
-        self._calibrated = False
-        self._timer = Timer(timer_id) if Timer is not None else None
-        self._timer_is_running = False
-        self._timer_mode = 0
-        self._free_run_mode = 0                     # direction of free run mode
-        self._enabled = False
-        self._target_pos = 0
-        self._pos = 0                               # current position in half steps
-        self._max_sps = int(max_sps)                # max speed in full steps per second
-        self._steps_per_sec = int(speed_sps)        # current speed in full steps per second
-        self._steps_per_rev = int(steps_per_rev)    # full steps per revolution
-        self._max_pos = 2*int(max_pos)              # max position stored in half steps
-        self._freq = 0
-        self._min_period = 0
-        self._step_size = int(step_size)            # 1 = half steps, 2 = full steps
-        self._last_step_time = 0    
-        self.track_target()
-        
-    def step_size(self,sz=1):
-        if sz < 1:
-            sz = 1
-        elif sz > 2:
-            sz = 2
-        self._step_size = int(sz)
-
-    def speed(self,sps):    # speed in FULL steps per second
-        if self._free_run_mode == 1 and sps < 0:
-            self._free_run_mode = -1
-        elif self._free_run_mode == -1 and sps > 0:
-            self._free_run_mode = 1
-        if sps > self._max_sps:
-            sps = self._max_sps
-        elif sps < -self._max_sps:
-            sps = -self._max_sps
-        self._steps_per_sec = int(sps)
-        self._update_timer((2//self._step_size)*abs(self._steps_per_sec))    # steps per second
-
-    def speed_rps(self,rps):
-        self.speed(rps*self._steps_per_rev)
-
-    def get_speed(self) -> int:
-        return self._steps_per_sec
-
-    def target(self,t):
-        if self._calibrated and t < 0:
-            # when already calibrated limit to 0
-            self._target_pos = 0
-        elif self._calibrated and (2*int(t)) > self._max_pos:
-            # when already calibrated limit to max
-            self._target_pos = self._max_pos
-        else:
-            self._target_pos = 2*int(t)
-
-    def target_deg(self,deg):
-        self.target(self._steps_per_rev*deg/360.0)  # target pos is in steps
-    
-    def target_rad(self,rad):
-        self.target(self._steps_per_rev*rad/(2*pi)) # target pos is in steps
-    
-    def get_pos(self) -> int:
-        return (self._pos//2)   # convert half steps to full steps
-    
-    def get_pos_deg(self) -> float:
-        return self._pos*180.0/self._steps_per_rev      # half steps to degrees
-    
-    def get_pos_rad(self) -> float:
-        return self._pos*pi/self._steps_per_rev         # half steps to radians
-    
-    def overwrite_pos(self,p=0):
-        self._pos = 2*int(p)    # convert full steps to half steps
-    
-    def overwrite_pos_deg(self,deg):
-        self._pos = deg*self._steps_per_rev/180.0      # degrees to half steps
-    
-    def overwrite_pos_rad(self,rad):
-        self._pos = rad*self._steps_per_rev/pi         # radians to half steps
-
-    def step(self,d=0):
-        cur_time = time.ticks_ms()
-        if time.ticks_diff(cur_time, self._last_step_time) < self._min_period:
-            # avoid stepping too quickly as this causes skipped steps
-            return
-        self._last_step_time = cur_time
-        if d>0:
-            self._pos+=self._step_size
-            self._phase = (self._phase-self._step_size)%_STEPPER_NUM_PHASES
-        elif d<0:
-            self._pos-=self._step_size
-            self._phase = (self._phase+self._step_size)%_STEPPER_NUM_PHASES
-        # Check position limits
-        if self._calibrated and self._pos < 0:
-            print("s/w min endstop")
-            self._pos = 0
-            self.speed(0)
-            return
-        elif self._calibrated and self._pos > self._max_pos:
-            print("s/w max endstop")
-            self._pos = self._max_pos
-            self.speed(0)
-            return
-        try:
-            self._hexdrive_app.motor_step(self._phase)
-        except Exception as e:                       
-            print(f"step phase {self._phase} failed:{e}")
-
-    # There is no code to handle the endstop being hit at present - it needs to be specific to the hardware
-    # i.e. which pin is connected to the endstop.
-    def _hit_endstop(self):             
-        print("Endstop - hit")
-        if not self._calibrated:
-            self._calibrated = True
-        # set this as the new zero position
-        self.overwrite_pos(0)
-        # if we were moving towards the endstop, stop
-        if self._free_run_mode < 0:
-            self.speed(0)
-        elif self._free_run_mode == 0 and self._target_pos < self._pos:
-            self.speed(0)
-
-    def _timer_callback_fwd(self,t):
-        self.step(1)
-
-    def _timer_callback_rev(self,t):
-        self.step(-1)
-
-    def _timer_callback(self,t):
-        if self._target_pos>self._pos:
-            self.step(1)
-        elif self._target_pos<self._pos:
-            self.step(-1)
-
-    def free_run(self,d=1):
-        self._free_run_mode=d
-        if d!=0:
-            self._update_timer((2//self._step_size)*abs(self._steps_per_sec))   # half steps per second
-
-    def track_target(self):
-        self._free_run_mode=0
-        self._update_timer((2//self._step_size)*abs(self._steps_per_sec))      # half steps per second
-
-    def _update_timer(self,freq):
-        if self._timer is None:
-            return        
-        if self._timer_is_running and freq != self._freq:
-            try:
-                self._timer.deinit()
-                self._freq = 0
-                self._timer_is_running=False
-            except Exception as e:
-                print(f"update_timer failed:{e}")
-        if 0 != freq and (freq != self._freq or self._free_run_mode != self._timer_mode):
-            try:                
-                print(f"Timer: {freq}Hz")
-                if self._free_run_mode>0:
-                    self._timer.init(freq=freq,callback=self._timer_callback_fwd)
-                elif self._free_run_mode<0:
-                    self._timer.init(freq=freq,callback=self._timer_callback_rev)
-                else:
-                    self._timer.init(freq=freq,callback=self._timer_callback)
-                self._freq = freq
-                self._min_period = (1000//freq) - 1
-                self._timer_is_running=True
-                self._timer_mode = self._free_run_mode
-            except Exception as e:
-                print(f"update_timer failed:{e}")
-        elif freq == 0:
-            print("Timer: 0Hz")
-
-
-    def stop(self):
-        self._update_timer(0)
-        try:
-            self._hexdrive_app.motor_release()
-        except Exception as e:
-            print(f"stop failed:{e}")
-
-    def enable(self,e = True):
-        self._enabled=e
-        try:
-            if e:
-                if self._free_run_mode!=0:
-                    self._update_timer((2//self._step_size)*abs(self._steps_per_sec))   # half steps per second                
-                self._hexdrive_app.motor_step(self._phase)
-            else:
-                self._update_timer(0)
-                self._hexdrive_app.motor_release()
-            self._hexdrive_app.set_power(e)
-        except Exception as e:
-            print(f"enable failed:{e}")
-
-    def is_enabled(self) -> bool:
-        return self._enabled
-    
-########## END OF STEPPER CLASS ##########
-
-
-
-class HexpansionType:
-    def __init__(self, pid, name, vid = 0xCAFE, motors = 0, steppers = 0, servos = 0, sensors = 0, sub_type ="Unknown", app_mpy_name = None, app_mpy_version = None, app_name = None):
-        self.vid = vid
-        self.pid = pid
-        self.name = name                            # Primary name for the type of hexpansion - used in the UI and to determine which app.mpy to copy to the hexpansion
-        self.sub_type = sub_type                    # Sub-type/configuration variant of hexpansion
-        self.motors = motors                        # Number of motors supported by the hexpansion
-        self.servos = servos                        # Number of servos supported by the hexpansion
-        self.steppers = steppers                    # Number of stepper motors supported by the hexpansion
-        self.sensors = sensors                      # Number of sensors supported by the hexpansion
-        self.app_mpy_name = app_mpy_name            # name of the mpy file to be copied to the hexpansion as app.mpy
-        self.app_mpy_version = app_mpy_version      # version of the mpy file to be copied to the hexpansion as app.mpy - used to determine if the app.mpy on the hexpansion needs to be updated when it is inserted
-        self.app_name = app_name                    # Python App name which will be run on the badge when the hexpansion is inserted - used to determine if the app.mpy on the hexpansion needs to be updated when it is inserted       
-
-
-class MySetting:
-    def __init__(self, container, default, minimum, maximum):
-        self._container = container
-        self.d = default
-        self.v = default
-        self._min = minimum
-        self._max = maximum
-
-
-    def __str__(self):
-        return str(self.v)
-
-
-    def _index(self):
-        for k,v in self._container.items():
-            if v == self:
-                return k
-        return None
-
-        
-    # This returns an increase in the value passed in - subject to max and with scale of increase depending on level
-    # based on the type of the setting
-    # it does not affect the current value of the setting
-    def inc(self, v, l=0):            
-        if isinstance(self.v, bool):
-            v = not v
-        elif isinstance(self.v, int):
-            if l==0:
-                v += 1
-            else:
-                d = 10**l
-                v = ((v // d) + 1) * d   # round up to the next multiple of 10^l, being very careful not to cause big jumps when value was nearly at the next multiple 
-
-            if v > self._max:
-                v = self._max
-        elif isinstance(self.v, float):
-            # only float at present is brightness from 0.0 to 1.0
-            v += 0.1            
-            if v > self._max:
-                v = self._max  
-        elif self._container['logging'].v:
-            print(f"H:inc type: {type(self.v)}")                               
-        return v
-
-    # This returns a decrease in the value passed in - subject to min and with scale of increase depending on level
-    # based on the type of the setting
-    # it does not affect the current value of the setting
-    def dec(self, v, l=0):            
-        if isinstance(self.v, bool):
-            v = not v
-        elif isinstance(self.v, int):
-            if l==0:
-                v -= 1
-            else:
-                d = 10**l
-                v = (((v+(9*(10**(l-1)))) // d) - 1) * d   # round down to the next multiple of 10^l
-
-            if v < self._min:
-                v = self._min       
-        elif isinstance(self.v, float):
-            # only float at present is brightness from 0.0 to 1.0
-            v -= 0.1            
-            if v < self._min:
-                v = self._min
-        elif self._container['logging'].v:
-            print(f"H: dec type: {type(self.v)}") 
-        return v
-    
-
-    def persist(self):
-        # only save non-default settings to the settings store
-        try:
-            if self.v != self.d:
-                settings.set(f"badgebot.{self._index()}", self.v)
-            else:
-                settings.set(f"badgebot.{self._index()}", None)
-        except Exception as e:
-            print(f"H:Failed to persist setting {self._index()}: {e}")
-
-
-class Instruction:
-    def __init__(self, press_type: Button) -> None:
-        self._press_type = press_type
-        self._duration = 1
-        self.power_plan = []
-
-
-    @property
-    def press_type(self) -> Button:
-        return self._press_type
-
-
-    def inc(self):
-        self._duration += 1
-
-
-    def __str__(self):
-        return f"{self.press_type.name} {self._duration}"
-
-
-    def directional_power_tuple(self, power):
-        if   self._press_type == BUTTON_TYPES["UP"]:
-            return ( power,  power)
-        elif self._press_type == BUTTON_TYPES["DOWN"]:
-            return (-power, -power)
-        elif self._press_type == BUTTON_TYPES["LEFT"]:
-            return (-power,  power)
-        elif self._press_type == BUTTON_TYPES["RIGHT"]:
-            return ( power, -power)
-
-
-    def directional_duration(self, mysettings):
-        if   self._press_type == BUTTON_TYPES["UP"] or self._press_type == BUTTON_TYPES["DOWN"]:
-            return (mysettings['drive_step_ms'].v)            
-        elif self._press_type == BUTTON_TYPES["LEFT"] or self._press_type == BUTTON_TYPES["RIGHT"]:
-            return (mysettings['turn_step_ms'].v)
-        
-
-    def make_power_plan(self, mysettings):
-        # return collection of tuples of power and their duration
-        curr_power = 0
-        ramp_up = []
-        for i in range(1*(self._duration+3)):
-            ramp_up.append((self.directional_power_tuple(curr_power), _TICK_MS))
-            curr_power += mysettings['acceleration'].v
-            if curr_power >= mysettings['max_power'].v:
-                ramp_up.append((self.directional_power_tuple(mysettings['max_power'].v), _TICK_MS))
-                break
-        user_power_duration = (self.directional_duration(mysettings) * self._duration)-(2*(i+1)*_TICK_MS)
-        power_durations = ramp_up.copy()
-        if user_power_duration > 0:
-            power_durations.append((self.directional_power_tuple(mysettings['max_power'].v), user_power_duration))
-        ramp_down = ramp_up.copy()
-        ramp_down.reverse()
-        power_durations.extend(ramp_down)
-        if mysettings['logging'].v:
-            print("Power durations:")
-            print(power_durations)
-        self.power_plan = power_durations
 
 
 __app_export__ = LineFollowerApp
