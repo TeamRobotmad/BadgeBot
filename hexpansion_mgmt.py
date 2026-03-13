@@ -84,7 +84,7 @@ class HexpansionMgr:
 
     # Import state constants locally to keep the module self-contained.
     # They are still defined in linefollower.py (the canonical location).
-    # We store them on first call to update() / draw() via _bind_states().
+    # Methods such as update() / draw() import them on demand via `from .linefollower import ...`.
 
     def __init__(self, app):
         self.app = app
