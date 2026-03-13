@@ -52,6 +52,10 @@ class AutotuneMgr:
         app._animation_counter = 0
         if app._line_sensors is None:
             app._line_sensors = create_line_sensors(app)
+        if app._line_sensors is None:
+            # Line sensors are not available; inform the user and abort autotune.
+            Notification(app, "Line sensors not available")
+            return
         app._line_sensors.enable()
         if app.hexdrive_app is not None:
             app.hexdrive_app.set_logging(False)
