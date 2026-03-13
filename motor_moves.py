@@ -136,7 +136,7 @@ class MotorMovesMgr:
         # Motor-moves instance variables (previously on app)
         self.instructions = []
         self.current_instruction = None
-        self.current_power_duration = ((0, 0, 0, 0), 0)
+        self.current_power_duration = ((0, 0), 0)
         self.power_plan_iter = iter([])
         self.is_scroll = False
         self.scroll_offset = 0
