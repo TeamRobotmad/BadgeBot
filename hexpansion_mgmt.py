@@ -21,6 +21,7 @@ import time
 import vfs
 from app_components.notification import Notification
 from app_components.tokens import label_font_size, button_labels
+from events.input import BUTTON_TYPES
 from machine import I2C
 from system.eventbus import eventbus
 from system.hexpansion.events import HexpansionInsertionEvent
@@ -671,6 +672,3 @@ class HexpansionMgr:
             return True
         return False
 
-
-# Need BUTTON_TYPES for state handlers that check button presses
-from events.input import BUTTON_TYPES
