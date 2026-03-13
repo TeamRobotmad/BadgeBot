@@ -27,7 +27,6 @@ _STEPPER_DEFAULT_SPEED = 50
 _STEPPER_NUM_PHASES    = 8
 _STEPPER_DEFAULT_SPR   = 200
 _STEPPER_DEFAULT_STEP  = 1
-_STEPPER_MAX_POSITION  = 3100
 
 
 # ---- Settings initialisation -----------------------------------------------
