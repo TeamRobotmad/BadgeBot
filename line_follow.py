@@ -21,7 +21,15 @@ from math import pi
 from events.input import BUTTON_TYPES
 from app_components.notification import Notification
 from app_components.tokens import label_font_size, button_labels
-from machine import Pin, disable_irq, enable_irq
+from machine import Pin
+try:
+    from machine import disable_irq, enable_irq
+except ImportError:
+    # Simulator doesn't provide interrupt control; use no-op stubs
+    def disable_irq():
+        return 0
+    def enable_irq(_state):
+        pass
 from system.hexpansion.config import HexpansionConfig
 
 # Line Follower constants
