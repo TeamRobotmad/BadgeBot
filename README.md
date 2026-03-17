@@ -2,7 +2,7 @@
 
 Companion app for HexDrive expansion, assuming BadgeBot configuration with 2 motors or 4 servos.
 
-This guide is current for BadgeBot version 0.5.1 (app.py APP_VERSION 0.1, tildagon.toml version 0.5.1)
+This guide is current for BadgeBot version 1.3
 
 As this application has become quite complicated if you are looking for example code to use a HexDrive please see [HexDriveUseTemplate](https://github.com/TeamRobotmad/HexDriveUseTemplate)
 

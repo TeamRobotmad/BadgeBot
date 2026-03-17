@@ -16,7 +16,10 @@ sensors.  The app runs directly on an ESP32-S3 badge (or in a desktop simulator)
 **Key facts:**
 - Platform: MicroPython on ESP32-S3 (Tildagon badge) / Python 3.10+ simulator
 - License: LGPL-3.0-only
-- tildagon.toml version: 0.5.1  |  app.py APP_VERSION: "0.1"  |  HexDrive firmware version: 6
+- App version: `APP_VERSION` in `app.py` (major.minor format, e.g. "1.3") – this is the
+  definitive version.  `tildagon.toml` `version` must always match `APP_VERSION`.
+- HexDrive firmware version: `HEXDRIVE_APP_VERSION` in `hexdrive.py` – a separate integer
+  versioning the HexDrive public interface, independent of the app version.
 
 ---
 
@@ -202,38 +205,25 @@ After the countdown finishes, `_update_state_countdown()` calls `begin_moves()` 
 
 These issues were identified during the consistency review and should be addressed:
 
-### Potential Bug: `handle_button_up` method name mismatch (app.py)
-
-Lines 280 and 288 reference `self.handle_button_up` but the method is defined as
-`_handle_button_up` (with underscore prefix) on line 291.  This would cause an
-`AttributeError` at runtime if the `elif` branch were reached.  Currently this is
-**dead code** because `STATE_MOTOR_MOVES` is already in `_LED_CONTROL_STATES` and
-the first `if` branch catches it, so the `elif` never executes.  The dead code should
-be either fixed or removed.
-
-### Version Number Inconsistency
-
-There are multiple version numbers that are not clearly synchronised:
-- `tildagon.toml` version: `"0.5.1"` – used by badge app store
-- `app.py` `APP_VERSION`: `"0.1"` – displayed in UI
-- `hexdrive.py` `HEXDRIVE_APP_VERSION`: `6` – integer, for EEPROM firmware versioning
-
-Consider whether `APP_VERSION` should track `tildagon.toml` version, or whether they
-serve intentionally different purposes.  Document the relationship.
-
-### download_to_device.py stale app directory name
-
-`dev/download_to_device.py` line 20 still references `APP_DIR_ON_DEVICE = ":apps/LineFollower"`.
-The app was renamed from LineFollower to BadgeBot but the deploy target path was not
-updated.  This may or may not matter depending on how the badge file system works.
-
 ### HexDrive types defined in two places
 
 `hexdrive.py` uses `HexDriveType` (for firmware-level type identification from EEPROM
 PID byte) while `hexpansion_mgr.py` uses `HexpansionType` (for app-level detection
-and firmware management).  Both describe essentially the same hardware variants.
-Consider whether these could be unified or at least cross-referenced to reduce
-maintenance burden.
+and firmware management).  Both describe the same hardware variants.
+
+**Constraint:** `hexdrive.mpy` must fit in the 8 KB hexpansion EEPROM, so
+`hexdrive.py` must not import from the main app or grow unnecessarily.
+
+**Current approach:** The main app cannot import `HexDriveType` definitions from
+`hexdrive.py` without increasing binary size on the EEPROM.  Instead, a test
+(`test_hexdrive_type_pids_consistent`) in `test_smoke.py` validates that the PID
+bytes and capability counts (motors, servos, steppers) are consistent between the
+two definitions.  **Any change to HexDrive variant definitions must update both
+files and pass this test.**
+
+In future, `hexsense.py` (for HexSense hexpansions) will follow the same pattern:
+it will have its own PID definitions, and `hexpansion_mgr.py` will have corresponding
+`HexpansionType` entries.  `hexdrive.py` should not include HexSense PIDs.
 
 ### Servo test module: missing `background_update` in public interface comment
 
@@ -254,6 +244,16 @@ note that servo test does not participate in the background dispatch table.  Sim
 4. **Format**: `isort` for import ordering
 5. **QR Code**: Regenerate with `python dev/generate_qr_code.py --url <URL> --write-app`
 6. **Deploy to badge**: `python dev/download_to_device.py`
+   - Use `--app-dir :apps/<name>` to deploy to a specific directory on the badge
+     (default: `:apps/LineFollower`).  For example, to deploy as the main BadgeBot app:
+     `python dev/download_to_device.py --app-dir :apps/TeamRobotmad_BadgeBot`
+
+### Version Management
+
+`APP_VERSION` in `app.py` is the definitive version (major.minor format, e.g. "1.3").
+The release process must update `tildagon.toml` `version` to match `APP_VERSION`.
+`HEXDRIVE_APP_VERSION` in `hexdrive.py` is a separate integer versioning the HexDrive
+firmware public interface and is incremented independently when the HexDrive API changes.
 
 ---
 

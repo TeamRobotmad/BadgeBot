@@ -1,19 +1,15 @@
 # Hexpansion & EEPROM Management Module for BadgeBot
 #
 # Handles detection, initialisation, programming, upgrading and erasure of
-# HexDrive / HexSense hexpansion EEPROMs.  Extracted from the original
-# monolithic app so that hexpansion-specific logic can be maintained
-# independently.
+# HexDrive / HexSense hexpansion EEPROMs.
 #
 # Public interface (called by the main app):
-#   __init__(app)            – wire up to the main BadgeBotApp instance
+#   __init__(app)           – wire up to the main BadgeBotApp instance
 #   register_events()       – register hexpansion insertion/removal handlers on eventbus
 #   unregister_events()     – unregister hexpansion event handlers
-#   scan_ports()           – initial port scan at startup
-#   update(delta)          – per-tick hexpansion state-machine update
-#   draw(ctx)              – render hexpansion-related UI states
-#
-# Constants moved here:  _ERASE_SLOT, _EEPROM_*, HexpansionType
+#   scan_ports()            – initial port scan at startup
+#   update(delta)           – per-tick hexpansion state-machine update
+#   draw(ctx)               – render hexpansion-related UI states
 
 import os
 import sys

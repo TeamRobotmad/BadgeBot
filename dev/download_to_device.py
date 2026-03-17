@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-APP_DIR_ON_DEVICE = ":apps/LineFollower"
+DEFAULT_APP_DIR_ON_DEVICE = ":apps/LineFollower"
 STATE_DIR = Path(".deploy_state")
 STATE_PATH = STATE_DIR / "test_device_download_state.json"
 
@@ -169,6 +169,7 @@ def _upload_changed_artifacts(
     force: bool,
     dry_run: bool,
     mpremote_args: list[str],
+    app_dir: str,
 ) -> tuple[int, int]:
     uploaded = 0
     skipped = 0
@@ -187,7 +188,7 @@ def _upload_changed_artifacts(
             _log("SKP", f"upload {spec.artifact} (artifact unchanged)")
             continue
 
-        destination = f"{APP_DIR_ON_DEVICE}/{spec.artifact.name}"
+        destination = f"{app_dir}/{spec.artifact.name}"
         _log("INFO", f"upload {spec.artifact} -> {destination}")
 
         command = ["mpremote", *mpremote_args, "cp", str(spec.artifact), destination]
@@ -236,6 +237,14 @@ def _parse_args() -> argparse.Namespace:
             "Can be supplied multiple times, e.g. --mpremote-arg connect --mpremote-arg COM5"
         ),
     )
+    parser.add_argument(
+        "--app-dir",
+        default=DEFAULT_APP_DIR_ON_DEVICE,
+        help=(
+            "Target directory on the badge for uploaded artifacts. "
+            f"Default: {DEFAULT_APP_DIR_ON_DEVICE}"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -264,6 +273,7 @@ def main() -> int:
             force=options.force_upload,
             dry_run=options.dry_run,
             mpremote_args=options.mpremote_arg,
+            app_dir=options.app_dir,
         )
 
         if not options.dry_run:
