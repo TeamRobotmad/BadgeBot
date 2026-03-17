@@ -75,7 +75,7 @@ _AUTO_REPEAT_MS = 200       # Time between auto-repeats, in ms
 _AUTO_REPEAT_COUNT_THRES = 10 # Number of auto-repeats before increasing level
 _AUTO_REPEAT_SPEED_LEVEL_MAX = 4  # Maximum level of auto-repeat speed increases
 _AUTO_REPEAT_LEVEL_MAX = 3  # Maximum level of auto-repeat digit increases
-DEFAULT_UPDATE_PERIOD = 1000    # mS when not moving
+DEFAULT_BACKGROUND_UPDATE_PERIOD = 1000    # mS when not moving
 
 # App states
 STATE_HEXPANSION = -1     # Hexpansion Management (sub-states managed by HexpansionMgr)
@@ -138,7 +138,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         # UI Button Controls
         self.button_states = Buttons(self)
         self.last_press: Button = BUTTON_TYPES["CANCEL"]
-        self.long_press_delta: int = 0
         self._auto_repeat_intervals = [ _AUTO_REPEAT_MS, _AUTO_REPEAT_MS//2, _AUTO_REPEAT_MS//4, _AUTO_REPEAT_MS//8, _AUTO_REPEAT_MS//16] # at the top end the loop is unlikley to cycle this fast
         self._auto_repeat: int = 0
         self._auto_repeat_count: int = 0
@@ -159,6 +158,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.message_type = None
         self.current_menu: str = None
         self.menu: Menu = None
+        self.scroll_mode_enabled: bool = False
         self.is_scroll: bool = False        # Whether we are in scroll mode - this is displayed by a green border around the screen 
         self.scroll_offset: int = 0
 
@@ -253,7 +253,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         # Overall app state (controls what is displayed and what user inputs are accepted)
         self.current_state = STATE_HEXPANSION
         self.previous_state = self.current_state
-        self.update_period = DEFAULT_UPDATE_PERIOD   # mS
+        self.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD   # mS
 
         # Countdown timer value 
         self.countdown_value: int = 0
@@ -276,20 +276,20 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if event.app is self:
             if self.current_state in _LED_CONTROL_STATES:
                 eventbus.emit(PatternDisable())
-            elif self.current_state == STATE_MOTOR_MOVES:
-                eventbus.on_async(ButtonUpEvent, self._handle_button_up, self)
+            if self.scroll_mode_enabled:
+                eventbus.on_async(ButtonUpEvent, self.handle_button_up, self)
 
 
     async def _lose_focus(self, event: RequestForegroundPopEvent):
         if event.app is self:
             eventbus.emit(PatternEnable())
             self.pattern_status = True
-            if self.current_state == STATE_MOTOR_MOVES:
-                eventbus.remove(ButtonUpEvent, self._handle_button_up, self)            
+            if self.scroll_mode_enabled:
+                eventbus.remove(ButtonUpEvent, self.handle_button_up, self)            
 
 
-    async def _handle_button_up(self, event: ButtonUpEvent):
-        if self.current_state == STATE_MOTOR_MOVES and event.button == BUTTONS["C"]:
+    async def handle_button_up(self, event: ButtonUpEvent):
+        if self.scroll_mode_enabled and event.button == BUTTONS["C"]:
             # Toggle scroll mode on/off when "C" button is released
             self.is_scroll = not self.is_scroll
             self.scroll(self.is_scroll)
@@ -506,12 +506,23 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 self.refresh = True
 
 
+    def scroll_mode_enable(self, enable: bool):
+        """Enable the potential for scroll mode to be toggled on and off by pressing the "C" button"""
+        if enable:
+            self.scroll_mode_enabled = True
+            eventbus.on_async(ButtonUpEvent, self.handle_button_up, self)
+        else:
+            self.scroll_mode_enabled = False
+            eventbus.off_async(ButtonUpEvent, self.handle_button_up, self)
+
+
     def scroll(self, enable: bool):
         """Enable or disable scroll mode, which allows the user to scroll the display up and downto see hidden content. This is indicated by a green border around the screen."""
-        self.is_scroll = enable
-        self.scroll_offset = 0
-        state = "enabled" if enable else "disabled"
-        self.notification = Notification(f"Scroll {state}")
+        if self.scroll_mode_enabled:
+            self.is_scroll = enable
+            self.scroll_offset = 0
+            state = "enabled" if enable else "disabled"
+            self.notification = Notification(f"Scroll {state}")
 
 
     def draw(self, ctx):
@@ -611,7 +622,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         """Utility function to return to the main menu from any state. This is used when the user cancels out of a submenu or after acknowledging a warning message."""
         if self.settings['logging'].v:
             print("Returning to menu")
-        self.update_period = DEFAULT_UPDATE_PERIOD
+        self.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
         self.current_state = STATE_MENU
         self.refresh = True
 

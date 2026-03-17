@@ -20,13 +20,12 @@
 #   reset_robot()            – reset sequence state and return to HELP
 #   init_settings(settings)  – register motor-moves specific settings
 
-from events.input import BUTTON_TYPES, Button, ButtonUpEvent
-from system.eventbus import eventbus
+from events.input import BUTTON_TYPES, Button
 from app_components.tokens import label_font_size, button_labels
 from tildagonos import tildagonos
 
 from .utils import chain
-from .app import (STATE_COUNTDOWN, STATE_LOGO, DEFAULT_UPDATE_PERIOD)
+from .app import (STATE_COUNTDOWN, STATE_LOGO, DEFAULT_BACKGROUND_UPDATE_PERIOD)
 
 
 # Screen positioning for movement sequence text
@@ -140,6 +139,7 @@ class MotorMovesMgr:
         self.current_instruction = None
         self.current_power_duration = ((0, 0, 0, 0), 0)
         self.power_plan_iter = iter([])
+        self.long_press_delta = 0
 
     # ------------------------------------------------------------------
     # Entry point from menu
@@ -199,7 +199,7 @@ class MotorMovesMgr:
         output = self._get_current_power_level(delta)
         if output is None:
             self._sub_state = _SUB_DONE
-            self.app.update_period = DEFAULT_UPDATE_PERIOD
+            self.app.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
         return output
 
 
@@ -214,8 +214,8 @@ class MotorMovesMgr:
             app.return_to_menu()
         elif app.button_states.get(BUTTON_TYPES["CONFIRM"]):
             app.button_states.clear()
+            app.scroll_mode_enable(True)
             app.scroll(True)
-            eventbus.on_async(ButtonUpEvent, app._handle_button_up, app)
             self._sub_state = _SUB_RECEIVE_INSTR
         else:
             app.animation_counter += delta / 1000
@@ -224,8 +224,9 @@ class MotorMovesMgr:
                 app.current_state = STATE_LOGO
 
 
-    def _update_state_receive_instr(self, delta: int) -> None:
+    def _update_state_receive_instr(self, delta: int) -> None:       
         app = self.app
+
         if app.button_states.get(BUTTON_TYPES["CONFIRM"]):
             app.long_press_delta += delta
             if app.long_press_delta >= _LONG_PRESS_MS:
@@ -236,16 +237,15 @@ class MotorMovesMgr:
                     #app.countdown_next_state = STATE_MOTOR_MOVES
                     app.run_countdown_elapsed_ms = 0
                     app.current_state = STATE_COUNTDOWN
-                app.scroll(False)
-                eventbus.remove(ButtonUpEvent, app._handle_button_up, app)
+                app.scroll_mode_enable(False)
+                app.long_press_delta = 0
         else:
             app.long_press_delta = 0
             if app.button_states.get(BUTTON_TYPES["CANCEL"]):
                 app.button_states.clear()
                 app.animation_counter = 0
-                app.scroll(False)
+                app.scroll_mode_enable(False)
                 self._sub_state = _SUB_HELP
-                eventbus.remove(ButtonUpEvent, app._handle_button_up, app)
                 return
             elif app.button_states.get(BUTTON_TYPES["RIGHT"]):
                 self._handle_instruction_press(BUTTON_TYPES["RIGHT"])
