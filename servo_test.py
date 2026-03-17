@@ -1,11 +1,11 @@
 # Servo Tester Module for BadgeBot
 #
-# Handles the servo tester functionality (STATE_SERVO).
+# Handles the servo tester functionality.
 # Allows the user to control up to 4 servos with position, trim,
 # and scanning modes.
 #
 # Public interface (called by the main app):
-#   __init__(app)   – wire up to LineFollowerApp
+#   __init__(app)   – wire up to BadgeBotApp
 #   start()         – enter servo test from menu
 #   update(delta)   – per-tick state machine update
 #   draw(ctx)       – render servo tester UI
@@ -65,161 +65,171 @@ class ServoTestMgr:
 
     Parameters
     ----------
-    app : LineFollowerApp
+    app : BadgeBotApp
         Reference to the main application instance.
     """
 
     def __init__(self, app):
         self.app = app
+        self.servo               = [None]*4                    # Servo Positions
+        self.servo_centre        = [_SERVO_DEFAULT_CENTRE]*4   # Trim Servo Centre
+        self.servo_range         = [_SERVO_DEFAULT_RANGE]*4    # Limit Servo Range
+        self.servo_rate          = [_SERVO_DEFAULT_RATE]*4     # Servo Rate of Change
+        self.servo_mode          = [ServoMode()]*4             # Servo Mode
+        self.servo_selected: int = 0        
+        self.time_since_last_input: int = 0
+        self.timeout_period: int = 120000                     # ms (2 minutes - without any user input)       
+        self.keep_alive_period: int = 500                     # ms (half the value used in hexdrive.py)  
+
 
     # ------------------------------------------------------------------
     # Entry point from menu
     # ------------------------------------------------------------------
 
-    def start(self):
+    def start(self) -> bool:
         """Enter servo test from the main menu."""
         app = self.app
-        app.set_menu(None)
-        app.button_states.clear()
-        self.reset_servo()
-        from .linefollower import STATE_SERVO
-        app.current_state = STATE_SERVO
-        app._refresh = True
-        app._auto_repeat_clear()
+        if self.reset_servo():
+            app.set_menu(None)
+            app.button_states.clear()
+            app.refresh = True
+            app.auto_repeat_clear()
+            self.time_since_last_input = 0
+            if app.settings['logging'].v:
+                print("Entered Servo Test mode")
+            return True
+        return False
 
     # ------------------------------------------------------------------
     # Per-tick update
     # ------------------------------------------------------------------
 
-    def update(self, delta):
-        """Handle STATE_SERVO.  Returns True if this module handled the state."""
+    def update(self, delta) -> bool:
+        """Handle Servo Test UI.  Returns True if this module handled the state."""
         app = self.app
-        from .linefollower import STATE_SERVO, STATE_MENU
-        if app.current_state != STATE_SERVO:
-            return False
 
         if app.button_states.get(BUTTON_TYPES["RIGHT"]):
-            if app._auto_repeat_check(delta, (app.servo_mode[app.servo_selected] != ServoMode.SCANNING)):
-                if app.servo_mode[app.servo_selected] == ServoMode.TRIM:
-                    app.servo_centre[app.servo_selected] += app._settings['servo_step'].v
-                    if app.servo_centre[app.servo_selected] > (_SERVO_DEFAULT_CENTRE + _SERVO_MAX_TRIM):
-                        app.servo_centre[app.servo_selected] = _SERVO_DEFAULT_CENTRE + _SERVO_MAX_TRIM
+            if app.auto_repeat_check(delta, (self.servo_mode[self.servo_selected] != ServoMode.SCANNING)):
+                if self.servo_mode[self.servo_selected] == ServoMode.TRIM:
+                    self.servo_centre[self.servo_selected] += app.settings['servo_step'].v
+                    if self.servo_centre[self.servo_selected] > (_SERVO_DEFAULT_CENTRE + _SERVO_MAX_TRIM):
+                        self.servo_centre[self.servo_selected] = _SERVO_DEFAULT_CENTRE + _SERVO_MAX_TRIM
                     if app.hexdrive_app is not None:
-                        if not app.hexdrive_app.set_servocentre(app.servo_centre[app.servo_selected], app.servo_selected):
+                        if not app.hexdrive_app.set_servocentre(self.servo_centre[self.servo_selected], self.servo_selected):
                             print("H:Failed to set servo centre")
-                elif app.servo_mode[app.servo_selected] == ServoMode.SCANNING:
-                    if app.servo_rate[app.servo_selected] < 0:
+                elif self.servo_mode[self.servo_selected] == ServoMode.SCANNING:
+                    if self.servo_rate[self.servo_selected] < 0:
                         negative = True
-                        rate = -app.servo_rate[app.servo_selected]
+                        rate = -self.servo_rate[self.servo_selected]
                     else:
                         negative = False
-                        rate = app.servo_rate[app.servo_selected]
-                    rate = app._inc(rate, app._auto_repeat_level)
+                        rate = self.servo_rate[self.servo_selected]
+                    rate = app.inc_value(rate, app.auto_repeat_level)
                     if _SERVO_MAX_RATE < rate:
                         rate = _SERVO_MAX_RATE
                     if negative:
-                        app.servo_rate[app.servo_selected] = -rate
+                        self.servo_rate[self.servo_selected] = -rate
                     else:
-                        app.servo_rate[app.servo_selected] = rate
+                        self.servo_rate[self.servo_selected] = rate
                 else:
-                    if app.servo[app.servo_selected] is None:
-                        app.servo[app.servo_selected] = 0
-                    app.servo_mode[app.servo_selected].set(ServoMode.POSITION)
-                    app.servo[app.servo_selected] += app._settings['servo_step'].v
-                if app.servo[app.servo_selected] is not None:
-                    if app.servo_range[app.servo_selected] < (app.servo[app.servo_selected] + (app.servo_centre[app.servo_selected] - _SERVO_DEFAULT_CENTRE)):
-                        app.servo[app.servo_selected] = app.servo_range[app.servo_selected] - (app.servo_centre[app.servo_selected] - _SERVO_DEFAULT_CENTRE)
-                app._refresh = True
+                    if self.servo[self.servo_selected] is None:
+                        self.servo[self.servo_selected] = 0
+                    self.servo_mode[self.servo_selected].set(ServoMode.POSITION)
+                    self.servo[self.servo_selected] += app.settings['servo_step'].v
+                if self.servo[self.servo_selected] is not None:
+                    if self.servo_range[self.servo_selected] < (self.servo[self.servo_selected] + (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)):
+                        self.servo[self.servo_selected] = self.servo_range[self.servo_selected] - (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)
+                app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["LEFT"]):
-            if app._auto_repeat_check(delta, (app.servo_mode[app.servo_selected] != ServoMode.SCANNING)):
-                if app.servo_mode[app.servo_selected] == ServoMode.TRIM:
-                    app.servo_centre[app.servo_selected] -= app._settings['servo_step'].v
-                    if app.servo_centre[app.servo_selected] < (_SERVO_DEFAULT_CENTRE - _SERVO_MAX_TRIM):
-                        app.servo_centre[app.servo_selected] = _SERVO_DEFAULT_CENTRE - _SERVO_MAX_TRIM
+            if app.auto_repeat_check(delta, (self.servo_mode[self.servo_selected] != ServoMode.SCANNING)):
+                if self.servo_mode[self.servo_selected] == ServoMode.TRIM:
+                    self.servo_centre[self.servo_selected] -= app.settings['servo_step'].v
+                    if self.servo_centre[self.servo_selected] < (_SERVO_DEFAULT_CENTRE - _SERVO_MAX_TRIM):
+                        self.servo_centre[self.servo_selected] = _SERVO_DEFAULT_CENTRE - _SERVO_MAX_TRIM
                     if app.hexdrive_app is not None:
-                        if not app.hexdrive_app.set_servocentre(app.servo_centre[app.servo_selected], app.servo_selected):
+                        if not app.hexdrive_app.set_servocentre(self.servo_centre[self.servo_selected], self.servo_selected):
                             print("H:Failed to set servo centre")
-                elif app.servo_mode[app.servo_selected] == ServoMode.SCANNING:
-                    if app.servo_rate[app.servo_selected] < 0:
+                elif self.servo_mode[self.servo_selected] == ServoMode.SCANNING:
+                    if self.servo_rate[self.servo_selected] < 0:
                         negative = True
-                        rate = -app.servo_rate[app.servo_selected]
+                        rate = -self.servo_rate[self.servo_selected]
                     else:
                         negative = False
-                        rate = app.servo_rate[app.servo_selected]
-                    rate = app._dec(rate, app._auto_repeat_level)
+                        rate = self.servo_rate[self.servo_selected]
+                    rate = app.dec_value(rate, app.auto_repeat_level)
                     if _SERVO_MIN_RATE > rate:
                         rate = _SERVO_MIN_RATE
                     if negative:
-                        app.servo_rate[app.servo_selected] = -rate
+                        self.servo_rate[self.servo_selected] = -rate
                     else:
-                        app.servo_rate[app.servo_selected] = rate
+                        self.servo_rate[self.servo_selected] = rate
                 else:
-                    if app.servo[app.servo_selected] is None:
-                        app.servo[app.servo_selected] = 0
-                    app.servo_mode[app.servo_selected].set(ServoMode.POSITION)
-                    app.servo[app.servo_selected] -= app._settings['servo_step'].v
-                if app.servo[app.servo_selected] is not None:
-                    if -app.servo_range[app.servo_selected] > (app.servo[app.servo_selected] + (app.servo_centre[app.servo_selected] - _SERVO_DEFAULT_CENTRE)):
-                        app.servo[app.servo_selected] = -app.servo_range[app.servo_selected] - (app.servo_centre[app.servo_selected] - _SERVO_DEFAULT_CENTRE)
-                app._refresh = True
+                    if self.servo[self.servo_selected] is None:
+                        self.servo[self.servo_selected] = 0
+                    self.servo_mode[self.servo_selected].set(ServoMode.POSITION)
+                    self.servo[self.servo_selected] -= app.settings['servo_step'].v
+                if self.servo[self.servo_selected] is not None:
+                    if -self.servo_range[self.servo_selected] > (self.servo[self.servo_selected] + (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)):
+                        self.servo[self.servo_selected] = -self.servo_range[self.servo_selected] - (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)
+                app.refresh = True
         else:
-            app._auto_repeat_clear()
+            app.auto_repeat_clear()
             if app.button_states.get(BUTTON_TYPES["UP"]):
                 app.button_states.clear()
-                app.servo_selected = (app.servo_selected - 1) % app.num_servos
-                app._refresh = True
+                self.servo_selected = (self.servo_selected - 1) % app.num_servos
+                app.refresh = True
             elif app.button_states.get(BUTTON_TYPES["DOWN"]):
                 app.button_states.clear()
-                app.servo_selected = (app.servo_selected + 1) % app.num_servos
-                app._refresh = True
+                self.servo_selected = (self.servo_selected + 1) % app.num_servos
+                app.refresh = True
             elif app.button_states.get(BUTTON_TYPES["CANCEL"]):
                 app.button_states.clear()
                 if app.hexdrive_app is not None:
                     app.hexdrive_app.set_power(False)
                     app.hexdrive_app.set_servoposition()
-                app.current_state = STATE_MENU
+                app.return_to_menu()
                 return True
             elif app.button_states.get(BUTTON_TYPES["CONFIRM"]):
                 app.button_states.clear()
-                app.servo_mode[app.servo_selected].inc()
-                if app.servo_mode[app.servo_selected] == ServoMode.OFF:
+                self.servo_mode[self.servo_selected].inc()
+                if self.servo_mode[self.servo_selected] == ServoMode.OFF:
                     if app.hexdrive_app is not None:
-                        app.hexdrive_app.set_servoposition(app.servo_selected, None)
+                        app.hexdrive_app.set_servoposition(self.servo_selected, None)
                 else:
-                    app._refresh = True
-                app.notification = Notification(f"  Servo {app.servo_selected}:\n {app.servo_mode[app.servo_selected]}")
+                    app.refresh = True
+                app.notification = Notification(f"  Servo {self.servo_selected}:\n {self.servo_mode[self.servo_selected]}")
 
-        if app._refresh:
-            app._time_since_last_input = 0
+        if app.refresh:
+            self.time_since_last_input = 0
         else:
-            app._time_since_last_input += delta
-            if app._time_since_last_input > app._timeout_period:
+            self.time_since_last_input += delta
+            if self.time_since_last_input > self.timeout_period:
                 if app.hexdrive_app is not None:
                     app.hexdrive_app.set_power(False)
                     app.hexdrive_app.set_servoposition()
-                app.current_state = STATE_MENU
+                app.return_to_menu()
                 app.notification = Notification("  Servo:\n Timeout")
 
-        app._time_since_last_update += delta
-        if app._time_since_last_update > app._keep_alive_period:
-            app._time_since_last_update = 0
-            app._refresh = True
+        app.time_since_last_update += delta
+        if app.time_since_last_update > self.keep_alive_period:
+            app.time_since_last_update = 0
+            app.refresh = True
 
         for i in range(app.num_servos):
-            _refresh = app._refresh
-            if app.servo_mode[i] == ServoMode.SCANNING:
-                if app.servo[app.servo_selected] is None:
-                    app.servo[app.servo_selected] = 0
-                app.servo[i] = app.servo[i] + (10 * app.servo_rate[i] * delta / 1000)
-                if app.servo_range[i] < (app.servo[i] + (app.servo_centre[i] - _SERVO_DEFAULT_CENTRE)):
-                    app.servo_rate[i] = -app.servo_rate[i]
-                    app.servo[i] = app.servo_range[i] - (app.servo_centre[i] - _SERVO_DEFAULT_CENTRE)
-                elif -app.servo_range[i] > (app.servo[i] + (app.servo_centre[i] - _SERVO_DEFAULT_CENTRE)):
-                    app.servo_rate[i] = -app.servo_rate[i]
-                    app.servo[i] = -app.servo_range[i] - (app.servo_centre[i] - _SERVO_DEFAULT_CENTRE)
+            _refresh = app.refresh
+            if self.servo_mode[i] == ServoMode.SCANNING:
+                if self.servo[self.servo_selected] is None:
+                    self.servo[self.servo_selected] = 0
+                self.servo[i] = self.servo[i] + (10 * self.servo_rate[i] * delta / 1000)
+                if self.servo_range[i] < (self.servo[i] + (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE)):
+                    self.servo_rate[i] = -self.servo_rate[i]
+                    self.servo[i] = self.servo_range[i] - (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE)
+                elif -self.servo_range[i] > (self.servo[i] + (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE)):
+                    self.servo_rate[i] = -self.servo_rate[i]
+                    self.servo[i] = -self.servo_range[i] - (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE)
                 _refresh = True
-            if _refresh and app.hexdrive_app is not None and app.servo_mode[i] != ServoMode.OFF and app.servo[i] is not None:
-                app.hexdrive_app.set_servoposition(i, int(app.servo[i]))
+            if _refresh and app.hexdrive_app is not None and self.servo_mode[i] != ServoMode.OFF and self.servo[i] is not None:
+                app.hexdrive_app.set_servoposition(i, int(self.servo[i]))
 
         return True
 
@@ -227,46 +237,43 @@ class ServoTestMgr:
     # Servo reset
     # ------------------------------------------------------------------
 
-    def reset_servo(self):
+    def reset_servo(self) -> bool:
         app = self.app
         if app.hexdrive_app is not None:
             app.hexdrive_app.set_power(True)
-            app.hexdrive_app.set_freq(1000 // app._settings['servo_period'].v)
-        for i in range(4):
-            if app.hexdrive_app is not None:
-                app.hexdrive_app.set_servocentre(app.servo_centre[app.servo_selected], app.servo_selected)
-            app.servo_range[i] = app._settings['servo_range'].v
-            if app.servo[i] is not None:
-                if app.servo[i] > app.servo_range[i]:
-                    app.servo[i] = app.servo_range[i]
-                elif app.servo[i] < -app.servo_range[i]:
-                    app.servo[i] = -app.servo_range[i]
-                if app.hexdrive_app is not None:
-                    app.hexdrive_app.set_servoposition(i, int(app.servo[i]))
-        app.servo_selected = 0
-        app._time_since_last_update = 0
-        app._time_since_last_input = 0
+            app.hexdrive_app.set_freq(1000 // app.settings['servo_period'].v)
+            for i in range(app.num_servos):
+                app.hexdrive_app.set_servocentre(self.servo_centre[self.servo_selected], self.servo_selected)
+                self.servo_range[i] = app.settings['servo_range'].v
+                if self.servo[i] is not None:
+                    if self.servo[i] > self.servo_range[i]:
+                        self.servo[i] = self.servo_range[i]
+                    elif self.servo[i] < -self.servo_range[i]:
+                        self.servo[i] = -self.servo_range[i]
+                    app.hexdrive_app.set_servoposition(i, int(self.servo[i]))
+            self.servo_selected = 0
+            app.time_since_last_update = 0
+            self.time_since_last_input = 0
+            return True
+        return False
 
     # ------------------------------------------------------------------
     # Draw
     # ------------------------------------------------------------------
 
-    def draw(self, ctx):
+    def draw(self, ctx) -> bool:
         """Render Servo Tester UI.  Returns True if handled."""
         app = self.app
-        from .linefollower import STATE_SERVO
-        if app.current_state != STATE_SERVO:
-            return False
 
         servo_text = ["S"] * (1 + app.num_servos)
         servo_text_colours = [(0.4, 0.0, 0.0)] * (1 + app.num_servos)
         servo_text[0] = "Servo Test"
         servo_text_colours[0] = (1, 1, 1)
         for i in range(app.num_servos):
-            if app.servo[i] is None or app.servo_mode[i] == ServoMode.OFF:
+            if self.servo[i] is None or self.servo_mode[i] == ServoMode.OFF:
                 body_colour = (0.2, 0.2, 0.2)
                 bar_colour = (0.4, 0.4, 0.4)
-            elif app.servo_mode[i] == ServoMode.SCANNING:
+            elif self.servo_mode[i] == ServoMode.SCANNING:
                 body_colour = (0.1, 0.5, 0.1)
                 bar_colour = (0.1, 1.0, 0.1)
                 servo_text_colours[1 + i] = (0.4, 0.0, 0.4)
@@ -277,11 +284,11 @@ class ServoTestMgr:
 
             ctx.save()
             ctx.translate(0, (i - (app.num_servos / 2) + 0.5) * label_font_size)
-            background_colour = (0.1, 0.1, 0.1) if i != app.servo_selected else (0.15, 0.15, 0.15)
+            background_colour = (0.1, 0.1, 0.1) if i != self.servo_selected else (0.15, 0.15, 0.15)
             ctx.rgb(*background_colour).rectangle(-100, 1, 200, label_font_size - 2).fill()
-            c = 100 * (app.servo_centre[i] - _SERVO_DEFAULT_CENTRE) / app.servo_range[i]
-            if app.servo[i] is not None:
-                x = 100 * (app.servo[i] + app.servo_centre[i] - _SERVO_DEFAULT_CENTRE) / app.servo_range[i]
+            c = 100 * (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE) / self.servo_range[i]
+            if self.servo[i] is not None:
+                x = 100 * (self.servo[i] + self.servo_centre[i] - _SERVO_DEFAULT_CENTRE) / self.servo_range[i]
                 ctx.rgb(*bar_colour).rectangle(x - 2, 1, 5, label_font_size - 2).fill()
                 ctx.rgb(*body_colour)
                 if x > (c + 4):
@@ -290,15 +297,15 @@ class ServoTestMgr:
                     ctx.rectangle(x + 4, 3, c - x - 4, label_font_size - 6).fill()
             ctx.rgb(0, 0, 0).move_to(c, 0).line_to(c, label_font_size).stroke()
             ctx.restore()
-            if app.servo_mode[i] == ServoMode.SCANNING:
-                servo_text[i + 1] = f"{int(abs(app.servo_rate[i])):4}/s"
+            if self.servo_mode[i] == ServoMode.SCANNING:
+                servo_text[i + 1] = f"{int(abs(self.servo_rate[i])):4}/s"
             else:
-                servo_text[i + 1] = "Off" if (app.servo[i] is None or app.servo_mode[i] == ServoMode.OFF) else f"{int(app.servo[i]):+5} "
-        servo_text_colours[1 + app.servo_selected] = tuple(int(j * 2.5) for j in servo_text_colours[1 + app.servo_selected])
+                servo_text[i + 1] = "Off" if (self.servo[i] is None or self.servo_mode[i] == ServoMode.OFF) else f"{int(self.servo[i]):+5} "
+        servo_text_colours[1 + self.servo_selected] = tuple(int(j * 2.5) for j in servo_text_colours[1 + self.servo_selected])
         app.draw_message(ctx, servo_text, servo_text_colours, label_font_size)
-        if app.servo_mode[app.servo_selected] == ServoMode.SCANNING:
+        if self.servo_mode[self.servo_selected] == ServoMode.SCANNING:
             button_labels(ctx, up_label="^", down_label="\u25BC", confirm_label="Mode", cancel_label="Exit", left_label="Slower", right_label="Faster")
-        elif app.servo_mode[app.servo_selected] == ServoMode.TRIM:
+        elif self.servo_mode[self.servo_selected] == ServoMode.TRIM:
             button_labels(ctx, up_label="^", down_label="\u25BC", confirm_label="Mode", cancel_label="Exit", left_label="Trim-", right_label="+Trim")
         else:
             button_labels(ctx, up_label="^", down_label="\u25BC", confirm_label="Mode", cancel_label="Exit", left_label="<--", right_label="-->")

@@ -35,4 +35,4 @@ def port():
 def test_app_versions_match():
     import sim.apps.BadgeBot.app as BadgeBot
     import sim.apps.BadgeBot.hexdrive as HexDrive
-    assert BadgeBot.CURRENT_APP_VERSION == HexDrive.APP_VERSION
+    assert BadgeBot.CURRENT_HEXDRIVE_APP_VERSION == HexDrive.HEXDRIVE_APP_VERSION

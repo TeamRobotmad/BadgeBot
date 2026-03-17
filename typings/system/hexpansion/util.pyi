@@ -1,0 +1,3 @@
+from typing import Any
+
+def get_hexpansion_block_devices(i2c: Any, header: Any, addr: int, *args: Any, **kwargs: Any) -> tuple[Any, Any]: ...
