@@ -102,6 +102,9 @@ class HexpansionMgr:
         read and written.
     """
 
+    # Sub-states are defined at module level (_SUB_*); app-level state
+    # routing is handled by the dispatch tables in app.py.
+
     def __init__(self, app):
         self.app = app
         self._sub_state = _SUB_INIT
