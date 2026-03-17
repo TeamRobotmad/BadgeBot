@@ -50,7 +50,7 @@ class AutotuneMgr:
         """Enter PID Auto Tune mode from the main menu."""
         app = self.app
         if self.follower.line_sensors is None:
-            self.follower.line_sensors = create_line_sensors(app.line_sensors_hexpansion_config, app.num_line_sensors, app.settings['line_threshold'].v)
+            self.follower.line_sensors = create_line_sensors(app.line_sensors_hexpansion_config, app.num_line_sensors)
 
         if self.follower.line_sensors is None:
             # Line sensors are not available; inform the user and abort autotune.

@@ -63,26 +63,15 @@ class LineSensors:
     in parallel rather than sequentially.
     """
 
-    def __init__(self, sensor_configs, threshold=_LINE_SENSOR_DEFAULT_THRESHOLD):
-        self._threshold = threshold
+    def __init__(self, sensor_configs):
         self._sensors = [
-            LineSensor(cfg["pins"], name=cfg["name"], threshold=threshold)
+            LineSensor(cfg["pins"], name=cfg["name"])
             for cfg in sensor_configs
         ]
         
     @property
     def num_sensors(self):
         return len(self._sensors)
-
-    @property
-    def threshold(self):
-        return self._threshold
-
-    @threshold.setter
-    def threshold(self, value):
-        self._threshold = value
-        for sensor in self._sensors:
-            sensor.threshold = value
 
     def enable(self):
         for sensor in self._sensors:
@@ -92,26 +81,11 @@ class LineSensors:
         for sensor in self._sensors:
             sensor.disable()
 
-    def value(self, index):
-        return self._sensors[index].state
-
-    def values(self):
-        return [sensor.state for sensor in self._sensors]
-
     def raw_value(self, index):
         return self._sensors[index].value
 
     def raw_values(self):
         return [sensor.value for sensor in self._sensors]
-
-    @property
-    def updated(self):
-        return any(sensor.updated for sensor in self._sensors)
-
-    def clear_updated(self):
-        """Clear the updated flag on all sensors after processing an update in the main loop."""
-        for sensor in self._sensors:
-            sensor.updated = False
 
     def sample_count(self):
         """Get the total sample count across all sensors."""
@@ -119,22 +93,17 @@ class LineSensors:
     
     def sample_count_and_reset(self):
         """Atomically get the total sample count across all sensors and reset to zero."""
-        #irq_state = disable_irq()
         count = self.sample_count()
         for sensor in self._sensors:
             sensor.sample_count = 0
-        #enable_irq(irq_state)
         return count
 
     def read(self):
-        #for sensor in self._sensors:
-        #    if sensor.start_time != 0:
-        #        if time.ticks_diff(time.ticks_us(), sensor.start_time) <= _LINE_SENSOR_READ_TIMEOUT_US:
-        #            print(f"Sensor {sensor._name} already in progress")
-        #            return False
-
-        #for sensor in self._sensors:
-        #    sensor.updated = False
+        for sensor in self._sensors:
+            if sensor.start_time != 0:
+                if time.ticks_diff(time.ticks_us(), sensor.start_time) <= _LINE_SENSOR_READ_TIMEOUT_US:
+                    print(f"Sensor {sensor._name} already in progress")
+                    return False
 
         for sensor in self._sensors:
             sensor.pins["ctrl"].on()
@@ -142,9 +111,6 @@ class LineSensors:
             sensor.pins["sig"].on()
 
         time.sleep_us(_LINE_SENSOR_TRIGGER_DURATION_US)
-
-        #for sensor in self._sensors:
-        #    sensor.pins["sig"].irq(trigger=Pin.IRQ_FALLING, handler=sensor.handler)
 
         irq_state = disable_irq()
         start_time = time.ticks_us()
@@ -200,17 +166,12 @@ class LineSensors:
 # ---- LineSensor class ------------------------------------------------------
 
 class LineSensor:
-    def __init__(self, pins, name="LineSensor",
-                 threshold=_LINE_SENSOR_DEFAULT_THRESHOLD):
+    def __init__(self, pins, name="LineSensor"):
         try:
-            self._threshold = threshold
-            self.state = False
-            self._prev_state = False
             self._name = name
             self.start_time = 0
             self.value = 0
             self._irq_state = None
-            self.updated = False
             self.sample_count = 0
             self.pins = pins
             self.pins["ctrl"].init(mode=Pin.OUT)
@@ -218,15 +179,6 @@ class LineSensor:
             self.pins["sig"].init(mode=Pin.IN, pull=Pin.PULL_UP)
         except Exception as e:
             print(f"{self._name} Init failed:{e}")
-
-    @property
-    def threshold(self):
-        return self._threshold
-
-    @threshold.setter
-    def threshold(self, value):
-        self._threshold = value
-
 
     def disable(self):
         """Disable the sensor by turning off control pin and disabling interrupts on signal pin."""
@@ -246,6 +198,11 @@ class LineSensor:
     def handler(self, _):
         """Interrupt handler for the sensor signal pin.
         Measures the time since the sensor was triggered and updates the state."""
+        # Currently as the "irq" is not a hardware interrupt we are not guaranteed that the handler will be called immediately
+        #  when the signal pin goes low, so instead of relying on the handler to capture the timing 
+        #  it is recommended to do a blocking read in the background update loop.
+        # However the code here is the leanest way to capture the timing if the IRQ handler is called immediately when the signal pin goes low, so leaving it here for now in case that becomes possible in the future.
+        
         #if self.start_time == 0:
         #    # spurious interrupt or handler called before read() set up the start_time; ignore
         #    return
@@ -257,18 +214,13 @@ class LineSensor:
         #self.pins["sig"].off()
         #self.pins["sig"].init(mode=Pin.OUT)
         self.pins["ctrl"].off()
+        self.start_time = 0
 
         if value > _LINE_SENSOR_READ_TIMEOUT_US:
             # timeout expired; ignore this reading
             #print(f"{self._name} reading timed out (value={value}µs)")
             return
         self.value = value
-        #self._prev_state = self.state
-        #self.state = value < self._threshold
-        ##self.state = True if self.value < self._threshold else False
-        #if (self._prev_state != self.state):
-        #    self.updated = True
-        self.start_time = 0
         self.sample_count += 1
 
 
@@ -284,7 +236,7 @@ def init_settings(s, MySetting):
 
 # ---- Shared helper: create LineSensors from hexpansion config --------------
 
-def create_line_sensors(config: HexpansionConfig, number_of_sensors: int = _NUM_LINE_SENSORS, threshold = _LINE_SENSOR_DEFAULT_THRESHOLD):
+def create_line_sensors(config: HexpansionConfig, number_of_sensors: int = _NUM_LINE_SENSORS):
     """Create a LineSensors instance from the app's hexpansion config.
 
     Returns a new LineSensors or None if no config is available.
@@ -300,7 +252,6 @@ def create_line_sensors(config: HexpansionConfig, number_of_sensors: int = _NUM_
                 "sig":  config.pin[SENSOR_SIGNAL_PINS[i]]
             },
             "name": SENSOR_NAMES[i],
-            "threshold": threshold
         }
         for i in range(number_of_sensors)
     ]
@@ -346,7 +297,7 @@ class LineFollowMgr:
         app = self.app
 
         if self.line_sensors is None:
-            self.line_sensors = create_line_sensors(app.line_sensors_hexpansion_config, app.num_line_sensors, app.settings['line_threshold'].v)
+            self.line_sensors = create_line_sensors(app.line_sensors_hexpansion_config, app.num_line_sensors)
 
         if self.line_sensors is None:
             # Line sensors are not available; inform the user and abort line follower.
@@ -536,6 +487,7 @@ class LineFollowMgr:
         offset = (spacing // 2) * (app.num_line_sensors // 2)
         for i in range(app.num_line_sensors):
             x = offset - i * spacing
+            # make a simple visualization of the sensor reading as a filled circle, with colour indicating whether it's above or below the threshold
             colour = (0, 1, 0) if self.line_sensors.raw_value(i) < app.settings['line_threshold'].v else (0, 0, 0)
             ctx.rgb(*colour).arc(x, 0, 24, 0, 2 * pi, True).fill()
             ctx.rgb(1, 1, 1).arc(x, 0, 25, 0, 2 * pi, True).stroke()
