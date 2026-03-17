@@ -2,8 +2,6 @@
 #
 # Handles the "turtle/Logo" style motor-move programming.
 # Internally manages its own sub-states (HELP, RECEIVE_INSTR, RUN, DONE).
-# At the main-app level only a single STATE_MOTOR_MOVES is needed so that
-# the app knows to call this module for update / draw / background_update.
 #
 # The countdown state (STATE_COUNTDOWN) is shared with PID AutoTune and
 # remains in the main app.  When the countdown finishes it calls
@@ -12,7 +10,7 @@
 # Also contains the Instruction class and related helper functions.
 #
 # Public interface (called by the main app):
-#   __init__(app)            – wire up to LineFollowerApp
+#   __init__(app)            – wire up to BadgeBotApp
 #   start()                  – enter the motor-moves flow (from menu)
 #   begin_moves()            – start executing (called after countdown)
 #   update(delta)            – per-tick state machine update
@@ -24,10 +22,11 @@
 
 from events.input import BUTTON_TYPES, Button, ButtonUpEvent
 from system.eventbus import eventbus
-from app_components.tokens import label_font_size, twentyfour_pt, button_labels
-from app_components.notification import Notification
+from app_components.tokens import label_font_size, button_labels
+from tildagonos import tildagonos
 
 from .utils import chain
+from .app import (STATE_COUNTDOWN, STATE_LOGO, DEFAULT_UPDATE_PERIOD)
 
 
 # Screen positioning for movement sequence text
@@ -36,12 +35,13 @@ V_START = -58
 
 # Timings
 _TICK_MS       =  10
-_USER_DRIVE_MS =  50
-_USER_TURN_MS  =  20
 _LONG_PRESS_MS = 750
-_RUN_COUNTDOWN_MS = 5000
-_POWER_STEP_PER_TICK = 7500
-_MAX_POWER = 30000
+
+# Default user timings for drive and turn steps (can be configured in settings)
+DEFAULT_POWER_STEP_PER_TICK = 7500
+DEFAULT_MAX_POWER = 20000
+DEFAULT_USER_DRIVE_MS =  50
+DEFAULT_USER_TURN_MS  =  20
 
 # Local sub-states (internal to Motor Moves)
 _SUB_HELP          = 0
@@ -62,13 +62,16 @@ class Instruction:
     def press_type(self) -> Button:
         return self._press_type
 
+
     def inc(self):
         self._duration += 1
+
 
     def __str__(self):
         return f"{self.press_type.name} {self._duration}"
 
-    def directional_power_tuple(self, power):
+
+    def directional_power_tuple(self, power) -> tuple[int, int]:
         if self._press_type == BUTTON_TYPES["UP"]:
             return (power, power)
         elif self._press_type == BUTTON_TYPES["DOWN"]:
@@ -78,11 +81,13 @@ class Instruction:
         elif self._press_type == BUTTON_TYPES["RIGHT"]:
             return (power, -power)
 
-    def directional_duration(self, mysettings):
+
+    def directional_duration(self, mysettings) -> int:
         if self._press_type == BUTTON_TYPES["UP"] or self._press_type == BUTTON_TYPES["DOWN"]:
             return (mysettings['drive_step_ms'].v)
         elif self._press_type == BUTTON_TYPES["LEFT"] or self._press_type == BUTTON_TYPES["RIGHT"]:
             return (mysettings['turn_step_ms'].v)
+
 
     def make_power_plan(self, mysettings):
         curr_power = 0
@@ -108,12 +113,12 @@ class Instruction:
 
 # ---- Settings initialisation -----------------------------------------------
 
-def init_settings(s, MySetting):
+def init_settings(s, MySetting: type):
     """Register motor-moves-specific settings in the shared settings dict."""
-    s['acceleration']  = MySetting(s, _POWER_STEP_PER_TICK, 1, 65535)
-    s['max_power']     = MySetting(s, _MAX_POWER, 1000, 65535)
-    s['drive_step_ms'] = MySetting(s, _USER_DRIVE_MS, 5, 200)
-    s['turn_step_ms']  = MySetting(s, _USER_TURN_MS, 5, 200)
+    s['acceleration']  = MySetting(s, DEFAULT_POWER_STEP_PER_TICK, 1, 65535)
+    s['max_power']     = MySetting(s, DEFAULT_MAX_POWER, 1000, 65535)
+    s['drive_step_ms'] = MySetting(s, DEFAULT_USER_DRIVE_MS, 5, 200)
+    s['turn_step_ms']  = MySetting(s, DEFAULT_USER_TURN_MS, 5, 200)
 
 
 # ---- Motor Moves manager ---------------------------------------------------
@@ -121,12 +126,9 @@ def init_settings(s, MySetting):
 class MotorMovesMgr:
     """Manages the Motor Moves (turtle/Logo) programming workflow.
 
-    Internally tracks its own sub-state (_sub_state) so the main app only
-    needs a single STATE_MOTOR_MOVES to know this module is active.
-
     Parameters
     ----------
-    app : LineFollowerApp
+    app : BadgeBotApp
         Reference to the main application instance.
     """
 
@@ -138,23 +140,20 @@ class MotorMovesMgr:
         self.current_instruction = None
         self.current_power_duration = ((0, 0, 0, 0), 0)
         self.power_plan_iter = iter([])
-        self.is_scroll = False
-        self.scroll_offset = 0
 
     # ------------------------------------------------------------------
     # Entry point from menu
     # ------------------------------------------------------------------
 
-    def start(self):
+    def start(self) -> bool:
         """Enter the Motor Moves flow from the main menu."""
         app = self.app
-        from .linefollower import STATE_MOTOR_MOVES
         app.set_menu(None)
         app.button_states.clear()
-        app._animation_counter = 0
+        app.animation_counter = 0
         self._sub_state = _SUB_HELP
-        app.current_state = STATE_MOTOR_MOVES
-        app._refresh = True
+        app.refresh = True
+        return True
 
     # ------------------------------------------------------------------
     # begin_moves – called after countdown to start execution
@@ -162,23 +161,21 @@ class MotorMovesMgr:
 
     def begin_moves(self):
         """Build the power plan and start running (called after countdown)."""
-        from .linefollower import STATE_MOTOR_MOVES
+        app = self.app
         self.power_plan_iter = chain(*(instr.power_plan for instr in self.instructions))
-        if self.app.hexdrive_app is not None:
-            self.app.hexdrive_app.set_power(True)
+        if app.hexdrive_app is not None:
+            app.hexdrive_app.set_power(True)
         self._sub_state = _SUB_RUN
-        self.app.current_state = STATE_MOTOR_MOVES
-        self.app._update_period = 10
+        app.update_period = _TICK_MS
+        app.refresh = True
+
 
     # ------------------------------------------------------------------
     # Per-tick update
     # ------------------------------------------------------------------
 
-    def update(self, delta):
+    def update(self, delta: int) -> bool:
         """Handle Motor Moves states.  Returns True if this module handled the state."""
-        from .linefollower import STATE_MOTOR_MOVES
-        if self.app.current_state != STATE_MOTOR_MOVES:
-            return False
 
         if self._sub_state == _SUB_HELP:
             self._update_state_help(delta)
@@ -191,46 +188,44 @@ class MotorMovesMgr:
             self._update_state_done(delta)
         return True
 
+
     # ------------------------------------------------------------------
     # Background update (called from the fast loop)
     # Returns motor output tuple, or None when sequence is done.
     # ------------------------------------------------------------------
 
-    def background_update(self, delta):
+    def background_update(self, delta: int) -> tuple[int, int] | None:
         """DC Motor control during RUN sub-state.  Returns output tuple or None."""
-        from .linefollower import STATE_MOTOR_MOVES, DEFAULT_UPDATE_PERIOD
-        if self.app.current_state != STATE_MOTOR_MOVES or self._sub_state != _SUB_RUN:
-            return None
         output = self._get_current_power_level(delta)
         if output is None:
             self._sub_state = _SUB_DONE
-            self.app._update_period = DEFAULT_UPDATE_PERIOD
+            self.app.update_period = DEFAULT_UPDATE_PERIOD
         return output
+
 
     # ------------------------------------------------------------------
     # State handlers
     # ------------------------------------------------------------------
 
-    def _update_state_help(self, delta):
+    def _update_state_help(self, delta: int) -> None:
         app = self.app
-        from .linefollower import STATE_MENU, STATE_LOGO
         if app.button_states.get(BUTTON_TYPES["CANCEL"]):
             app.button_states.clear()
-            app.current_state = STATE_MENU
+            app.return_to_menu()
         elif app.button_states.get(BUTTON_TYPES["CONFIRM"]):
             app.button_states.clear()
-            self.is_scroll = True
-            eventbus.on_async(ButtonUpEvent, app._handle_button_up, app)
+            app.scroll(True)
+            eventbus.on_async(ButtonUpEvent, app.handle_button_up, app)
             self._sub_state = _SUB_RECEIVE_INSTR
         else:
-            app._animation_counter += delta / 1000
-            if app._animation_counter > 10:
-                app._animation_counter = 0
+            app.animation_counter += delta / 1000
+            if app.animation_counter > 10:
+                app.animation_counter = 0
                 app.current_state = STATE_LOGO
 
-    def _update_state_receive_instr(self, delta):
+
+    def _update_state_receive_instr(self, delta: int) -> None:
         app = self.app
-        from .linefollower import STATE_COUNTDOWN, STATE_MOTOR_MOVES
         if app.button_states.get(BUTTON_TYPES["CONFIRM"]):
             app.long_press_delta += delta
             if app.long_press_delta >= _LONG_PRESS_MS:
@@ -238,55 +233,46 @@ class MotorMovesMgr:
                     self._sub_state = _SUB_HELP
                 else:
                     self.finalize_instruction()
-                    app._countdown_next_state = STATE_MOTOR_MOVES
+                    #app.countdown_next_state = STATE_MOTOR_MOVES
                     app.run_countdown_elapsed_ms = 0
                     app.current_state = STATE_COUNTDOWN
-                self.is_scroll = False
-                eventbus.remove(ButtonUpEvent, app._handle_button_up, app)
+                app.scroll(False)
+                eventbus.remove(ButtonUpEvent, app.handle_button_up, app)
         else:
             app.long_press_delta = 0
             if app.button_states.get(BUTTON_TYPES["CANCEL"]):
                 app.button_states.clear()
-                app._animation_counter = 0
-                self.is_scroll = False
+                app.animation_counter = 0
+                app.scroll(False)
                 self._sub_state = _SUB_HELP
-                eventbus.remove(ButtonUpEvent, app._handle_button_up, app)
+                eventbus.remove(ButtonUpEvent, app.handle_button_up, app)
                 return
-            if self.is_scroll:
-                if app.button_states.get(BUTTON_TYPES["DOWN"]):
-                    app.button_states.clear()
-                    self.scroll_offset -= 1
-                    app._refresh = True
-                elif app.button_states.get(BUTTON_TYPES["UP"]):
-                    app.button_states.clear()
-                    self.scroll_offset += 1
-                    app._refresh = True
             elif app.button_states.get(BUTTON_TYPES["RIGHT"]):
                 self._handle_instruction_press(BUTTON_TYPES["RIGHT"])
                 app.button_states.clear()
-                app._set_direction_leds(BUTTON_TYPES["RIGHT"])
-                app._refresh = True
+                app.set_direction_leds(BUTTON_TYPES["RIGHT"])
+                app.refresh = True
             elif app.button_states.get(BUTTON_TYPES["LEFT"]):
                 self._handle_instruction_press(BUTTON_TYPES["LEFT"])
                 app.button_states.clear()
-                app._set_direction_leds(BUTTON_TYPES["LEFT"])
-                app._refresh = True
+                app.set_direction_leds(BUTTON_TYPES["LEFT"])
+                app.refresh = True
             elif app.button_states.get(BUTTON_TYPES["UP"]):
                 self._handle_instruction_press(BUTTON_TYPES["UP"])
                 app.button_states.clear()
-                app._set_direction_leds(BUTTON_TYPES["UP"])
-                app._refresh = True
+                app.set_direction_leds(BUTTON_TYPES["UP"])
+                app.refresh = True
             elif app.button_states.get(BUTTON_TYPES["DOWN"]):
                 self._handle_instruction_press(BUTTON_TYPES["DOWN"])
                 app.button_states.clear()
-                app._set_direction_leds(BUTTON_TYPES["DOWN"])
-                app._refresh = True
+                app.set_direction_leds(BUTTON_TYPES["DOWN"])
+                app.refresh = True
             else:
-                app._set_direction_leds(app.last_press)
+                app.set_direction_leds(app.last_press)
 
-    def _update_state_done(self, delta):
+
+    def _update_state_done(self, delta: int):        # pylint: disable=unused-argument
         app = self.app
-        from .linefollower import STATE_COUNTDOWN, STATE_MOTOR_MOVES
         if app.button_states.get(BUTTON_TYPES["CANCEL"]):
             app.button_states.clear()
             if app.hexdrive_app is not None:
@@ -298,8 +284,9 @@ class MotorMovesMgr:
                 app.hexdrive_app.set_power(False)
             app.run_countdown_elapsed_ms = 1
             self.current_power_duration = ((0, 0, 0, 0), 0)
-            app._countdown_next_state = STATE_MOTOR_MOVES
+            #app.countdown_next_state = STATE_MOTOR_MOVES
             app.current_state = STATE_COUNTDOWN
+
 
     # ------------------------------------------------------------------
     # Instruction helpers
@@ -314,32 +301,59 @@ class MotorMovesMgr:
             self.current_instruction = Instruction(press_type)
         app.last_press = press_type
 
+
     def finalize_instruction(self):
+        """Finalize the current instruction (if any) and add it to the list."""
         app = self.app
         if self.current_instruction is not None:
-            self.current_instruction.make_power_plan(app._settings)
+            self.current_instruction.make_power_plan(app.settings)
             self.instructions.append(self.current_instruction)
             if len(self.instructions) >= 5:
-                self.scroll_offset -= 1
+                app.scroll_offset -= 1
             self.current_instruction = None
 
+
     def reset_robot(self):
-        from .linefollower import STATE_MOTOR_MOVES
+        """Reset sequence state and return to HELP."""
         app = self.app
         self._sub_state = _SUB_HELP
-        app.current_state = STATE_MOTOR_MOVES
+        #app.current_state = STATE_MOTOR_MOVES
         app.last_press = BUTTON_TYPES["CONFIRM"]
-        app._animation_counter = 0
+        app.animation_counter = 0
         app.long_press_delta = 0
-        self.is_scroll = False
-        self.scroll_offset = 0
+        app.scroll(False)
         app.run_countdown_elapsed_ms = 0
         self.instructions = []
         self.current_instruction = None
         self.current_power_duration = ((0, 0), 0)
         self.power_plan_iter = iter([])
 
-    def _get_current_power_level(self, delta):
+
+    def set_direction_leds(self, direction: Button):
+        """Utility function to set the LEDs to indicate a direction (up, down, left, right) based on the button input."""
+        if direction == BUTTON_TYPES["RIGHT"]:
+            # Green = Starboard = Right
+            self.app.clear_leds()
+            tildagonos.leds[2]  = (0, 255, 0)
+            tildagonos.leds[3]  = (0, 255, 0)                
+        elif direction ==BUTTON_TYPES["LEFT"]:
+            # Red = Port = Left
+            self.app.clear_leds()
+            tildagonos.leds[8]  = (255, 0, 0)
+            tildagonos.leds[9]  = (255, 0, 0)                
+        elif direction == BUTTON_TYPES["UP"]:
+            # Cyan
+            self.app.clear_leds()
+            tildagonos.leds[12] = (0, 255, 255)
+            tildagonos.leds[1]  = (0, 255, 255)                
+        elif direction == BUTTON_TYPES["DOWN"]:
+            # Magenta
+            self.app.clear_leds()
+            tildagonos.leds[6]  = (255, 0, 255)
+            tildagonos.leds[7]  = (255, 0, 255)    
+
+
+    def _get_current_power_level(self, delta: int) -> tuple[int, int] | None:
         if delta >= _TICK_MS:
             delta = _TICK_MS - 1
         current_power, current_duration = self.current_power_duration
@@ -356,16 +370,13 @@ class MotorMovesMgr:
             self.current_power_duration = current_power, updated_duration
             return current_power
 
+
     # ------------------------------------------------------------------
     # Draw
     # ------------------------------------------------------------------
 
-    def draw(self, ctx):
+    def draw(self, ctx) -> bool:
         """Render Motor Moves UI states.  Returns True if handled."""
-        from .linefollower import STATE_MOTOR_MOVES
-        if self.app.current_state != STATE_MOTOR_MOVES:
-            return False
-
         app = self.app
         if self._sub_state == _SUB_HELP:
             app.draw_message(ctx, ["BadgeBot", "To program:", "Press C", "When finished:", "Long press C"], [(1, 1, 0), (1, 1, 1), (1, 1, 1), (1, 1, 1), (1, 1, 1)], label_font_size)
@@ -373,12 +384,13 @@ class MotorMovesMgr:
             self._draw_receive_instr(ctx)
         elif self._sub_state == _SUB_RUN:
             current_power, _ = self.current_power_duration
-            power_str = str(tuple([int(x / (app._settings['max_power'].v // 100)) for x in current_power]))
+            power_str = str(tuple([int(x / (app.settings['max_power'].v // 100)) for x in current_power]))
             app.draw_message(ctx, ["Running...", power_str], [(1, 1, 1), (1, 1, 0)], label_font_size)
         elif self._sub_state == _SUB_DONE:
             app.draw_message(ctx, ["Program", "complete!"], [(0, 1, 0), (0, 1, 0)], label_font_size)
             button_labels(ctx, confirm_label="Replay", cancel_label="Restart")
         return True
+
 
     def _draw_receive_instr(self, ctx):
         app = self.app
@@ -398,4 +410,4 @@ class MotorMovesMgr:
                     colour = (0, 1, 0)
                 elif direction == "START" or direction == "END":
                     colour = (0.5, 0.5, 0.5)
-            ctx.rgb(*colour).move_to(H_START, V_START + label_font_size * (self.scroll_offset + i_num)).text(str(instr))
+            ctx.rgb(*colour).move_to(H_START, V_START + label_font_size * (app.scroll_offset + i_num)).text(str(instr))

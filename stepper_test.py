@@ -1,10 +1,10 @@
 # Stepper Tester Module for BadgeBot
 #
-# Handles the stepper motor tester functionality (STATE_STEPPER).
+# Handles the stepper motor tester functionality.
 # Contains the Stepper motor driver class and the StepperMode helper.
 #
 # Public interface (called by the main app):
-#   __init__(app)   – wire up to LineFollowerApp
+#   __init__(app)   – wire up to BadgeBotApp
 #   start()         – enter stepper test from menu
 #   update(delta)   – per-tick state machine update
 #   draw(ctx)       – render stepper tester UI
@@ -167,7 +167,7 @@ class Stepper:
             return
         try:
             self._hexdrive_app.motor_step(self._phase)
-        except Exception as e:
+        except Exception as e:      # pylint: disable=broad-except
             print(f"step phase {self._phase} failed:{e}")
 
     def _hit_endstop(self):
@@ -180,24 +180,26 @@ class Stepper:
         elif self._free_run_mode == 0 and self._target_pos < self._pos:
             self.speed(0)
 
-    def _timer_callback_fwd(self, t):
+    def _timer_callback_fwd(self, t):   # pylint: disable=unused-argument
         self.step(1)
 
-    def _timer_callback_rev(self, t):
+    def _timer_callback_rev(self, t):   # pylint: disable=unused-argument
         self.step(-1)
 
-    def _timer_callback(self, t):
+    def _timer_callback(self, t):       # pylint: disable=unused-argument
         if self._target_pos > self._pos:
             self.step(1)
         elif self._target_pos < self._pos:
             self.step(-1)
 
     def free_run(self, d=1):
+        """Run the stepper at the current speed in the given direction, ignoring position feedback."""
         self._free_run_mode = d
         if d != 0:
             self._update_timer((2 // self._step_size) * abs(self._steps_per_sec))
 
     def track_target(self):
+        """Run the stepper, using position feedback to maintain the target position."""
         self._free_run_mode = 0
         self._update_timer((2 // self._step_size) * abs(self._steps_per_sec))
 
@@ -209,7 +211,7 @@ class Stepper:
                 self._timer.deinit()
                 self._freq = 0
                 self._timer_is_running = False
-            except Exception as e:
+            except Exception as e:    # pylint: disable=broad-except
                 print(f"update_timer failed:{e}")
         if 0 != freq and (freq != self._freq or self._free_run_mode != self._timer_mode):
             try:
@@ -224,19 +226,21 @@ class Stepper:
                 self._min_period = (1000 // freq) - 1
                 self._timer_is_running = True
                 self._timer_mode = self._free_run_mode
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-except
                 print(f"update_timer failed:{e}")
         elif freq == 0:
             print("Timer: 0Hz")
 
     def stop(self):
+        '''Stop the motor and disable the coils.'''
         self._update_timer(0)
         try:
             self._hexdrive_app.motor_release()
-        except Exception as e:
+        except Exception as e:      # pylint: disable=broad-except
             print(f"stop failed:{e}")
 
     def enable(self, e=True):
+        '''Enable or disable the stepper motor coils & HexDrive power.'''
         self._enabled = e
         try:
             if e:
@@ -247,10 +251,11 @@ class Stepper:
                 self._update_timer(0)
                 self._hexdrive_app.motor_release()
             self._hexdrive_app.set_power(e)
-        except Exception as e:
-            print(f"enable failed:{e}")
+        except Exception:      # pylint: disable=broad-except
+            print("enable failed")
 
     def is_enabled(self):
+        '''Return True if the stepper is currently enabled (i.e. not in a power-saving state).'''
         return self._enabled
 
 
@@ -261,147 +266,146 @@ class StepperTestMgr:
 
     Parameters
     ----------
-    app : LineFollowerApp
+    app : BadgeBotApp
         Reference to the main application instance.
     """
 
     def __init__(self, app):
         self.app = app
+        self.stepper = None
+        self.stepper_mode = StepperMode()
+        self.time_since_last_input: int = 0
+        self.timeout_period: int = 120000                     # ms (2 minutes - without any user input)       
+        self.keep_alive_period: int = 500                     # ms (half the value used in hexdrive.py)  
 
     # ------------------------------------------------------------------
     # Entry point from menu
     # ------------------------------------------------------------------
 
-    def start(self):
+    def start(self) -> bool:
         """Enter stepper test from the main menu."""
         app = self.app
-        if app._stepper is None:
+        if self.stepper is None:
             for i in range(4):
                 try:
-                    app._stepper = Stepper(app, app.hexdrive_app, step_size=1,
+                    self.stepper = Stepper(app, app.hexdrive_app, step_size=1,
                                            timer_id=i,
-                                           max_pos=app._settings['step_max_pos'].v)
+                                           max_pos=app.settings['step_max_pos'].v)
                     break
-                except:
+                except Exception:   # pylint: disable=broad-except
                     pass
-        if app._stepper is None:
+        if self.stepper is None:
             app.notification = Notification("No Free Timers")
             return False
         app.set_menu(None)
         app.button_states.clear()
-        from .linefollower import STATE_STEPPER
-        app.current_state = STATE_STEPPER
-        app._refresh = True
-        app._auto_repeat_clear()
-        app._stepper.enable(True)
-        app._time_since_last_input = 0
+        app.refresh = True
+        app.auto_repeat_clear()
+        self.stepper.enable(True)
+        self.time_since_last_input = 0
+        if app.settings['logging'].v:
+            print("Entered Stepper Test mode")
         return True
 
     # ------------------------------------------------------------------
     # Per-tick update
     # ------------------------------------------------------------------
 
-    def update(self, delta):
-        """Handle STATE_STEPPER.  Returns True if this module handled the state."""
+    def update(self, delta) -> bool:
+        """Handle Stepper UI updates.  Returns True if this module handled the state."""
         app = self.app
-        from .linefollower import STATE_STEPPER, STATE_MENU
-        if app.current_state != STATE_STEPPER:
-            return False
 
         if app.button_states.get(BUTTON_TYPES["RIGHT"]):
-            if app._auto_repeat_check(delta, True):
-                if app.stepper_mode == StepperMode.SPEED:
-                    speed = app._stepper.get_speed()
-                    speed = app._inc(speed, app._auto_repeat_level + 1)
+            if app.auto_repeat_check(delta, True):
+                if self.stepper_mode == StepperMode.SPEED:
+                    speed = self.stepper.get_speed()
+                    speed = app.inc_value(speed, app.auto_repeat_level + 1)
                     if _STEPPER_MAX_SPEED < speed:
                         speed = _STEPPER_MAX_SPEED
-                    app._stepper.speed(speed)
+                    self.stepper.speed(speed)
                 else:
-                    if app.stepper_mode != StepperMode.POSITION:
-                        app.stepper_mode.set(StepperMode.POSITION)
-                        app._stepper.speed(_STEPPER_DEFAULT_SPEED)
-                        app._stepper.track_target()
-                    pos = app._stepper.get_pos()
-                    pos = app._inc(pos, app._auto_repeat_level + 1)
-                    app._stepper.target(pos)
-                app._refresh = True
+                    if self.stepper_mode != StepperMode.POSITION:
+                        self.stepper_mode.set(StepperMode.POSITION)
+                        self.stepper.speed(_STEPPER_DEFAULT_SPEED)
+                        self.stepper.track_target()
+                    pos = self.stepper.get_pos()
+                    pos = app.inc_value(pos, app.auto_repeat_level + 1)
+                    self.stepper.target(pos)
+                app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["LEFT"]):
-            if app._auto_repeat_check(delta, True):
-                if app.stepper_mode == StepperMode.SPEED:
-                    speed = app._stepper.get_speed()
-                    speed = app._dec(speed, app._auto_repeat_level + 1)
+            if app.auto_repeat_check(delta, True):
+                if self.stepper_mode == StepperMode.SPEED:
+                    speed = self.stepper.get_speed()
+                    speed = app.dec_value(speed, app.auto_repeat_level + 1)
                     if -_STEPPER_MAX_SPEED > speed:
                         speed = -_STEPPER_MAX_SPEED
-                    app._stepper.speed(speed)
+                    self.stepper.speed(speed)
                 else:
-                    if app.stepper_mode != StepperMode.POSITION:
-                        app.stepper_mode.set(StepperMode.POSITION)
-                        app._stepper.speed(_STEPPER_DEFAULT_SPEED)
-                        app._stepper.track_target()
-                    pos = app._stepper.get_pos()
-                    pos = app._dec(pos, app._auto_repeat_level + 1)
-                    app._stepper.target(pos)
-                app._refresh = True
+                    if self.stepper_mode != StepperMode.POSITION:
+                        self.stepper_mode.set(StepperMode.POSITION)
+                        self.stepper.speed(_STEPPER_DEFAULT_SPEED)
+                        self.stepper.track_target()
+                    pos = self.stepper.get_pos()
+                    pos = app.dec_value(pos, app.auto_repeat_level + 1)
+                    self.stepper.target(pos)
+                app.refresh = True
         else:
-            app._auto_repeat_clear()
+            app.auto_repeat_clear()
             if app.button_states.get(BUTTON_TYPES["CANCEL"]):
                 app.button_states.clear()
                 if app.hexdrive_app is not None:
-                    app._stepper.enable(False)
-                app.current_state = STATE_MENU
+                    self.stepper.enable(False)
+                app.return_to_menu()
                 return True
             elif app.button_states.get(BUTTON_TYPES["CONFIRM"]):
                 app.button_states.clear()
-                app.stepper_mode.inc()
-                if app.stepper_mode == StepperMode.POSITION:
-                    app._stepper.speed(_STEPPER_DEFAULT_SPEED)
-                    app._stepper.target(app._stepper.get_pos())
-                    app._stepper.track_target()
-                elif app.stepper_mode == StepperMode.SPEED:
-                    app._stepper.speed(0)
-                    app._stepper.free_run(1)
+                self.stepper_mode.inc()
+                if self.stepper_mode == StepperMode.POSITION:
+                    self.stepper.speed(_STEPPER_DEFAULT_SPEED)
+                    self.stepper.target(self.stepper.get_pos())
+                    self.stepper.track_target()
+                elif self.stepper_mode == StepperMode.SPEED:
+                    self.stepper.speed(0)
+                    self.stepper.free_run(1)
                 else:
-                    app._stepper.stop()
-                app._refresh = True
-                app.notification = Notification(f"  Stepper:\n {app.stepper_mode}")
-                print(f"Stepper:{app.stepper_mode}")
-        if app._refresh:
-            app._time_since_last_input = 0
+                    self.stepper.stop()
+                app.refresh = True
+                app.notification = Notification(f"  Stepper:\n {self.stepper_mode}")
+                print(f"Stepper:{self.stepper_mode}")
+        if app.refresh:
+            self.time_since_last_input = 0
         else:
-            app._time_since_last_input += delta
-            if app._time_since_last_input > app._timeout_period:
-                app._stepper.stop()
-                app._stepper.speed(0)
-                app._stepper.enable(False)
-                app.current_state = STATE_MENU
+            self.time_since_last_input += delta
+            if self.time_since_last_input > self.timeout_period:
+                self.stepper.stop()
+                self.stepper.speed(0)
+                self.stepper.enable(False)
+                app.return_to_menu()
                 app.notification = Notification("  Stepper:\n Timeout")
                 print("Stepper:Timeout")
-            elif app.stepper_mode == StepperMode.SPEED:
-                app._refresh = True
-        app._time_since_last_update += delta
-        if app._time_since_last_update > app._keep_alive_period:
-            app._stepper.step()
-            app._time_since_last_update = 0
+            elif self.stepper_mode == StepperMode.SPEED:
+                app.refresh = True
+        app.time_since_last_update += delta
+        if app.time_since_last_update > self.keep_alive_period:
+            self.stepper.step()
+            app.time_since_last_update = 0
         return True
 
     # ------------------------------------------------------------------
     # Draw
     # ------------------------------------------------------------------
 
-    def draw(self, ctx):
+    def draw(self, ctx) -> bool:
         """Render Stepper Tester UI.  Returns True if handled."""
         app = self.app
-        from .linefollower import STATE_STEPPER
-        if app.current_state != STATE_STEPPER:
-            return False
 
         stepper_text = ["S"] * (1 + app.num_steppers)
         stepper_text_colours = [(0.4, 0.0, 0.0)] * (1 + app.num_steppers)
         stepper_text[0] = "Stepper Test"
         stepper_text_colours[0] = (1, 1, 1)
-        if app._stepper is not None:
+        if self.stepper is not None:
             i = 0
-            if app.stepper_mode == StepperMode.OFF:
+            if self.stepper_mode == StepperMode.OFF:
                 body_colour = (0.2, 0.2, 0.2)
                 bar_colour = (0.4, 0.4, 0.4)
             else:
@@ -414,7 +418,7 @@ class StepperTestMgr:
             background_colour = (0.15, 0.15, 0.15)
             ctx.rgb(*background_colour).rectangle(-100, 1, 200, label_font_size - 2).fill()
             c = 0
-            x = 200 * (app._stepper.get_pos() / app._settings['step_max_pos'].v) - 100
+            x = 200 * (self.stepper.get_pos() / app.settings['step_max_pos'].v) - 100
             ctx.rgb(*bar_colour).rectangle(x - 2, 1, 5, label_font_size - 2).fill()
             ctx.rgb(*body_colour)
             if x > (c + 4):
@@ -423,10 +427,10 @@ class StepperTestMgr:
                 ctx.rectangle(x + 4, 3, c - x - 4, label_font_size - 6).fill()
             ctx.rgb(0, 0, 0).move_to(c, 0).line_to(c, label_font_size).stroke()
             ctx.restore()
-            if app.stepper_mode == StepperMode.SPEED:
-                stepper_text[i + 1] = f"{int(app._stepper.get_speed()):4}/s"
+            if self.stepper_mode == StepperMode.SPEED:
+                stepper_text[i + 1] = f"{int(self.stepper.get_speed()):4}/s"
             else:
-                stepper_text[i + 1] = "Off" if (app.stepper_mode == StepperMode.OFF) else f"{int(app._stepper.get_pos()):+6} "
+                stepper_text[i + 1] = "Off" if (self.stepper_mode == StepperMode.OFF) else f"{int(self.stepper.get_pos()):+6} "
         app.draw_message(ctx, stepper_text, stepper_text_colours, label_font_size)
         button_labels(ctx, confirm_label="Mode", cancel_label="Exit", left_label="<--", right_label="-->")
         return True

@@ -1,0 +1,42 @@
+# Pylint formatting policy used across the project.
+# Set to 160 to match existing code style and reduce noisy line wrapping.
+[tool.pylint.format]
+max-line-length = 200
+
+# General pylint behavior for this repository.
+[tool.pylint.master]
+# These modules are provided by BadgeOS/MicroPython runtime or simulator,
+# not by standard desktop CPython. Ignoring them avoids false E0401 import
+# errors when linting on developer machines.
+ignored-modules = [
+    "machine",
+    "ota",
+    "vfs",
+    "system",
+    "system.eventbus",
+    "system.scheduler",
+    "system.scheduler.events",
+    "system.patterndisplay",
+    "system.patterndisplay.events",
+    "app",
+    "app_components",
+    "app_components.notification",
+    "app_components.tokens",
+    "events",
+    "events.input",
+    "settings",
+    "tildagonos",
+    "frontboards",
+    "frontboards.twentyfour",
+]
+
+# Type-checking exceptions for dynamic runtime members.
+[tool.pylint.typecheck]
+# MicroPython exposes these members at runtime, but desktop type models often
+# do not. Marking them as generated-members prevents false no-member warnings.
+generated-members = [
+    "time.ticks_ms",
+    "time.ticks_diff",
+    "time.sleep_ms",
+    "asyncio.sleep_ms",
+]

@@ -2,17 +2,18 @@
 #
 # Contains the MySetting class for managing individual settings with
 # min/max bounds, persistence, and increment/decrement by level.
-# Also contains the settings editing UI state handler (STATE_SETTINGS).
+# Also contains the settings editing UI state handler
 #
 # Public interface (called by the main app):
-#   __init__(app)   – wire up to LineFollowerApp
-#   update(delta)   – per-tick state machine update for STATE_SETTINGS
+#   __init__(app)   – wire up to BadgeBotApp
+#   update(delta)   – per-tick state machine update
 #   draw(ctx)       – render settings editing UI
 
 import settings as platform_settings
 from events.input import BUTTON_TYPES
 from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
+from .app import (MAIN_MENU_ITEMS, MENU_ITEM_SETTINGS)
 
 
 class MySetting:
@@ -33,6 +34,7 @@ class MySetting:
         return None
 
     def inc(self, v, l=0):
+        """ Increment the setting value.  If l > 0, increment by the next highest order of magnitude (e.g. 10s place for l=1, 100s place for l=2, etc.)"""
         if isinstance(self.v, bool):
             v = not v
         elif isinstance(self.v, int):
@@ -52,6 +54,7 @@ class MySetting:
         return v
 
     def dec(self, v, l=0):
+        """Decrement the setting value.  If l > 0, decrement by the next highest order of magnitude (e.g. 10s place for l=1, 100s place for l=2, etc.)"""
         if isinstance(self.v, bool):
             v = not v
         elif isinstance(self.v, int):
@@ -71,21 +74,22 @@ class MySetting:
         return v
 
     def persist(self):
+        """Persist the setting value to platform storage.  If the value is equal to the default, the setting will be removed from storage to save space."""
         try:
             if self.v != self.d:
                 platform_settings.set(f"badgebot.{self._index()}", self.v)
             else:
                 platform_settings.set(f"badgebot.{self._index()}", None)
-        except Exception as e:
+        except Exception as e:          # pylint: disable=broad-except
             print(f"H:Failed to persist setting {self._index()}: {e}")
 
 
 class SettingsMgr:
-    """Manages the Settings editing UI (STATE_SETTINGS).
+    """Manages the Settings editing UI.
 
     Parameters
     ----------
-    app : LineFollowerApp
+    app : BadgeBotApp
         Reference to the main application instance.
     """
 
@@ -97,48 +101,45 @@ class SettingsMgr:
     # ------------------------------------------------------------------
 
     def update(self, delta):
-        """Handle STATE_SETTINGS.  Returns True if this module handled the state."""
+        """Handle Settings editing UI.  Returns True if this module handled the state."""
         app = self.app
-        from .linefollower import STATE_SETTINGS, STATE_MENU, _main_menu_items, MENU_ITEM_SETTINGS
-        if app.current_state != STATE_SETTINGS:
-            return False
 
         if app.button_states.get(BUTTON_TYPES["UP"]):
-            if app._auto_repeat_check(delta, False):
-                app._edit_setting_value = app._settings[app._edit_setting].inc(app._edit_setting_value, app._auto_repeat_level)
-                if app._settings['logging'].v:
-                    print(f"Setting: {app._edit_setting} (+) Value: {app._edit_setting_value}")
-                app._refresh = True
+            if app.auto_repeat_check(delta, False):
+                app.edit_setting_value = app.settings[app.edit_setting].inc(app.edit_setting_value, app.auto_repeat_level)
+                if app.settings['logging'].v:
+                    print(f"Setting: {app.edit_setting} (+) Value: {app.edit_setting_value}")
+                app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["DOWN"]):
-            if app._auto_repeat_check(delta, False):
-                app._edit_setting_value = app._settings[app._edit_setting].dec(app._edit_setting_value, app._auto_repeat_level)
-                if app._settings['logging'].v:
-                    print(f"Setting: {app._edit_setting} (-) Value: {app._edit_setting_value}")
-                app._refresh = True
+            if app.auto_repeat_check(delta, False):
+                app.edit_setting_value = app.settings[app.edit_setting].dec(app.edit_setting_value, app.auto_repeat_level)
+                if app.settings['logging'].v:
+                    print(f"Setting: {app.edit_setting} (-) Value: {app.edit_setting_value}")
+                app.refresh = True
         else:
-            app._auto_repeat_clear()
+            app.auto_repeat_clear()
             if app.button_states.get(BUTTON_TYPES["RIGHT"]) or app.button_states.get(BUTTON_TYPES["LEFT"]):
                 app.button_states.clear()
-                app._edit_setting_value = app._settings[app._edit_setting].d
-                if app._settings['logging'].v:
-                    print(f"Setting: {app._edit_setting} Default: {app._edit_setting_value}")
-                app._refresh = True
+                app.edit_setting_value = app.settings[app.edit_setting].d
+                if app.settings['logging'].v:
+                    print(f"Setting: {app.edit_setting} Default: {app.edit_setting_value}")
+                app.refresh = True
                 app.notification = Notification("Default")
             elif app.button_states.get(BUTTON_TYPES["CANCEL"]):
                 app.button_states.clear()
-                if app._settings['logging'].v:
-                    print(f"Setting: {app._edit_setting} Cancelled")
-                app.set_menu(_main_menu_items[MENU_ITEM_SETTINGS])
-                app.current_state = STATE_MENU
+                if app.settings['logging'].v:
+                    print(f"Setting: {app.edit_setting} Cancelled")
+                app.set_menu(MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS])
+                app.return_to_menu()
             elif app.button_states.get(BUTTON_TYPES["CONFIRM"]):
                 app.button_states.clear()
-                if app._settings['logging'].v:
-                    print(f"Setting: {app._edit_setting} = {app._edit_setting_value}")
-                app._settings[app._edit_setting].v = app._edit_setting_value
-                app._settings[app._edit_setting].persist()
-                app.notification = Notification(f"  Setting:   {app._edit_setting}={app._edit_setting_value}")
-                app.set_menu(_main_menu_items[MENU_ITEM_SETTINGS])
-                app.current_state = STATE_MENU
+                if app.settings['logging'].v:
+                    print(f"Setting: {app.edit_setting} = {app.edit_setting_value}")
+                app.settings[app.edit_setting].v = app.edit_setting_value
+                app.settings[app.edit_setting].persist()
+                app.notification = Notification(f"  Setting:   {app.edit_setting}={app.edit_setting_value}")
+                app.set_menu(MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS])
+                app.return_to_menu()
         return True
 
     # ------------------------------------------------------------------
@@ -148,9 +149,6 @@ class SettingsMgr:
     def draw(self, ctx):
         """Render Settings editing UI.  Returns True if handled."""
         app = self.app
-        from .linefollower import STATE_SETTINGS
-        if app.current_state != STATE_SETTINGS:
-            return False
-        app.draw_message(ctx, ["Edit Setting", f"{app._edit_setting}:", f"{app._edit_setting_value}"], [(1, 1, 1), (0, 0, 1), (0, 1, 0)], label_font_size)
+        app.draw_message(ctx, ["Edit Setting", f"{app.edit_setting}:", f"{app.edit_setting_value}"], [(1, 1, 1), (0, 0, 1), (0, 1, 0)], label_font_size)
         button_labels(ctx, up_label="+", down_label="-", confirm_label="Set", cancel_label="Cancel", right_label="Default")
         return True

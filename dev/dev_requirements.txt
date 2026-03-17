@@ -2,3 +2,4 @@ pylint
 isort
 pytest
 mpy-cross
+micropython-esp32-stubs==1.27.0.post1

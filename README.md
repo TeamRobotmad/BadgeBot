@@ -76,10 +76,19 @@ If you unplug a HexDrive the PWM resources will be released immediately so you c
 Stable version available via [Tildagon App Directory](https://apps.badge.emfcamp.org/).
 
 This repo contains lots of files that you don't need on your badge to use a HexDrive. If you want to load a minimal application onto a badge directly you only need the files (as long as you have already initialised the HexDrive EEPROM):
-+ app.py
 + tildagon.toml
 + metadata.json
-+ utils.py
++ app.py or app.mpy
++ hexdrive.mpy
++ utils.mpy
++ autotune.mpy
++ autotune_mgr.mpy
++ settings_mgr.mpy
++ hexpansion_mgr.mpy
++ line_follow.mpy
++ motor_moves.mpy
++ servo_test.mpy
++ stepper_test.mpy
 
 
 ### Hexpansion Recovery ###
@@ -117,39 +126,53 @@ Writing your own code to control the motor driver is very easy.  The BadgeBot ap
 To fit the HexDrive software into a small EEPROM it is converted into a .mpy file.  The file hexdrive.py is the source of this code if you want to see what it is doing.  The intention is that this code manages the hardware as it knows which slot the hexpansion is in.
 
 ### Power
-The HexDrive incorporates a Switch Mode Power Supply which boosts the 3.3V provided by the badge up to 5V (or higher if your hexpansion has been modified).  To turn this on call
-```set_power(True)```
+The HexDrive incorporates a Switch Mode Power Supply which boosts the 3.3V provided by the badge up to 5V (or higher if your hexpansion has been modified) to drive the motors.  To turn this on or off call
+```set_power(True | False)```
 
 ### Drive
-Call ```set_motors()``` to control the two motors, providing a signed integer from -65555 to +65535 for each in a list.
+Call ```set_motors()``` to control the two motors, providing a signed integer from -65555 to +65535 for each in a tuple.
 
 Alternatively:
 Call ```set_pwm()``` to set the duty cycle of the 4 PWM channels which control the motors. This function takes a tuple of 4 integers, each from 0 to 65535. e.g.
 ```set_pwm((0,1000,1000,0))```
 note the extra set of brackets as the function argument is a single tupple of 4 values rather than being 4 individual values.
 
-
-To protect against most badge/software crashes causing the motors or servos to run out of control there is a keep alive mechanism which means that if you do not make a call to the ```set_pwm```, ```set_motors```, ```motor_step``` or ```set_servoposition``` functions the motors/servos will be turned off after 1000mS (default - which can be changed with a call to ```set_keep_alive()```).
-
-You can adjust the PWM frequency, default 20000Hz for motors and 50Hz for servos by calling the ```set_freq()``` function.
-
 ### Servos
-You can control 1,2,3 or 4 RC hobby servos (centre pulse width 1500us).  The first time you set a pulse width for a channel using ```set_servo()``` the PWM frequency for that channel will be set to 50Hz.
+You can control 1,2,3 or 4 RC hobby servos (centre pulse width 1500us).  The first time you set a pulse width for a channel using ```set_servoposition()``` the PWM frequency for that channel will be set to 50Hz.
 The first two Channels take up signals that would otherwise control Motor 1 and the second two Channels take up the signals that are used for Motor 2.
 You can use one motor and 1 or 2 servos simultaneously.
+
+### Frequency
+You can adjust the PWM frequency, default 20000Hz for motors and 50Hz for servos by calling the ```set_freq()``` function.
 
 ### Stepper Motor
 You can control a single 2 phase stepper motor using ```motor_step()``` specifying which of the 8 possible phases to output in the range 0 to 7.  There are 8 possible values as half stepping is supported. To use only full steps specify phase values of 0, 2, 4 and 6.  Information on the pros and cons of using full or half stepping can be found online and what is right for you will depend on your motor and the application.  The motor can be released (so that it is not taking power to hold it in a fixed position) using ```motor_release()```.
 
+#### Keep Alive
+To protect against most badge/software crashes causing the motors or servos to run out of control there is a keep alive mechanism which means that if you do not make a call to the ```set_pwm```, ```set_motors```, ```motor_step``` or ```set_servoposition``` functions the motors/servos will be turned off after 1000mS (default - which can be changed with a call to ```set_keep_alive()```).
+
 ### Developers setup
-This is to help develop the BadgeBot application
+This is to help develop the BadgeBot application using the Badge simulator ***NEEDS CHECKING for sim/app directories***
 ```
 git clone https://github.com/TeamRobotmad/badge-2024-software.git
 cd badge-2024-software.git
 git submodule update --init
-pip install --upgrade pip
-pip install -r ./sim/requirements.txt
-pip install -r ./sim/apps/BadgeBot/dev/dev_requirements.txt
+powershell -ExecutionPolicy Bypass -File .\dev\setup_dev_env.ps1
+```
+
+Linux/macOS:
+```
+git clone https://github.com/hughrawlinson/tildagon-demo.git
+cd tildagon-demo
+sh ./dev/setup_dev_env.sh
+```
+
+If you prefer to run commands manually:
+```
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r .\dev\dev_requirements.txt
 ```
 
 
@@ -160,6 +183,33 @@ pytest test_smoke.py
 
 ### Best practise
 Run `isort` on in-app python files. Check `pylint` for linting errors.
+
+### Regenerating QR Code
+QR generation is a development-time task and is intentionally kept out of normal
+runtime loading for the app.
+
+Generate QR output only (prints `_QR_CODE = [...]`):
+```
+python dev/generate_qr_code.py --url https://robotmad.odoo.com
+```
+
+Generate and write directly back into `app.py`:
+```
+python dev/generate_qr_code.py --url https://robotmad.odoo.com --write-app
+```
+
+Optional: integrate into release prep:
+```
+python dev/build_release.py --refresh-qr --qr-url=https://robotmad.odoo.com
+```
+
+Validate `_QR_CODE` is in sync without modifying files:
+```
+python dev/check_qr_sync.py --url https://robotmad.odoo.com
+```
+
+`build_release.py` now checks QR sync by default before packaging.
+Use `--no-check-qr` to skip this check if needed.
 
 
 ### Contribution guidelines

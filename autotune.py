@@ -57,9 +57,9 @@ class PIDAutoTuner:
         Motor power magnitude applied during relay control (e.g. max_power).
     base_power : int
         Forward drive power applied to both motors (keeps the robot moving).
-    hysteresis : float
+    hysteresis : int
         Dead-band half-width around zero error for relay switching (normalised
-        error units, 0-1).  Prevents chatter when the error is near zero.
+        error units, 0-1000).  Prevents chatter when the error is near zero.
     target_cycles : int
         Number of oscillation half-cycles to collect before finishing.
     method : int
@@ -68,7 +68,7 @@ class PIDAutoTuner:
         If True, emit detailed diagnostic prints during the tuning process.
     """
 
-    def __init__(self, relay_amplitude, base_power=0, hysteresis=0.05,
+    def __init__(self, relay_amplitude, base_power=0, hysteresis=50,
                  target_cycles=12, method=METHOD_ZIEGLER_NICHOLS, logging=True):
         self.relay_amplitude = relay_amplitude
         self.base_power = base_power
@@ -80,14 +80,14 @@ class PIDAutoTuner:
         # State
         self.state = _AT_IDLE
         self.relay_sign = 1          # +1 or -1
-        self._prev_error = 0.0
+        self._prev_error = 0
         self._elapsed_ms = 0         # accumulated elapsed time (ms)
 
         # Oscillation measurement
         self._crossing_times = []    # timestamps (ms) of zero-crossings
         self._peaks = []             # peak error values (positive half-cycles)
         self._troughs = []           # trough error values (negative half-cycles)
-        self._cur_extreme = 0.0      # running extreme in current half-cycle
+        self._cur_extreme = 0        # running extreme in current half-cycle
 
         # Results
         self._Ku = 0.0               # Ultimate gain
@@ -105,17 +105,18 @@ class PIDAutoTuner:
         """Begin the auto-tune process.  Call update() in each control loop."""
         self.state = _AT_RELAY
         self.relay_sign = 1
-        self._prev_error = 0.0
+        self._prev_error = 0
         self._crossing_times = []
         self._peaks = []
         self._troughs = []
-        self._cur_extreme = 0.0
+        self._cur_extreme = 0
         self._elapsed_ms = 0
         if self.logging:
             print("AUTOTUNE: Started relay feedback auto-tune")
             print(f"AUTOTUNE: relay_amp={self.relay_amplitude}  base_power={self.base_power} hysteresis={self.hysteresis}  target_cycles={self.target_cycles} method={_METHOD_NAMES[self.method]}")
 
-    def update(self, error, delta):
+
+    def update(self, error: int, delta: int) -> tuple[int, int]:
         """Feed a new error measurement and return the motor output tuple.
 
         Parameters
@@ -153,7 +154,7 @@ class PIDAutoTuner:
             n = len(self._crossing_times)
             if self.logging:
                 relay_symbol = '+' if self.relay_sign > 0 else '-'
-                print(f"AUTOTUNE: crossing #{n}  t={self._elapsed_ms}ms  error={error:.4f} relay={relay_symbol} peaks={len(self._peaks)} troughs={len(self._troughs)}")
+                print(f"AUTOTUNE: crossing #{n}  t={self._elapsed_ms}ms  error={error} relay={relay_symbol} peaks={len(self._peaks)} troughs={len(self._troughs)}")
 
             if n >= self.target_cycles:
                 self._finish()
@@ -187,7 +188,7 @@ class PIDAutoTuner:
     def is_failed(self):
         return self.state == _AT_FAILED
 
-    def get_gains(self):
+    def get_gains(self) -> tuple[float, float, float] | None:
         """Return the computed PID gains as (Kp, Ki, Kd).
 
         Returns None if tuning has not completed successfully.
@@ -196,7 +197,7 @@ class PIDAutoTuner:
             return None
         return (self._Kp, self._Ki, self._Kd)
 
-    def get_diagnostics(self):
+    def get_diagnostics(self) -> dict[str, float | int | str]:
         """Return a dict of diagnostic values for display/logging."""
         n_crossings = len(self._crossing_times)
         return {
@@ -213,7 +214,7 @@ class PIDAutoTuner:
             "elapsed":   self._elapsed_ms,
         }
 
-    def get_quality(self):
+    def get_quality(self) -> float:
         """Return a quality score 0-100 for the tuning result.
 
         The score is based on:
@@ -224,7 +225,7 @@ class PIDAutoTuner:
         """
         return self._quality
 
-    def get_status_text(self):
+    def get_status_text(self) -> str:
         """Return a short human-readable status string."""
         if self.state == _AT_IDLE:
             return "Idle"
@@ -286,18 +287,18 @@ class PIDAutoTuner:
             self.state = _AT_FAILED
             return
 
-        avg_peak   = sum(abs(p) for p in valid_peaks)   / len(valid_peaks)
-        avg_trough = sum(abs(t) for t in valid_troughs) / len(valid_troughs)
-        amplitude = (avg_peak + avg_trough) / 2.0  # average half-amplitude
+        avg_peak   = sum(abs(p) for p in valid_peaks)   // len(valid_peaks)
+        avg_trough = sum(abs(t) for t in valid_troughs) // len(valid_troughs)
+        amplitude = (avg_peak + avg_trough) // 2  # average half-amplitude
 
         if self.logging:
-            print("AUTOTUNE: Peaks: " + str(["%.4f" % p for p in valid_peaks]))
-            print("AUTOTUNE: Troughs: " + str(["%.4f" % t for t in valid_troughs]))
+            print("AUTOTUNE: Peaks: " + str(["%d" % p for p in valid_peaks]))
+            print("AUTOTUNE: Troughs: " + str(["%d" % t for t in valid_troughs]))
             print("AUTOTUNE: Average amplitude a = " + str(amplitude))
 
         if amplitude < _MIN_AMPLITUDE:
             if self.logging:
-                print(f"AUTOTUNE: FAILED - amplitude {amplitude:.4f} too small (min {_MIN_AMPLITUDE})")
+                print(f"AUTOTUNE: FAILED - amplitude {amplitude} too small (min {_MIN_AMPLITUDE})")
             self.state = _AT_FAILED
             return
 
@@ -319,9 +320,10 @@ class PIDAutoTuner:
 
         self.state = _AT_DONE
         if self.logging:
-            print(f"AUTOTUNE: SUCCESS - Kp={self._Kp:.4f}  Ki={self._Ki:.6f} Kd={self._Kd:.4f}")
+            print(f"AUTOTUNE: SUCCESS - Kp={self._Kp}  Ki={self._Ki} Kd={self._Kd}")
             print(f"AUTOTUNE: Quality score = {self._quality:.1f}%")
             print(f"AUTOTUNE: Method = {_METHOD_NAMES[self.method]}")
+
 
     def _apply_tuning_rules(self):
         """Compute Kp, Ki, Kd from Ku and Tu using the selected method."""
@@ -330,29 +332,30 @@ class PIDAutoTuner:
 
         if self.method == METHOD_ZIEGLER_NICHOLS:
             # Classic Ziegler-Nichols PID
-            self._Kp = 0.6 * Ku
-            self._Ki = 1.2 * Ku / Tu   # = 2 * Kp / Tu
-            self._Kd = 0.075 * Ku * Tu # = Kp * Tu / 8
+            self._Kp = int(0.6 * Ku)
+            self._Ki = int(1.2 * Ku / Tu)   # = 2 * Kp / Tu
+            self._Kd = int(0.075 * Ku * Tu) # = Kp * Tu / 8
 
         elif self.method == METHOD_TYREUS_LUYBEN:
             # Tyreus-Luyben: less aggressive, reduced oscillation
-            self._Kp = 0.4545 * Ku     # Ku / 2.2
-            self._Ki = self._Kp / (2.2 * Tu)
-            self._Kd = self._Kp * Tu / 6.3
+            self._Kp = int(0.4545 * Ku)     # Ku / 2.2
+            self._Ki = int(self._Kp / (2.2 * Tu))
+            self._Kd = int(self._Kp * Tu / 6.3)
 
         elif self.method == METHOD_SOME_OVERSHOOT:
             # Moderate tuning: Kp/3, with some overshoot tolerance
-            self._Kp = 0.33 * Ku
-            self._Ki = 0.66 * Ku / Tu
-            self._Kd = 0.11 * Ku * Tu
+            self._Kp = int(0.33 * Ku)
+            self._Ki = int(0.66 * Ku / Tu)
+            self._Kd = int(0.11 * Ku * Tu)
 
         elif self.method == METHOD_NO_OVERSHOOT:
             # Conservative: minimal overshoot
-            self._Kp = 0.2 * Ku
-            self._Ki = 0.4 * Ku / Tu
-            self._Kd = 0.066 * Ku * Tu
+            self._Kp = int(0.2 * Ku)
+            self._Ki = int(0.4 * Ku / Tu)
+            self._Kd = int(0.066 * Ku * Tu)
 
-    def _calc_quality(self, periods, peaks, troughs):
+
+    def _calc_quality(self, periods, peaks, troughs) -> float:
         """Compute a quality score 0-100 based on oscillation consistency."""
         score = 100.0
 
@@ -399,30 +402,3 @@ class PIDAutoTuner:
             print(f"AUTOTUNE: Quality breakdown: period={period_score:.1f} amplitude={amp_score:.1f} cycles={cycle_score:.1f} total={score:.1f}%")
 
         return score
-
-
-def compute_error(left_raw, right_raw):
-    """Compute a normalised error from raw sensor discharge times.
-
-    Parameters
-    ----------
-    left_raw : int
-        Raw discharge time (µs) from the left sensor.
-    right_raw : int
-        Raw discharge time (µs) from the right sensor.
-
-    Returns
-    -------
-    float
-        Error in range [-1, +1].
-        Negative = line is to the left (steer left).
-        Positive = line is to the right (steer right).
-
-    The sensor with the *shorter* discharge time is closer to the line
-    (higher reflectance).  So if left_raw < right_raw the line is to the
-    left and the error is negative.
-    """
-    total = left_raw + right_raw
-    if total == 0:
-        return 0.0
-    return (left_raw - right_raw) / total
