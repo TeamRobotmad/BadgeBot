@@ -1,19 +1,15 @@
 # Hexpansion & EEPROM Management Module for BadgeBot
 #
 # Handles detection, initialisation, programming, upgrading and erasure of
-# HexDrive / HexSense hexpansion EEPROMs.  Extracted from linefollower.py so
-# that the hexpansion-specific logic can be maintained independently.
+# HexDrive / HexSense hexpansion EEPROMs.
 #
 # Public interface (called by the main app):
-#   __init__(app)            – wire up to the main BadgeBotApp instance
-#   register_events()       – register hexpansion insertion/removal handlers on eventbus
-#   unregister_events()     – unregister hexpansion event handlers
-#   scan_ports()           – initial port scan at startup
-#   update(delta)          – per-tick hexpansion state-machine update
-#   draw(ctx)              – render hexpansion-related UI states
-#
-# Constants moved here:  _ERASE_SLOT, _EEPROM_*, HexpansionType
-# Constants that stay in linefollower.py:  _LOGGING, _IS_SIMULATOR
+#   __init__(app)       – wire up to the main BadgeBotApp instance
+#   register_events()   – register hexpansion insertion/removal handlers on eventbus
+#   unregister_events() – unregister hexpansion event handlers
+#   scan_ports()        – initial port scan at startup
+#   update(delta)       – per-tick hexpansion state-machine update
+#   draw(ctx)           – render hexpansion-related UI states
 
 import os
 import sys
@@ -37,7 +33,7 @@ _EEPROM_NUM_ADDRESS_BYTES = 2       # Number of bytes used for the memory addres
 _EEPROM_PAGE_SIZE = 32
 _EEPROM_TOTAL_SIZE = 64 * 1024 // 8
 
-# Default erase slot (moved from linefollower.py)
+# Default erase slot
 _ERASE_SLOT = 0
 
 _IS_SIMULATOR = sys.platform != "esp32"
@@ -50,10 +46,6 @@ _SUB_UPGRADE       = 3           # Hexpansion ready for App upgrade
 _SUB_ERASE         = 4           # Hexpansion ready for EEPROM erase
 _SUB_PROGRAMMING   = 5           # Hexpansion EEPROM programming
 
-
-_SUB_RECEIVE_INSTR = 2
-_SUB_RUN           = 3
-_SUB_DONE          = 4  
 
 _HEXDRIVE_REQUIRED_MESSAGE = ["BadgeBot requires","HexDrive hexpansion","from RobotMad","github.com","/TeamRobotmad","/BadgeBot"]
 _HEXDRIVE_REQUIRED_MESSAGE_COLOURS = [(1,1,1),(1,1,0),(1,1,0),(1,1,1),(1,1,1),(1,1,1)]
@@ -110,9 +102,8 @@ class HexpansionMgr:
         read and written.
     """
 
-    # Import state constants locally to keep the module self-contained.
-    # They are still defined in linefollower.py (the canonical location).
-    # Methods such as update() / draw() import them on demand via `from .linefollower import ...`.
+    # Sub-states are defined at module level (_SUB_*); app-level state
+    # routing is handled by the dispatch tables in app.py.
 
     def __init__(self, app):
         self.app = app

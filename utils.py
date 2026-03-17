@@ -1,4 +1,4 @@
-#util.py
+#utils.py
 from math import pi
 
 from display import hexagon

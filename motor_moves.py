@@ -50,7 +50,7 @@ _SUB_RUN           = 2
 _SUB_DONE          = 3
 
 
-# ---- Instruction class (moved from linefollower.py) -----------------------
+# ---- Instruction class -----------------------------------------------------
 
 class Instruction:
     def __init__(self, press_type: Button) -> None:
@@ -215,7 +215,7 @@ class MotorMovesMgr:
         elif app.button_states.get(BUTTON_TYPES["CONFIRM"]):
             app.button_states.clear()
             app.scroll(True)
-            eventbus.on_async(ButtonUpEvent, app.handle_button_up, app)
+            eventbus.on_async(ButtonUpEvent, app._handle_button_up, app)
             self._sub_state = _SUB_RECEIVE_INSTR
         else:
             app.animation_counter += delta / 1000
@@ -237,7 +237,7 @@ class MotorMovesMgr:
                     app.run_countdown_elapsed_ms = 0
                     app.current_state = STATE_COUNTDOWN
                 app.scroll(False)
-                eventbus.remove(ButtonUpEvent, app.handle_button_up, app)
+                eventbus.remove(ButtonUpEvent, app._handle_button_up, app)
         else:
             app.long_press_delta = 0
             if app.button_states.get(BUTTON_TYPES["CANCEL"]):
@@ -245,7 +245,7 @@ class MotorMovesMgr:
                 app.animation_counter = 0
                 app.scroll(False)
                 self._sub_state = _SUB_HELP
-                eventbus.remove(ButtonUpEvent, app.handle_button_up, app)
+                eventbus.remove(ButtonUpEvent, app._handle_button_up, app)
                 return
             elif app.button_states.get(BUTTON_TYPES["RIGHT"]):
                 self._handle_instruction_press(BUTTON_TYPES["RIGHT"])

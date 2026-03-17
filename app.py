@@ -31,7 +31,7 @@ from .utils import draw_logo_animated, parse_version
 CURRENT_HEXDRIVE_APP_VERSION = 6 # HEXDRIVE.PY Integer Version Number - checked against the EEPROM app.py version to determine if it needs updating
 
 
-APP_VERSION = "0.1" # BadgeBot App Version Number
+APP_VERSION = "1.3" # BadgeBot App Version Number
 
 # If you change the URL then you will need to regenerate the QR code
 # using the generate_qr_code.py script, and update the _QR_CODE constant below with the new code generated for your URL
@@ -277,7 +277,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             if self.current_state in _LED_CONTROL_STATES:
                 eventbus.emit(PatternDisable())
             elif self.current_state == STATE_MOTOR_MOVES:
-                eventbus.on_async(ButtonUpEvent, self.handle_button_up, self)
+                eventbus.on_async(ButtonUpEvent, self._handle_button_up, self)
 
 
     async def _lose_focus(self, event: RequestForegroundPopEvent):
@@ -285,7 +285,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             eventbus.emit(PatternEnable())
             self.pattern_status = True
             if self.current_state == STATE_MOTOR_MOVES:
-                eventbus.remove(ButtonUpEvent, self.handle_button_up, self)            
+                eventbus.remove(ButtonUpEvent, self._handle_button_up, self)            
 
 
     async def _handle_button_up(self, event: ButtonUpEvent):
@@ -307,7 +307,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             last_time = cur_time
 
 
-    ### NON-ASYNC FUCNTIONS ###
+    ### NON-ASYNC FUNCTIONS ###
 
     def background_update(self, delta: int):
         """Background update function that is called at a regular interval from the background task loop.
