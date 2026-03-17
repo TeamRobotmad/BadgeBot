@@ -11,7 +11,7 @@ RUNTIME_MODULES = {
     "hexdrive",
     "autotune",
     "autotune_mgr",
-    "setting_mgr",
+    "settings_mgr",
     "hexpansion_mgr",
     "line_follow",
     "motor_moves",

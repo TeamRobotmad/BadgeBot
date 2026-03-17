@@ -50,7 +50,7 @@ _SUB_RUN           = 2
 _SUB_DONE          = 3
 
 
-# ---- Instruction class (moved from linefollower.py) -----------------------
+# ---- Instruction class -----------------------------------------------------
 
 class Instruction:
     def __init__(self, press_type: Button) -> None:

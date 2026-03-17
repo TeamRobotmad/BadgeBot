@@ -2,7 +2,7 @@
 
 Companion app for HexDrive expansion, assuming BadgeBot configuration with 2 motors or 4 servos.
 
-This guide is current for Badgebot version 1.3
+This guide is current for BadgeBot version 0.5.1 (app.py APP_VERSION 0.1, tildagon.toml version 0.5.1)
 
 As this application has become quite complicated if you are looking for example code to use a HexDrive please see [HexDriveUseTemplate](https://github.com/TeamRobotmad/HexDriveUseTemplate)
 
@@ -24,16 +24,24 @@ There must be a HexDrive board plugged in and running the latest software to use
 
 ### Main Menu ###
 
-The main menu will present options for a demonstration for a 2 motor robot "Motor Moves", a test/demo a single Stepper Motor "Stepper Test", or a simple "Servo Test" function for up to 4 servos.
+The main menu presents the following options:
+- **Line Follower** – PID-controlled line following using a HexSense with QTRX reflectance sensors
+- **Motor Moves** – Logo/turtle-style motor programming (record UP/DOWN/LEFT/RIGHT sequences, then execute)
+- **Stepper Test** – Test and control a single stepper motor (position and speed modes)
+- **Servo Test** – Test up to 4 RC servos (position, trim, and scanning modes)
+- **PID Auto Tune** – Automatic PID gain tuning using relay feedback (Åström-Hägglund method)
+- **Settings** – Adjust configurable parameters (see below)
+- **About** – Show version info, animated logo and QR code
+- **Exit** – Exit the BadgeBot app
 
 ### Settings ###
 
 The main menu includes a sub-menu of Settings which can be adjusted.
-#### Motor Moves SETTINGS ####
+#### Motor Moves Settings ####
 | Setting          | Description                               | Default        | Min    | Max    |
 |------------------|-------------------------------------------|----------------|--------|--------|
 | acceleration     | Limits the change in motor drive per tick | 7500           | 1      | 65535  |
-| max_power        | Maximum Motor power level                 | 65536          | 1000   | 65535  |
+| max_power        | Maximum motor power level                 | 20000          | 1000   | 65535  |
 | drive_step_ms    | Step duration for driving in ms           | 50             | 5      | 200    |
 | turn_step_ms     | Step duration for turning in ms           | 20             | 5      | 200    |
 #### Servo Test Settings ####
@@ -42,19 +50,20 @@ The main menu includes a sub-menu of Settings which can be adjusted.
 | servo_step       | Servo pulse step value in us              | 10             | 1      | 100    |
 | servo_range      | Range of servo motion in us               | 1000           | 100    | 1400   |
 | servo_period     | Servo period duration in ms               | 20             | 5      | 50     |
+#### Line Follower Settings ####
+| Setting          | Description                               | Default        | Min    | Max    |
+|------------------|-------------------------------------------|----------------|--------|--------|
+| line_threshold   | Line sensor threshold                     | 500            | 0      | 65535  |
+| pid_kp           | Proportional gain for line following      | 20000          | 0      | 65536  |
+| pid_ki           | Integral gain for line following          | 0              | 0      | 65535  |
+| pid_kd           | Derivative gain for line following        | 0              | 0      | 65535  |
 #### Other Settings ####
 | Setting          | Description                               | Default        | Min    | Max    |
 |------------------|-------------------------------------------|----------------|--------|--------|
 | brightness       | LED brightness                            | 1.0            | 0.1    | 1.0    |
 | logging          | Enable or disable logging                 | False          | False  | True   |
 | erase_slot       | Slot to offer erase function              | 0 (i.e. none)  | 0      | 6      |
-| stepper_max_pos  | Maximum stepper position                  | 6200           | 0      | 65535  | 
-#### PID Auto Tune Settings ####
-| Setting          | Description                               | Default        | Min    | Max      |
-|------------------|-------------------------------------------|----------------|--------|----------|
-| pid_kp           | Proportional gain for line following      | 0.0            | 0.0    | 100000.0 |
-| pid_ki           | Integral gain for line following          | 0.0            | 0.0    | 100000.0 |
-| pid_kd           | Derivative gain for line following        | 0.0            | 0.0    | 100000.0 |
+| step_max_pos     | Maximum stepper position                  | 3100           | 0      | 65535  |
 
 The PID gains are best set by using the "PID Auto Tune" menu option.  Place the robot on a line and press C to start the tuning process.  The auto-tuner uses relay feedback (Åström-Hägglund method) to determine the ultimate gain and period of oscillation, then calculates PID gains using Ziegler-Nichols tuning rules.  The tuning process includes a quality score (0-100%) indicating how consistent the oscillation data was.  Results are automatically saved to settings.
 
@@ -130,12 +139,12 @@ The HexDrive incorporates a Switch Mode Power Supply which boosts the 3.3V provi
 ```set_power(True | False)```
 
 ### Drive
-Call ```set_motors()``` to control the two motors, providing a signed integer from -65555 to +65535 for each in a tuple.
+Call ```set_motors()``` to control the two motors, providing a signed integer from -65535 to +65535 for each in a tuple.
 
 Alternatively:
 Call ```set_pwm()``` to set the duty cycle of the 4 PWM channels which control the motors. This function takes a tuple of 4 integers, each from 0 to 65535. e.g.
 ```set_pwm((0,1000,1000,0))```
-note the extra set of brackets as the function argument is a single tupple of 4 values rather than being 4 individual values.
+note the extra set of brackets as the function argument is a single tuple of 4 values rather than being 4 individual values.
 
 ### Servos
 You can control 1,2,3 or 4 RC hobby servos (centre pulse width 1500us).  The first time you set a pulse width for a channel using ```set_servoposition()``` the PWM frequency for that channel will be set to 50Hz.
@@ -152,10 +161,12 @@ You can control a single 2 phase stepper motor using ```motor_step()``` specifyi
 To protect against most badge/software crashes causing the motors or servos to run out of control there is a keep alive mechanism which means that if you do not make a call to the ```set_pwm```, ```set_motors```, ```motor_step``` or ```set_servoposition``` functions the motors/servos will be turned off after 1000mS (default - which can be changed with a call to ```set_keep_alive()```).
 
 ### Developers setup
-This is to help develop the BadgeBot application using the Badge simulator ***NEEDS CHECKING for sim/app directories***
+This is to help develop the BadgeBot application using the Badge simulator.
+
+Windows:
 ```
 git clone https://github.com/TeamRobotmad/badge-2024-software.git
-cd badge-2024-software.git
+cd badge-2024-software
 git submodule update --init
 powershell -ExecutionPolicy Bypass -File .\dev\setup_dev_env.ps1
 ```
@@ -177,8 +188,10 @@ python -m pip install -r .\dev\dev_requirements.txt
 
 
 ### Running tests
+Tests must be run from the `tests/` directory:
 ```
-pytest test_smoke.py
+cd tests
+python -m pytest test_smoke.py test_autotune.py -v
 ```
 
 ### Best practise

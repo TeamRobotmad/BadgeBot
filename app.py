@@ -307,7 +307,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             last_time = cur_time
 
 
-    ### NON-ASYNC FUCNTIONS ###
+    ### NON-ASYNC FUNCTIONS ###
 
     def background_update(self, delta: int):
         """Background update function that is called at a regular interval from the background task loop.
