@@ -38,7 +38,7 @@ generated-members = [
     "time.ticks_ms",
     "time.ticks_diff",
     "time.sleep_ms",
-    "asyncio.sleep_ms"
+    "asyncio.sleep_ms",
     "time.ticks_us",
     "time.sleep_us",
 ]

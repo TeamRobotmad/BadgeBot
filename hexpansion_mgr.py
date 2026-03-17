@@ -102,8 +102,6 @@ class HexpansionMgr:
         read and written.
     """
 
-    # State constants are imported from .app to keep the module self-contained.
-
     def __init__(self, app):
         self.app = app
         self._sub_state = _SUB_INIT

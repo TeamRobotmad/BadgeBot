@@ -55,7 +55,14 @@ def test_hexdrive_type_pids_consistent():
     ]
 
     # Build a lookup from PID byte -> HexDriveType
-    hd_by_pid = {hdt.pid: hdt for hdt in _HEXDRIVE_TYPES}
+    # Also verify that PID bytes are unique within _HEXDRIVE_TYPES
+    hd_by_pid = {}
+    for hdt in _HEXDRIVE_TYPES:
+        assert hdt.pid not in hd_by_pid, (
+            f"Duplicate HexDriveType PID byte 0x{hdt.pid:02X}: "
+            f"'{hd_by_pid[hdt.pid].name}' and '{hdt.name}'"
+        )
+        hd_by_pid[hdt.pid] = hdt
 
     for ht in hexdrive_hexpansion_types:
         pid_byte = ht.pid & 0xFF
