@@ -98,29 +98,36 @@ class AutoDriveMgr:
     def start(self) -> bool:
         """Enter the Auto Drive flow from the main menu."""
         app = self.app
+        sensor_test = app.sensor_test_mgr
+
+        # Ensure we have a sensor before enabling auto-drive / motors
+        sensor_open = False
+        if sensor_test.sensor_mgr is not None and sensor_test.sensor_mgr.is_open:
+            # Already open — use as-is
+            sensor_open = True
+        else:
+            ports_to_try = [sensor_test.port_selected]
+            if app.hexdrive_port is not None and app.hexdrive_port != sensor_test.port_selected:
+                ports_to_try.append(app.hexdrive_port)
+            for probe_port in ports_to_try:
+                if sensor_test.open_sensor_port(probe_port):
+                    sensor_test.port_selected = probe_port
+                    sensor_open = True
+                    break
+            if not sensor_open:
+                app.notification = Notification(f"No sensor\n{ports_to_try}")
+                self.status = "No sensor"
+                self._active = False
+                return False
+
+        # Sensor is available: enter auto-drive mode and power motors
         app.set_menu(None)
         app.button_states.clear()
         app.update_period = 10
         app.refresh = True
         if app.hexdrive_app is not None:
             app.hexdrive_app.set_power(True)
-        # Reuse the SensorTestMgr's sensor manager if already open
-        sensor_test = app.sensor_test_mgr
-        if sensor_test.sensor_mgr is not None and sensor_test.sensor_mgr.is_open:
-            pass  # already open — use as-is
-        else:
-            ports_to_try = [sensor_test.port_selected]
-            if app.hexdrive_port is not None and app.hexdrive_port != sensor_test.port_selected:
-                ports_to_try.append(app.hexdrive_port)
-            opened = False
-            for probe_port in ports_to_try:
-                if sensor_test.open_sensor_port(probe_port):
-                    sensor_test.port_selected = probe_port
-                    opened = True
-                    break
-            if not opened:
-                app.notification = Notification(f"No sensor\n{ports_to_try}")
-                self.status = "No sensor"
+
         # Reset driving state
         self._active = True
         self.sub_state = _AUTO_SUB_DRIVE
