@@ -27,7 +27,7 @@ ignored-modules = [
     "settings",
     "tildagonos",
     "frontboards",
-    "frontboards.twentyfour"
+    "frontboards.twentyfour",
     "display",
 ]
 
