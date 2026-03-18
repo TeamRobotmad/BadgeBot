@@ -125,10 +125,6 @@ _FRONT_FACE_LABELS = (
 _FWD_DIR_DEFAULT = 0
 _FWD_DIR_LABELS = ("Normal", "Reverse")
 
-# Auto Drive default settings
-_AUTO_DRIVE_SPEED = 56000    # ~43% max power default for auto driving
-_AUTO_OBSTACLE_MM = 100      # mm — trigger scan below this distance
-
 
 # Import sub-modules after constants are defined so they can safely
 # `from .app import STATE_*` without circular-import timing issues.
@@ -139,6 +135,8 @@ from .servo_test import ServoTestMgr
 from .stepper_test import StepperTestMgr
 from .line_follow import  LineFollowMgr
 from .autotune_mgr import AutotuneMgr
+from .sensor_test import SensorTestMgr
+from .autodrive import AutoDriveMgr
 
 # Each module registers its own settings via init_settings()
 from .hexpansion_mgr import init_settings as _hexpansion_init_settings
@@ -146,6 +144,8 @@ from .motor_moves import init_settings as _motor_moves_init_settings
 from .servo_test import init_settings as _servo_test_init_settings
 from .stepper_test import init_settings as _stepper_test_init_settings
 from .line_follow import init_settings as _line_follow_init_settings
+from .sensor_test import init_settings as _sensor_test_init_settings
+from .autodrive import init_settings as _autodrive_init_settings
 
 
 class BadgeBotApp(app.App):         # pylint: disable=no-member
@@ -194,12 +194,11 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         _stepper_test_init_settings(self.settings, MySetting)
         _hexpansion_init_settings(self.settings, MySetting)
         _line_follow_init_settings(self.settings, MySetting)
+        _sensor_test_init_settings(self.settings, MySetting)
+        _autodrive_init_settings(self.settings, MySetting)
         # Direction settings
         self.settings['fwd_dir']       = MySetting(self.settings, _FWD_DIR_DEFAULT, 0, 1)
         self.settings['front_face']    = MySetting(self.settings, _FRONT_FACE_DEFAULT, 0, 11)
-        # Auto drive settings
-        self.settings['auto_speed']    = MySetting(self.settings, _AUTO_DRIVE_SPEED, 1000, 65535)
-        self.settings['auto_obstacle'] = MySetting(self.settings, _AUTO_OBSTACLE_MM, 20, 500)
 
         self.edit_setting: int  = None
         self.edit_setting_value = None       
@@ -230,17 +229,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.line_sensors_hexpansion_config  = None            # Store the HexpansionConfig of the HexSense that is providing the line sensors
         self.time_since_last_update: int = 0
 
-        # Sensor Manager (lazy-imported)
-        self._sensor_mgr = None
-        self._sensor_port_selected: int = 1
-        self._sensor_select_port: bool = True
-        self._sensor_data: dict = {}
-        self._sensor_read_timer: int = 0
-
         # High-level motor controller (created when HexDrive is found)
         self.motor_controller = None
-
-        self._auto = None  # AutoDrive instance (created on demand)
 
         # Functional area managers
         self._hexpansion_mgr   = HexpansionMgr(self)
@@ -250,6 +240,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self._settings_mgr     = SettingsMgr(self)
         self._line_follow_mgr  = LineFollowMgr(self)
         self._autotune_mgr     = AutotuneMgr(self, self._line_follow_mgr)
+        self._sensor_test_mgr  = SensorTestMgr(self)
+        self._autodrive_mgr    = AutoDriveMgr(self)
 
         # State → manager dispatch table (for efficient update/draw routing)
         self._state_update_dispatch = {
@@ -260,8 +252,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             STATE_SERVO:       self._servo_test_mgr.update,
             STATE_STEPPER:     self._stepper_test_mgr.update,
             STATE_SETTINGS:    self._settings_mgr.update,
-            STATE_SENSOR:      self._update_state_sensor,
-            STATE_AUTO:        self._update_state_auto,
+            STATE_SENSOR:      self._sensor_test_mgr.update,
+            STATE_AUTO:        self._autodrive_mgr.update,
         }
         self._state_draw_dispatch = {
             STATE_HEXPANSION:  self._hexpansion_mgr.draw,
@@ -271,14 +263,14 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             STATE_SERVO:       self._servo_test_mgr.draw,
             STATE_STEPPER:     self._stepper_test_mgr.draw,
             STATE_SETTINGS:    self._settings_mgr.draw,
-            STATE_SENSOR:      self._draw_state_sensor,
-            STATE_AUTO:        self._draw_state_auto,
+            STATE_SENSOR:      self._sensor_test_mgr.draw,
+            STATE_AUTO:        self._autodrive_mgr.draw,
         }
         self._BG_DISPATCH = {
             STATE_MOTOR_MOVES: self._motor_moves_mgr.background_update,
             STATE_FOLLOWER:    self._line_follow_mgr.background_update,
             STATE_AUTOTUNE:    self._autotune_mgr.background_update,
-            STATE_AUTO:        self._bg_update_auto,
+            STATE_AUTO:        self._autodrive_mgr.background_update,
         }
 
         # Motor Driver Hardware
@@ -843,55 +835,11 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 if self._servo_test_mgr.start():
                     self.current_state = STATE_SERVO
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_SENSOR_TEST]: # Sensor Test
-            self.set_menu(None)
-            self.button_states.clear()
-            self._sensor_data = {}
-            self.current_state = STATE_SENSOR
-            self.refresh = True
-            if self.hexdrive_port is not None:
-                if self._sensor_mgr is None:
-                    from .sensor_manager import SensorManager
-                    self._sensor_mgr = SensorManager(logging=self.settings['logging'].v)
-                else:
-                    self._sensor_mgr.close()
-                self._sensor_read_timer = 0
-                if self._sensor_mgr.open(self.hexdrive_port):
-                    self._sensor_port_selected = self.hexdrive_port
-                    self._sensor_select_port = False
-                else:
-                    self._sensor_select_port = True
-                    self._sensor_port_selected = self.hexdrive_port
-            else:
-                self._sensor_select_port = True
-                self._sensor_port_selected = 1
+            if self._sensor_test_mgr.start():
+                self.current_state = STATE_SENSOR
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_AUTO_DRIVE]: # Auto Drive
-            self.set_menu(None)
-            self.button_states.clear()
-            from .autodrive import AutoDrive
-            self._auto = AutoDrive(self)
-            self.current_state = STATE_AUTO
-            self.update_period = 10
-            self.refresh = True
-            if self.hexdrive_app is not None:
-                self.hexdrive_app.set_power(True)
-            if self._sensor_mgr is not None and self._sensor_mgr.is_open:
-                pass
-            else:
-                if self._sensor_mgr is None:
-                    from .sensor_manager import SensorManager
-                    self._sensor_mgr = SensorManager(logging=self.settings['logging'].v)
-                ports_to_try = [self._sensor_port_selected]
-                if self.hexdrive_port is not None and self.hexdrive_port != self._sensor_port_selected:
-                    ports_to_try.append(self.hexdrive_port)
-                opened = False
-                for probe_port in ports_to_try:
-                    if self._sensor_mgr.open(probe_port):
-                        self._sensor_port_selected = probe_port
-                        opened = True
-                        break
-                if not opened:
-                    self.notification = Notification(f"No sensor\n{ports_to_try}")
-                    self._auto.status = "No sensor"
+            if self._autodrive_mgr.start():
+                self.current_state = STATE_AUTO
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS]:   # Settings
             self.set_menu(MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS])
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_ABOUT]:      # About
@@ -941,115 +889,5 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         # There are only two menus so this is the only other option    
         self.set_menu("main")
 
-
-### BADGEBOT DEMO FUNCTIONALITY ###
-
-    def _update_state_sensor(self, delta: int):
-        """Update handler for sensor test mode."""
-        if self._sensor_select_port:
-            # Sub-state 1: port selection
-            if self.button_states.get(BUTTON_TYPES["RIGHT"]):
-                self.button_states.clear()
-                self._sensor_port_selected = (self._sensor_port_selected % 6) + 1
-                self.refresh = True
-            elif self.button_states.get(BUTTON_TYPES["LEFT"]):
-                self.button_states.clear()
-                self._sensor_port_selected = ((self._sensor_port_selected - 2) % 6) + 1
-                self.refresh = True
-            elif self.button_states.get(BUTTON_TYPES["CONFIRM"]):
-                self.button_states.clear()
-                if self._sensor_mgr is None:
-                    from .sensor_manager import SensorManager
-                    self._sensor_mgr = SensorManager(logging=self.settings['logging'].v)
-                else:
-                    self._sensor_mgr.close()
-                self._sensor_data = {}
-                self._sensor_read_timer = 0
-                self.refresh = True
-                if self._sensor_mgr.open(self._sensor_port_selected):
-                    self._sensor_select_port = False
-                else:
-                    self.notification = Notification("No Sensors")
-            elif self.button_states.get(BUTTON_TYPES["CANCEL"]):
-                self.button_states.clear()
-                if self._sensor_mgr is not None:
-                    self._sensor_mgr.close()
-                self.return_to_menu()
-        else:
-            # Sub-state 2: live sensor reading
-            self._sensor_read_timer += delta
-            if self._sensor_read_timer >= 250:
-                self._sensor_read_timer = 0
-                try:
-                    self._sensor_data = self._sensor_mgr.read_current()
-                except Exception as e:
-                    self._sensor_data = {"Error": str(e)}
-                self.refresh = True
-            if self.button_states.get(BUTTON_TYPES["RIGHT"]):
-                self.button_states.clear()
-                self._sensor_mgr.next_sensor()
-                self._sensor_data = {}
-                self.refresh = True
-            elif self.button_states.get(BUTTON_TYPES["LEFT"]):
-                self.button_states.clear()
-                self._sensor_mgr.prev_sensor()
-                self._sensor_data = {}
-                self.refresh = True
-            elif self.button_states.get(BUTTON_TYPES["CANCEL"]):
-                self.button_states.clear()
-                self._sensor_mgr.close()
-                self._sensor_select_port = True
-                self.refresh = True
-
-
-    def _draw_state_sensor(self, ctx):
-        """Draw handler for sensor test mode."""
-        from app_components.tokens import button_labels
-        if self._sensor_select_port:
-            self.draw_message(ctx,
-                ["Sensor Test", f"Port: {self._sensor_port_selected}"],
-                [(1, 1, 1), (0, 1, 1)],
-                label_font_size)
-            button_labels(ctx, left_label="<Port", right_label="Port>", confirm_label="Scan", cancel_label="Back")
-        else:
-            num_sensors = self._sensor_mgr.num_sensors if self._sensor_mgr else 1
-            sensor_name = self._sensor_mgr.current_sensor_name if self._sensor_mgr else "Sensor"
-            if num_sensors > 1:
-                title = f"{sensor_name} {self._sensor_mgr.current_sensor_index + 1}/{num_sensors}"
-            else:
-                title = sensor_name
-            lines = [title]
-            colours = [(0, 1, 1)]
-            if self._sensor_data:
-                for label, value in self._sensor_data.items():
-                    lines.append(f"{label}:{value}")
-                    colours.append((1, 1, 0))
-            else:
-                lines.append("Reading...")
-                colours.append((0.5, 0.5, 0.5))
-            self.draw_message(ctx, lines, colours, label_font_size)
-            if num_sensors > 1:
-                button_labels(ctx, left_label="<Prev", right_label="Next>", cancel_label="Back")
-            else:
-                button_labels(ctx, cancel_label="Back")
-
-
-    def _update_state_auto(self, delta: int):
-        """Update handler for autonomous drive mode (delegates to AutoDrive)."""
-        if self._auto is not None:
-            self._auto.update(delta)
-
-
-    def _draw_state_auto(self, ctx):
-        """Draw handler for autonomous drive mode (delegates to AutoDrive)."""
-        if self._auto is not None:
-            self._auto.draw(ctx)
-
-
-    def _bg_update_auto(self, delta: int):
-        """Background update for autonomous drive mode (delegates to AutoDrive)."""
-        if self._auto is not None:
-            self._auto.background_update(delta)
-        return None  # AutoDrive manages motors directly
 
 __app_export__ = BadgeBotApp

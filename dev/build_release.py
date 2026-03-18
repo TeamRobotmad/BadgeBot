@@ -20,6 +20,7 @@ RUNTIME_MODULES = {
     "utils",
     "motor_controller",
     "sensor_manager",
+    "sensor_test",
     "autodrive",
 }
 

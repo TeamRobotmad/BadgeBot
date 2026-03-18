@@ -588,22 +588,25 @@ class HexpansionMgr:
                 if hexdrive_app is not None:
                     self.hexdrive_port = valid_port
                     app.hexdrive_app = hexdrive_app
-                    # Create the high-level MotorController for IMU-aided driving
-                    try:
-                        from .motor_controller import MotorController
-                        app.motor_controller = MotorController(
-                            hexdrive_app, app.settings,
-                            fwd_dir_setting=app.settings.get('fwd_dir'),
-                            front_face_setting=app.settings.get('front_face'),
-                        )
-                    except Exception as e:
-                        if app.settings['logging'].v:
-                            print(f"H:MotorController init failed: {e}")
-                        app.motor_controller = None
                     if self.hexpansion_slot_type[valid_port - 1] is not None:
                         app.num_motors = app.HEXPANSION_TYPES[self.hexpansion_slot_type[valid_port - 1]].motors
                         app.num_servos = app.HEXPANSION_TYPES[self.hexpansion_slot_type[valid_port - 1]].servos
                         app.num_steppers = app.HEXPANSION_TYPES[self.hexpansion_slot_type[valid_port - 1]].steppers
+
+                    # Create the high-level MotorController for IMU-aided driving
+                    # (only when the HexDrive has motors)
+                    if app.num_motors > 0:
+                        try:
+                            from .motor_controller import MotorController
+                            app.motor_controller = MotorController(
+                                hexdrive_app, app.settings,
+                                fwd_dir_setting=app.settings.get('fwd_dir'),
+                                front_face_setting=app.settings.get('front_face'),
+                            )
+                        except Exception as e:
+                            if app.settings['logging'].v:
+                                print(f"H:MotorController init failed: {e}")
+                            app.motor_controller = None
 
                     if (0 < app.HEXPANSION_TYPES[self.hexpansion_slot_type[valid_port - 1]].steppers) or app.hexdrive_app.get_status():
                         if app.settings['logging'].v:
