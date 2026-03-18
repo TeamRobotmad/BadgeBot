@@ -27,7 +27,8 @@ ignored-modules = [
     "settings",
     "tildagonos",
     "frontboards",
-    "frontboards.twentyfour",
+    "frontboards.twentyfour"
+    "display",
 ]
 
 # Type-checking exceptions for dynamic runtime members.

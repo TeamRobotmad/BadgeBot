@@ -58,7 +58,7 @@ def draw_logo_animated(ctx, rpm, animation_counter=0, messages=None, qr_code=Non
     
 
 # QR code data
-def draw_QRCode(ctx, qr_code, size=240, colour=(1,1,1)):
+def draw_QRCode(ctx, qr_code, size=240, colour=(1,1,1)):        # pylint: disable=unused-argument
     qr_size = len( qr_code )
     
     #   Draw background - assume already drawn
@@ -88,10 +88,10 @@ def parse_version(version):
     #build = ""
     components = []
     if "+" in version:
-        version, build = version.split("+", 1)
+        version, build = version.split("+", 1)          # pylint: disable=unused-variable
         #build_components = build.split(".")
     if "-" in version:
-        version, pre_release = version.split("-", 1)
+        version, pre_release = version.split("-", 1)    # pylint: disable=unused-variable
         #if pre_release.startswith("rc"):
         #    # Re-write rc as c, to support a1, b1, rc1, final ordering
         #    pre_release = pre_release[1:]
