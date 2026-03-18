@@ -422,7 +422,7 @@ class MotorController:
                 total_y += sy
                 samples_x.append(sx)
                 samples_y.append(sy)
-            except Exception:
+            except Exception:           # pylint: disable=broad-exception-caught
                 # Ignore individual read failures; we'll check how many succeeded below.
                 pass
         success_count = len(samples_x)
@@ -579,7 +579,7 @@ class MotorController:
         log_verbose = False
         try:
             log_verbose = bool(self._settings['logging'].v)
-        except Exception:
+        except Exception:       # pylint: disable=broad-exception-caught
             log_verbose = False
 
         if log_verbose:
@@ -684,7 +684,7 @@ class MotorController:
         try:
             raw = _imu.gyro_read()
             self.gyro_dps = float(raw[self._gyro_axis])
-        except Exception:
+        except Exception:       # pylint: disable=broad-exception-caught
             self.gyro_dps = 0.0
             return
         magnitude = abs(self.gyro_dps)
@@ -696,7 +696,7 @@ class MotorController:
 
         The raw X and Y axes are rotated by the ``front_face`` angle so
         that the resulting value represents acceleration along the
-        robot’s actual forward direction — regardless of how the motors
+        robot's actual forward direction — regardless of how the motors
         are mounted on the badge.
 
         The projected value is bias-corrected (see ``_calibrate_accel``),
@@ -714,7 +714,7 @@ class MotorController:
             raw = _imu.acc_read()
             raw_x = float(raw[0])
             raw_y = float(raw[1])
-        except Exception:
+        except Exception:       # pylint: disable=broad-exception-caught
             return
 
         dt = delta_ms / 1000.0  # seconds

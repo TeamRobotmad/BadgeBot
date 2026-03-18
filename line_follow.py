@@ -194,7 +194,7 @@ class LineSensor:
             self.pins["ctrl"].init(mode=Pin.OUT)
             self.pins["ctrl"].off()
             self.pins["sig"].init(mode=Pin.IN, pull=Pin.PULL_UP)
-        except Exception as e:
+        except Exception as e:          # pylint: disable=broad-exception-caught
             print(f"{self._name} Init failed:{e}")
 
     @property

@@ -193,7 +193,7 @@ class MotorMovesMgr:
             await self.app.motor_controller.run_instructions(self.instructions)
         except asyncio.CancelledError:
             self.app.motor_controller.stop()
-        except Exception as e:
+        except Exception as e:      # pylint: disable=broad-exception-caught
             print(f"MotorController run error: {e}")
             self.app.motor_controller.stop()
 
@@ -380,7 +380,7 @@ class MotorMovesMgr:
     def set_direction_leds(self, direction: Button):
         """Utility function to set the LEDs to indicate a direction (up, down, left, right) based on the button input.
         Delegates to the app's front_face-aware LED method so LEDs rotate with the configured forward direction."""
-        self.app._set_direction_leds(direction)
+        self.app.set_direction_leds(direction)
 
 
     def _get_current_power_level(self, delta: int) -> tuple[int, int] | None:

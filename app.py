@@ -647,7 +647,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         return output
 
 
-    def _set_direction_leds(self, direction: Button):
+    def set_direction_leds(self, direction: Button):
         """LED positions rotate based on 'front_face' (0-11, each step = 30° CW).
         Each position p maps to LED pair: (p if p>0 else 12) and (p+1).
         This is independent of motor direction (fwd_dir)."""
