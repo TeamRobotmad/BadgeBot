@@ -105,17 +105,17 @@ class AutoDriveMgr:
         if app.hexdrive_app is not None:
             app.hexdrive_app.set_power(True)
         # Reuse the SensorTestMgr's sensor manager if already open
-        sensor_test = app._sensor_test_mgr
+        sensor_test = app.sensor_test_mgr
         if sensor_test.sensor_mgr is not None and sensor_test.sensor_mgr.is_open:
             pass  # already open — use as-is
         else:
-            ports_to_try = [sensor_test._port_selected]
-            if app.hexdrive_port is not None and app.hexdrive_port != sensor_test._port_selected:
+            ports_to_try = [sensor_test.port_selected]
+            if app.hexdrive_port is not None and app.hexdrive_port != sensor_test.port_selected:
                 ports_to_try.append(app.hexdrive_port)
             opened = False
             for probe_port in ports_to_try:
                 if sensor_test.open_sensor_port(probe_port):
-                    sensor_test._port_selected = probe_port
+                    sensor_test.port_selected = probe_port
                     opened = True
                     break
             if not opened:
@@ -252,7 +252,7 @@ class AutoDriveMgr:
 
     def _read_sensor(self):
         """Read the current sensor and store numeric distance and lux."""
-        sm = self.app._sensor_test_mgr.sensor_mgr
+        sm = self.app.sensor_test_mgr.sensor_mgr
         if sm is None or not sm.is_open:
             return
         try:

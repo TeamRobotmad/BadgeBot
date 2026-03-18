@@ -101,6 +101,15 @@ class SensorTestMgr:
         """Direct access to the underlying SensorManager instance."""
         return self._sensor_mgr
 
+    @property
+    def port_selected(self) -> int:
+        """Currently selected I2C port number (1–6)."""
+        return self._port_selected
+
+    @port_selected.setter
+    def port_selected(self, value: int):
+        self._port_selected = value
+
     # ------------------------------------------------------------------
     # Per-tick update
     # ------------------------------------------------------------------

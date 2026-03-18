@@ -310,6 +310,11 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         """Proxy to HexpansionMgr.hexdrive_port for convenience."""
         return self._hexpansion_mgr.hexdrive_port
 
+    @property
+    def sensor_test_mgr(self):
+        """Public access to the SensorTestMgr, used by AutoDriveMgr to share the sensor manager."""
+        return self._sensor_test_mgr
+
     async def _gain_focus(self, event: RequestForegroundPushEvent):
         if event.app is self:
             if self.current_state in _LED_CONTROL_STATES:
