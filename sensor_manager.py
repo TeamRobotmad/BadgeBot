@@ -70,7 +70,7 @@ class SensorManager:
         """Shutdown all sensors and release the I2C bus."""
         for s in self._sensors:
             try:
-                s._shutdown()
+                s.reset()
             except Exception:
                 pass
         self._sensors = []
