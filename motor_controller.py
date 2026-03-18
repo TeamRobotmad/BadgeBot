@@ -560,19 +560,26 @@ class MotorController:
         _diag_tick = 0
 
         # --- DIAGNOSTICS: start ---
-        target_mm = target_m * 1000
-        print("[MC-DIAG] === distance_drive START ===")
-        print("[MC-DIAG]   requested   = %.1f mm" % distance_mm)
-        print("[MC-DIAG]   accel_scale = %d%%" % scale_pct)
-        print("[MC-DIAG]   target_m    = %.4f m  (%.1f mm)" % (target_m, target_mm))
-        print("[MC-DIAG]   decel_start = %.1f mm  decel_range = %.1f mm" % (decel_start_m * 1000, decel_range_m * 1000))
-        print("[MC-DIAG]   bias_x=%.4f  bias_y=%.4f" % (self._accel_bias_x, self._accel_bias_y))
-        print("[MC-DIAG]   lpf_alpha=%s  deadband=%s" % (self._accel_lpf_alpha, self._accel_deadband))
-        print("[MC-DIAG]   motor_target=%s  timeout=%d ms" % (str(target), timeout))
-        theta_deg = 0.0
-        if self._front_face is not None:
-            theta_deg = -(int(self._front_face.v) * 30)
-        print("[MC-DIAG]   front_face_angle=%d deg" % theta_deg)
+        log_verbose = False
+        try:
+            log_verbose = bool(self._settings['logging'].v)
+        except Exception:
+            log_verbose = False
+
+        if log_verbose:
+            target_mm = target_m * 1000
+            print("[MC-DIAG] === distance_drive START ===")
+            print("[MC-DIAG]   requested   = %.1f mm" % distance_mm)
+            print("[MC-DIAG]   accel_scale = %d%%" % scale_pct)
+            print("[MC-DIAG]   target_m    = %.4f m  (%.1f mm)" % (target_m, target_mm))
+            print("[MC-DIAG]   decel_start = %.1f mm  decel_range = %.1f mm" % (decel_start_m * 1000, decel_range_m * 1000))
+            print("[MC-DIAG]   bias_x=%.4f  bias_y=%.4f" % (self._accel_bias_x, self._accel_bias_y))
+            print("[MC-DIAG]   lpf_alpha=%s  deadband=%s" % (self._accel_lpf_alpha, self._accel_deadband))
+            print("[MC-DIAG]   motor_target=%s  timeout=%d ms" % (str(target), timeout))
+            theta_deg = 0.0
+            if self._front_face is not None:
+                theta_deg = -(int(self._front_face.v) * 30)
+            print("[MC-DIAG]   front_face_angle=%d deg" % theta_deg)
 
         try:
             self._power_on()
