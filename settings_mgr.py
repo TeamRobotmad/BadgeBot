@@ -149,6 +149,23 @@ class SettingsMgr:
     def draw(self, ctx):
         """Render Settings editing UI.  Returns True if handled."""
         app = self.app
-        app.draw_message(ctx, ["Edit Setting", f"{app.edit_setting}:", f"{app.edit_setting_value}"], [(1, 1, 1), (0, 0, 1), (0, 1, 0)], label_font_size)
+        disp_val = self._format_setting_value(app.edit_setting, app.edit_setting_value)
+        app.draw_message(ctx, ["Edit Setting", f"{app.edit_setting}:", f"{disp_val}"], [(1, 1, 1), (0, 0, 1), (0, 1, 0)], label_font_size)
         button_labels(ctx, up_label="+", down_label="-", confirm_label="Set", cancel_label="Cancel", right_label="Default")
         return True
+
+    @staticmethod
+    def _format_setting_value(key, value):
+        """Return a display-friendly string for the given setting key/value."""
+        from .app import _FWD_DIR_LABELS, _FRONT_FACE_LABELS
+        if key == 'fwd_dir':
+            try:
+                return _FWD_DIR_LABELS[int(value)]
+            except (IndexError, ValueError, TypeError):
+                pass
+        elif key == 'front_face':
+            try:
+                return _FRONT_FACE_LABELS[int(value)]
+            except (IndexError, ValueError, TypeError):
+                pass
+        return str(value)

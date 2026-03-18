@@ -18,9 +18,26 @@ RUNTIME_MODULES = {
     "servo_test",
     "stepper_test",
     "utils",
+    "motor_controller",
+    "sensor_manager",
+    "sensor_test",
+    "autodrive",
+}
+
+# Sensor driver modules inside the sensors/ package
+SENSOR_MODULES = {
+    "sensors/__init__",
+    "sensors/sensor_base",
+    "sensors/apds9960",
+    "sensors/bme280",
+    "sensors/tcs3439",
+    "sensors/tcs3472",
+    "sensors/vl53l0x",
+    "sensors/vl6180x",
 }
 
 files_to_mpy = {Path(f"{module}.py") for module in RUNTIME_MODULES}
+files_to_mpy.update({Path(f"{module}.py") for module in SENSOR_MODULES})
 
 files_to_keep = {
     Path("app.py"),
@@ -28,6 +45,7 @@ files_to_keep = {
     Path("metadata.json"),
 }
 files_to_keep.update({Path(f"{module}.mpy") for module in RUNTIME_MODULES})
+files_to_keep.update({Path(f"{module}.mpy") for module in SENSOR_MODULES})
 
 def _construct_filepaths(dirname, filenames):
     return [Path(dirname, filename) for filename in filenames]

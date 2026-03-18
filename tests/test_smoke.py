@@ -83,3 +83,51 @@ def test_hexdrive_type_pids_consistent():
             f"Stepper count mismatch for PID 0x{pid_byte:02X}: "
             f"HexpansionType={ht.steppers}, HexDriveType={hdt.steppers}"
         )
+
+
+def test_new_states_exist():
+    """Verify the new STATE_SENSOR and STATE_AUTO constants are defined."""
+    import sim.apps.BadgeBot.app as BadgeBot
+    assert hasattr(BadgeBot, 'STATE_SENSOR')
+    assert hasattr(BadgeBot, 'STATE_AUTO')
+    assert BadgeBot.STATE_SENSOR != BadgeBot.STATE_AUTO
+
+
+def test_new_settings_registered():
+    """Verify front_face, fwd_dir, and auto drive settings are registered."""
+    from sim.apps.BadgeBot import BadgeBotApp
+    app_instance = BadgeBotApp()
+    for key in ('fwd_dir', 'front_face', 'auto_speed', 'auto_obstacle'):
+        assert key in app_instance.settings, f"Missing setting: {key}"
+
+
+def test_front_face_labels_complete():
+    """Verify _FRONT_FACE_LABELS has one entry for each valid front_face value (0-11)."""
+    import sim.apps.BadgeBot.app as BadgeBot
+    assert len(BadgeBot._FRONT_FACE_LABELS) == 12
+
+
+def test_menu_items_include_sensor_and_auto():
+    """Verify the main menu includes Sensor Test and Auto Drive entries."""
+    import sim.apps.BadgeBot.app as BadgeBot
+    assert "Sensor Test" in BadgeBot.MAIN_MENU_ITEMS
+    assert "Auto Drive" in BadgeBot.MAIN_MENU_ITEMS
+
+
+def test_sensor_base_interface():
+    """Verify SensorBase class has the expected interface."""
+    from sim.apps.BadgeBot.sensors.sensor_base import SensorBase
+    sensor = SensorBase()
+    assert hasattr(sensor, 'begin')
+    assert hasattr(sensor, 'read')
+    assert hasattr(sensor, 'reset')
+    assert hasattr(sensor, 'is_ready')
+    assert sensor.is_ready is False
+
+
+def test_all_sensor_classes_populated():
+    """Verify ALL_SENSOR_CLASSES contains the expected sensor drivers."""
+    from sim.apps.BadgeBot.sensors import ALL_SENSOR_CLASSES
+    assert len(ALL_SENSOR_CLASSES) >= 6
+    names = {cls.NAME for cls in ALL_SENSOR_CLASSES}
+    assert 'VL53L0X' in names or 'VL6180X' in names  # at least one ToF sensor

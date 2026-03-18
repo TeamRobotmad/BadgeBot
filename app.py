@@ -89,27 +89,41 @@ STATE_SERVO = 6           # Servo test
 STATE_STEPPER = 7         # Stepper test
 STATE_FOLLOWER = 8        # Line Follower
 STATE_AUTOTUNE = 9        # PID Auto Tune
+STATE_SENSOR = 10         # Sensor Test
+STATE_AUTO = 11           # Autonomous Drive
 
 # App states where user can minimise app (Menu, Message, Logo)
 MINIMISE_VALID_STATES = [STATE_MENU, STATE_MESSAGE, STATE_LOGO]
  
 # App states where BadgeBot directly controls the badge LEDs (Motor Moves, Countdown, Message, Logo, Line Follower, AutoTune)
-_LED_CONTROL_STATES    = [STATE_MOTOR_MOVES, STATE_COUNTDOWN, STATE_MESSAGE, STATE_LOGO, STATE_FOLLOWER, STATE_AUTOTUNE]
+_LED_CONTROL_STATES    = [STATE_MOTOR_MOVES, STATE_COUNTDOWN, STATE_MESSAGE, STATE_LOGO, STATE_FOLLOWER, STATE_AUTOTUNE, STATE_AUTO]
 
 #Misceallaneous Settings
 _LOGGING = False
 _IS_SIMULATOR = sys.platform != "esp32"  # True when running in the simulator, not on real badge hardware
 
 # Main Menu Items
-MAIN_MENU_ITEMS = ["Line Follower","Motor Moves", "Stepper Test", "Servo Test", "PID Auto Tune", "Settings", "About","Exit"]
+MAIN_MENU_ITEMS = ["Line Follower","Motor Moves", "Stepper Test", "Servo Test", "PID Auto Tune", "Sensor Test", "Auto Drive", "Settings", "About","Exit"]
 MENU_ITEM_LINE_FOLLOWER = 0
 MENU_ITEM_MOTOR_MOVES = 1
 MENU_ITEM_STEPPER_TEST = 2
 MENU_ITEM_SERVO_TEST = 3
 MENU_ITEM_PID_AUTOTUNE = 4
-MENU_ITEM_SETTINGS = 5
-MENU_ITEM_ABOUT = 6
-MENU_ITEM_EXIT = 7
+MENU_ITEM_SENSOR_TEST = 5
+MENU_ITEM_AUTO_DRIVE = 6
+MENU_ITEM_SETTINGS = 7
+MENU_ITEM_ABOUT = 8
+MENU_ITEM_EXIT = 9
+
+
+# Front face direction labels (0=BtnA corner between slots 6 & 1, each step = 30° CW)
+_FRONT_FACE_DEFAULT = 0
+_FRONT_FACE_LABELS = (
+    "BtnA", "Slot 1", "BtnB", "Slot 2", "BtnC", "Slot 3",
+    "BtnD", "Slot 4", "BtnE", "Slot 5", "BtnF", "Slot 6",
+)
+_FWD_DIR_DEFAULT = 0
+_FWD_DIR_LABELS = ("Normal", "Reverse")
 
 
 # Import sub-modules after constants are defined so they can safely
@@ -121,6 +135,8 @@ from .servo_test import ServoTestMgr
 from .stepper_test import StepperTestMgr
 from .line_follow import  LineFollowMgr
 from .autotune_mgr import AutotuneMgr
+from .sensor_test import SensorTestMgr
+from .autodrive import AutoDriveMgr
 
 # Each module registers its own settings via init_settings()
 from .hexpansion_mgr import init_settings as _hexpansion_init_settings
@@ -128,6 +144,8 @@ from .motor_moves import init_settings as _motor_moves_init_settings
 from .servo_test import init_settings as _servo_test_init_settings
 from .stepper_test import init_settings as _stepper_test_init_settings
 from .line_follow import init_settings as _line_follow_init_settings
+from .sensor_test import init_settings as _sensor_test_init_settings
+from .autodrive import init_settings as _autodrive_init_settings
 
 
 class BadgeBotApp(app.App):         # pylint: disable=no-member
@@ -176,6 +194,11 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         _stepper_test_init_settings(self.settings, MySetting)
         _hexpansion_init_settings(self.settings, MySetting)
         _line_follow_init_settings(self.settings, MySetting)
+        _sensor_test_init_settings(self.settings, MySetting)
+        _autodrive_init_settings(self.settings, MySetting)
+        # Direction settings
+        self.settings['fwd_dir']       = MySetting(self.settings, _FWD_DIR_DEFAULT, 0, 1)
+        self.settings['front_face']    = MySetting(self.settings, _FRONT_FACE_DEFAULT, 0, 11)
 
         self.edit_setting: int  = None
         self.edit_setting_value = None       
@@ -206,6 +229,9 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.line_sensors_hexpansion_config  = None            # Store the HexpansionConfig of the HexSense that is providing the line sensors
         self.time_since_last_update: int = 0
 
+        # High-level motor controller (created when HexDrive is found)
+        self.motor_controller = None
+
         # Functional area managers
         self._hexpansion_mgr   = HexpansionMgr(self)
         self._motor_moves_mgr  = MotorMovesMgr(self)
@@ -214,6 +240,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self._settings_mgr     = SettingsMgr(self)
         self._line_follow_mgr  = LineFollowMgr(self)
         self._autotune_mgr     = AutotuneMgr(self, self._line_follow_mgr)
+        self._sensor_test_mgr  = SensorTestMgr(self)
+        self._autodrive_mgr    = AutoDriveMgr(self)
 
         # State → manager dispatch table (for efficient update/draw routing)
         self._state_update_dispatch = {
@@ -224,6 +252,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             STATE_SERVO:       self._servo_test_mgr.update,
             STATE_STEPPER:     self._stepper_test_mgr.update,
             STATE_SETTINGS:    self._settings_mgr.update,
+            STATE_SENSOR:      self._sensor_test_mgr.update,
+            STATE_AUTO:        self._autodrive_mgr.update,
         }
         self._state_draw_dispatch = {
             STATE_HEXPANSION:  self._hexpansion_mgr.draw,
@@ -233,11 +263,14 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             STATE_SERVO:       self._servo_test_mgr.draw,
             STATE_STEPPER:     self._stepper_test_mgr.draw,
             STATE_SETTINGS:    self._settings_mgr.draw,
+            STATE_SENSOR:      self._sensor_test_mgr.draw,
+            STATE_AUTO:        self._autodrive_mgr.draw,
         }
         self._BG_DISPATCH = {
             STATE_MOTOR_MOVES: self._motor_moves_mgr.background_update,
             STATE_FOLLOWER:    self._line_follow_mgr.background_update,
             STATE_AUTOTUNE:    self._autotune_mgr.background_update,
+            STATE_AUTO:        self._autodrive_mgr.background_update,
         }
 
         # Motor Driver Hardware
@@ -271,6 +304,16 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
 
     ### ASYNC EVENT HANDLERS ###
+
+    @property
+    def hexdrive_port(self):
+        """Proxy to HexpansionMgr.hexdrive_port for convenience."""
+        return self._hexpansion_mgr.hexdrive_port
+
+    @property
+    def sensor_test_mgr(self):
+        """Public access to the SensorTestMgr, used by AutoDriveMgr to share the sensor manager."""
+        return self._sensor_test_mgr
 
     async def _gain_focus(self, event: RequestForegroundPushEvent):
         if event.app is self:
@@ -316,7 +359,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if bg_fn is not None:
             output = bg_fn(delta)
             if output is not None and self.hexdrive_app is not None:
-                self.hexdrive_app.set_motors(output)
+                self.hexdrive_app.set_motors(self._apply_fwd_dir(output))
             #else:
             #    if self.settings['logging'].v:
             #        print(f"No motor output from background function for state {self.current_state}")    
@@ -597,6 +640,39 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             tildagonos.leds[i] = (0, 0, 0)
 
 
+    def _apply_fwd_dir(self, output: tuple) -> tuple:
+        """Negate all motor outputs when fwd_dir=1 (HexDrive mounted facing front)."""
+        if self.settings['fwd_dir'].v:
+            return tuple(-v for v in output)
+        return output
+
+
+    def _set_direction_leds(self, direction: Button):
+        """LED positions rotate based on 'front_face' (0-11, each step = 30° CW).
+        Each position p maps to LED pair: (p if p>0 else 12) and (p+1).
+        This is independent of motor direction (fwd_dir)."""
+        f = self.settings['front_face'].v
+        if direction == BUTTON_TYPES["UP"]:
+            pos = f % 12
+            colour = (0, 255, 255)   # Cyan = forward
+        elif direction == BUTTON_TYPES["RIGHT"]:
+            pos = (f + 2) % 12
+            colour = (0, 255, 0)     # Green = right
+        elif direction == BUTTON_TYPES["DOWN"]:
+            pos = (f + 6) % 12
+            colour = (255, 0, 255)   # Magenta = backward
+        elif direction == BUTTON_TYPES["LEFT"]:
+            pos = (f + 8) % 12
+            colour = (255, 0, 0)     # Red = left
+        else:
+            return
+        led_a = pos if pos > 0 else 12
+        led_b = pos + 1
+        self.clear_leds()
+        tildagonos.leds[led_a] = colour
+        tildagonos.leds[led_b] = colour
+
+
     def draw_message(self, ctx, message, colours, size=label_font_size):
         """Utility function to draw a multi-line message on the screen, with optional colour for each line. The message is centred on the screen, and the y-position of each line is adjusted based on the total number of lines to ensure it is visually balanced."""
         ctx.font_size = size
@@ -699,6 +775,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_MOTOR_MOVES])
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_LINE_FOLLOWER])
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_PID_AUTOTUNE])
+                menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_AUTO_DRIVE])
             if self.num_line_sensors == 0:
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_LINE_FOLLOWER])
                 if MAIN_MENU_ITEMS[MENU_ITEM_PID_AUTOTUNE] in menu_items:
@@ -762,6 +839,12 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             else:
                 if self._servo_test_mgr.start():
                     self.current_state = STATE_SERVO
+        elif item == MAIN_MENU_ITEMS[MENU_ITEM_SENSOR_TEST]: # Sensor Test
+            if self._sensor_test_mgr.start():
+                self.current_state = STATE_SENSOR
+        elif item == MAIN_MENU_ITEMS[MENU_ITEM_AUTO_DRIVE]: # Auto Drive
+            if self._autodrive_mgr.start():
+                self.current_state = STATE_AUTO
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS]:   # Settings
             self.set_menu(MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS])
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_ABOUT]:      # About
@@ -811,7 +894,5 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         # There are only two menus so this is the only other option    
         self.set_menu("main")
 
-
-### BADGEBOT DEMO FUNCTIONALITY ###
 
 __app_export__ = BadgeBotApp

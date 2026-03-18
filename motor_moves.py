@@ -20,9 +20,9 @@
 #   reset_robot()            – reset sequence state and return to HELP
 #   init_settings(settings)  – register motor-moves specific settings
 
+import asyncio
 from events.input import BUTTON_TYPES, Button
 from app_components.tokens import label_font_size, button_labels
-from tildagonos import tildagonos
 
 from .utils import chain
 from .app import (STATE_COUNTDOWN, STATE_MOTOR_MOVES, STATE_LOGO, DEFAULT_BACKGROUND_UPDATE_PERIOD)
@@ -141,6 +141,7 @@ class MotorMovesMgr:
         self.current_power_duration = ((0, 0, 0, 0), 0)
         self.power_plan_iter = iter([])
         self.long_press_delta = 0
+        self._run_task = None  # asyncio task for MotorController-based execution
 
     # ------------------------------------------------------------------
     # Entry point from menu
@@ -163,14 +164,35 @@ class MotorMovesMgr:
     # ------------------------------------------------------------------
 
     def begin_moves(self):
-        """Build the power plan and start running (called after countdown)."""
+        """Build the power plan and start running (called after countdown).
+        When a MotorController is available, uses it for IMU-aided execution."""
         app = self.app
-        self.power_plan_iter = chain(*(instr.power_plan for instr in self.instructions))
-        if app.hexdrive_app is not None:
-            app.hexdrive_app.set_power(True)
+        if app.motor_controller is not None:
+            # Use the MotorController for gyro-aided execution
+            self._run_task = asyncio.get_event_loop().create_task(
+                self._run_instructions_async()
+            )
+        else:
+            # Fallback: old power-plan iterator
+            self.power_plan_iter = chain(*(instr.power_plan for instr in self.instructions))
+            if app.hexdrive_app is not None:
+                app.hexdrive_app.set_power(True)
         self._sub_state = _SUB_RUN
         app.update_period = _TICK_MS
         app.refresh = True
+
+
+    async def _run_instructions_async(self):
+        """Execute the recorded instruction list via MotorController.
+        Runs as an asyncio task spawned from begin_moves; the background_update
+        loop monitors the task and transitions to _SUB_DONE when it completes."""
+        try:
+            await self.app.motor_controller.run_instructions(self.instructions)
+        except asyncio.CancelledError:
+            self.app.motor_controller.stop()
+        except Exception as e:
+            print(f"MotorController run error: {e}")
+            self.app.motor_controller.stop()
 
 
     # ------------------------------------------------------------------
@@ -205,6 +227,15 @@ class MotorMovesMgr:
 
     def background_update(self, delta: int) -> tuple[int, int] | None:
         """DC Motor control during RUN sub-state.  Returns output tuple or None."""
+        if self._run_task is not None:
+            # MotorController handles motors via its own async task;
+            # we just check whether it has finished.
+            if self._run_task.done():
+                self._sub_state = _SUB_DONE
+                self.app.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
+                self._run_task = None
+            return None  # MotorController manages motors directly
+        # Legacy power-plan path
         output = self._get_current_power_level(delta)
         if output is None and self._sub_state == _SUB_RUN:
             self._sub_state = _SUB_DONE
@@ -325,6 +356,11 @@ class MotorMovesMgr:
     def reset_robot(self):
         """Reset sequence state and return to HELP."""
         app = self.app
+        if self._run_task is not None:
+            self._run_task.cancel()
+            self._run_task = None
+        if app.motor_controller is not None:
+            app.motor_controller.stop()
         self._sub_state = _SUB_HELP
         #app.current_state = STATE_MOTOR_MOVES
         app.last_press = BUTTON_TYPES["CONFIRM"]
@@ -339,27 +375,9 @@ class MotorMovesMgr:
 
 
     def set_direction_leds(self, direction: Button):
-        """Utility function to set the LEDs to indicate a direction (up, down, left, right) based on the button input."""
-        if direction == BUTTON_TYPES["RIGHT"]:
-            # Green = Starboard = Right
-            self.app.clear_leds()
-            tildagonos.leds[2]  = (0, 255, 0)
-            tildagonos.leds[3]  = (0, 255, 0)                
-        elif direction ==BUTTON_TYPES["LEFT"]:
-            # Red = Port = Left
-            self.app.clear_leds()
-            tildagonos.leds[8]  = (255, 0, 0)
-            tildagonos.leds[9]  = (255, 0, 0)                
-        elif direction == BUTTON_TYPES["UP"]:
-            # Cyan
-            self.app.clear_leds()
-            tildagonos.leds[12] = (0, 255, 255)
-            tildagonos.leds[1]  = (0, 255, 255)                
-        elif direction == BUTTON_TYPES["DOWN"]:
-            # Magenta
-            self.app.clear_leds()
-            tildagonos.leds[6]  = (255, 0, 255)
-            tildagonos.leds[7]  = (255, 0, 255)    
+        """Utility function to set the LEDs to indicate a direction (up, down, left, right) based on the button input.
+        Delegates to the app's front_face-aware LED method so LEDs rotate with the configured forward direction."""
+        self.app._set_direction_leds(direction)
 
 
     def _get_current_power_level(self, delta: int) -> tuple[int, int] | None:

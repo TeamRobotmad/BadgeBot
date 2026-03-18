@@ -541,6 +541,7 @@ class HexpansionMgr:
             if self.hexdrive_port == self.erase_port:
                 self.hexdrive_port = None
                 app.hexdrive_app = None
+                app.motor_controller = None
                 if app.settings['logging'].v:
                     print(f"H:HexDrive on port {self.erase_port} erased!")
                 self.ports_with_hexdrive.discard(self.erase_port)
@@ -579,6 +580,7 @@ class HexpansionMgr:
                 print(f"Check: {self.hexdrive_port} lost")
                 self.hexdrive_port = None
                 app.hexdrive_app = None
+                app.motor_controller = None
 
             if self.hexdrive_port is None:
                 valid_port = next(iter(self.ports_with_latest_hexdrive))
@@ -590,6 +592,21 @@ class HexpansionMgr:
                         app.num_motors = app.HEXPANSION_TYPES[self.hexpansion_slot_type[valid_port - 1]].motors
                         app.num_servos = app.HEXPANSION_TYPES[self.hexpansion_slot_type[valid_port - 1]].servos
                         app.num_steppers = app.HEXPANSION_TYPES[self.hexpansion_slot_type[valid_port - 1]].steppers
+
+                    # Create the high-level MotorController for IMU-aided driving
+                    # (only when the HexDrive has motors)
+                    if app.num_motors > 0:
+                        try:
+                            from .motor_controller import MotorController
+                            app.motor_controller = MotorController(
+                                hexdrive_app, app.settings,
+                                fwd_dir_setting=app.settings.get('fwd_dir'),
+                                front_face_setting=app.settings.get('front_face'),
+                            )
+                        except Exception as e:
+                            if app.settings['logging'].v:
+                                print(f"H:MotorController init failed: {e}")
+                            app.motor_controller = None
 
                     if (0 < app.HEXPANSION_TYPES[self.hexpansion_slot_type[valid_port - 1]].steppers) or app.hexdrive_app.get_status():
                         if app.settings['logging'].v:
@@ -613,6 +630,7 @@ class HexpansionMgr:
             print(f"Check: {self.hexdrive_port} lost")
             self.hexdrive_port = None
             app.hexdrive_app = None
+            app.motor_controller = None
             self._sub_state = _SUB_CHECK
             app.show_message(["HexDrive","removed.","Please reinsert"], [(1,1,0),(1,1,1),(1,1,1)], "error")
         else:
