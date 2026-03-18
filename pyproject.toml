@@ -29,6 +29,7 @@ ignored-modules = [
     "frontboards",
     "frontboards.twentyfour",
     "display",
+    "imu",
 ]
 
 # Type-checking exceptions for dynamic runtime members.

@@ -41,6 +41,17 @@ MODULES: tuple[ModuleSpec, ...] = (
     ModuleSpec(Path("motor_moves.py"), Path("motor_moves.mpy")),
     ModuleSpec(Path("servo_test.py"), Path("servo_test.mpy")),
     ModuleSpec(Path("stepper_test.py"), Path("stepper_test.mpy")),
+    ModuleSpec(Path("motor_controller.py"), Path("motor_controller.mpy")),
+    ModuleSpec(Path("sensor_manager.py"), Path("sensor_manager.mpy")),
+    ModuleSpec(Path("autodrive.py"), Path("autodrive.mpy")),
+    ModuleSpec(Path("sensors/__init__.py"), Path("sensors/__init__.mpy")),
+    ModuleSpec(Path("sensors/sensor_base.py"), Path("sensors/sensor_base.mpy")),
+    ModuleSpec(Path("sensors/apds9960.py"), Path("sensors/apds9960.mpy")),
+    ModuleSpec(Path("sensors/bme280.py"), Path("sensors/bme280.mpy")),
+    ModuleSpec(Path("sensors/tcs3439.py"), Path("sensors/tcs3439.mpy")),
+    ModuleSpec(Path("sensors/tcs3472.py"), Path("sensors/tcs3472.mpy")),
+    ModuleSpec(Path("sensors/vl53l0x.py"), Path("sensors/vl53l0x.mpy")),
+    ModuleSpec(Path("sensors/vl6180x.py"), Path("sensors/vl6180x.mpy")),
 )
 
 

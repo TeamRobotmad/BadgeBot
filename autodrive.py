@@ -105,8 +105,6 @@ class AutoDrive:
             if self.sub_state == _AUTO_SUB_SCAN:
                 self._scan_record_sample()
 
-        pass  # display update handled by draw loop
-
     def draw(self, ctx):
         """Draw the auto-drive UI overlay."""
         sub_labels = {_AUTO_SUB_DRIVE:      "Driving",
