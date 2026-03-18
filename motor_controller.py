@@ -423,9 +423,16 @@ class MotorController:
                 samples_x.append(sx)
                 samples_y.append(sy)
             except Exception:
+                # Ignore individual read failures; we'll check how many succeeded below.
                 pass
-        self._accel_bias_x = total_x / n
-        self._accel_bias_y = total_y / n
+        success_count = len(samples_x)
+        if success_count == 0:
+            # No valid samples: leave calibration disabled and report failure.
+            self._accel_calibrated = False
+            print("[MC-DIAG] calibrate: failed, no valid accelerometer samples")
+            return
+        self._accel_bias_x = total_x / success_count
+        self._accel_bias_y = total_y / success_count
         self._accel_filtered = 0.0
         self._accel_calibrated = True
         print("[MC-DIAG] calibrate: bias_x=%.4f  bias_y=%.4f" % (self._accel_bias_x, self._accel_bias_y))
