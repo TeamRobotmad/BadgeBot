@@ -347,7 +347,7 @@ class MotorController:
         try:
             for instr in instructions:
                 btn = instr.press_type
-                count = instr._duration
+                count = instr.duration
 
                 if btn == BUTTON_TYPES["UP"]:
                     if use_distance:

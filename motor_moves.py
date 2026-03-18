@@ -61,6 +61,9 @@ class Instruction:
     def press_type(self) -> Button:
         return self._press_type
 
+    @property
+    def duration(self) -> int:
+        return self._duration
 
     def inc(self):
         self._duration += 1

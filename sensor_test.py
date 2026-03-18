@@ -28,7 +28,7 @@ _SENSOR_READ_INTERVAL_MS = 250
 def init_settings(s, MySetting: type):       # pylint: disable=unused-argument
     """Register sensor-test-specific settings in the shared settings dict.
     Currently no dedicated settings, but the hook exists for future use."""
-    pass
+    # no sensor-test-specific settings at this time
 
 
 # ---- Sensor Test manager ---------------------------------------------------
@@ -154,7 +154,7 @@ class SensorTestMgr:
             self._read_timer = 0
             try:
                 self._sensor_data = self._sensor_mgr.read_current()
-            except Exception as e:
+            except Exception as e:      # pylint: disable=broad-exception-caught
                 self._sensor_data = {"Error": str(e)}
             app.refresh = True
         if app.button_states.get(BUTTON_TYPES["RIGHT"]):

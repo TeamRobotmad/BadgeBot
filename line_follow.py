@@ -76,10 +76,19 @@ class LineSensors:
             LineSensor(cfg["pins"], name=cfg["name"])
             for cfg in sensor_configs
         ]
+        self._threshold = 0
         
     @property
     def num_sensors(self):
         return len(self._sensors)
+
+    @property
+    def threshold(self):
+        return self._threshold
+
+    @threshold.setter
+    def threshold(self, value):
+        self._threshold = value
 
     def enable(self):
         for sensor in self._sensors:
@@ -110,7 +119,7 @@ class LineSensors:
         for sensor in self._sensors:
             if sensor.start_time != 0:
                 if time.ticks_diff(time.ticks_us(), sensor.start_time) <= _LINE_SENSOR_READ_TIMEOUT_US:
-                    print(f"Sensor {sensor._name} already in progress")
+                    print(f"Sensor {sensor.name} already in progress")
                     return False
 
         for sensor in self._sensors:
@@ -187,6 +196,10 @@ class LineSensor:
             self.pins["sig"].init(mode=Pin.IN, pull=Pin.PULL_UP)
         except Exception as e:
             print(f"{self._name} Init failed:{e}")
+
+    @property
+    def name(self) -> str:
+        return self._name
 
     def disable(self):
         """Disable the sensor by turning off control pin and disabling interrupts on signal pin."""
