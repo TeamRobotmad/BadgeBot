@@ -145,8 +145,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
         # UI Feature Controls
         self.refresh: bool = True
-        self.rpm: float = 5                    # logo rotation speed in RPM
-        self.animation_counter: float = 0.0
+        self.rpm: int = 5                    # logo rotation speed in RPM
+        self.animation_counter: int = 0
         self.pattern_status: bool = True     # True = Pattern Enabled, False = Pattern Disabled
         self.qr_code = _QR_CODE
         self.APP_VERSION = APP_VERSION
@@ -460,9 +460,9 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         else:
             # "CANCEL" button is handled in common for all MINIMISE_VALID_STATES so no custom code here
             # Show the warning screen for 10 seconds
-            self.animation_counter += delta/1000
+            self.animation_counter += delta
             self.refresh = True
-            if self.message_type == "warning" and self.animation_counter > 10:
+            if self.message_type == "warning" and self.animation_counter > 10000:
                 # For Warnings, after 10 seconds show the logo
                 self.animation_counter = 0
                 self.current_state = STATE_LOGO
@@ -474,7 +474,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 for i in range(1,13):
                     colour = (255, 241, 0)      # custom Robotmad shade of yellow                                
                     # raised cosine cubed wave
-                    wave = self.settings['brightness'].v * pow((1.0 + cos(((i) *  pi / 1.5) - (self.rpm * self.animation_counter * pi / 7.5)))/2.0, 3)    
+                    wave = self.settings['brightness'].v * pow((1.0 + cos(((i) *  pi / 1.5) - (self.rpm * self.animation_counter * pi / 7500)))/2.0, 3)    
                     # 4 sides each projecting a pattern of 3 LEDs (12 LEDs in total)
                     tildagonos.leds[i] = tuple(int(wave * j) for j in colour)                                                     
             else:
@@ -486,14 +486,13 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.clear_leds()
         self.run_countdown_elapsed_ms += delta
         if self.run_countdown_elapsed_ms >= _RUN_COUNTDOWN_MS:
-            next_state = self.countdown_next_state
-            if next_state == STATE_MOTOR_MOVES:
+            if self.countdown_next_state == STATE_MOTOR_MOVES:
                 # Motor Moves: delegate to begin_moves
-                self.current_state = next_state
+                self.current_state = self.countdown_next_state
                 self._motor_moves_mgr.begin_moves()
-            elif next_state == STATE_AUTOTUNE:
+            elif self.countdown_next_state == STATE_AUTOTUNE:
                 # PID AutoTune: start the tuner after countdown
-                self.current_state = next_state
+                self.current_state = self.countdown_next_state
                 self._autotune_mgr.begin_tuning()
             else:
                 # Generic fallback
@@ -513,7 +512,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             eventbus.on_async(ButtonUpEvent, self.handle_button_up, self)
         else:
             self.scroll_mode_enabled = False
-            eventbus.off_async(ButtonUpEvent, self.handle_button_up, self)
+            eventbus.remove(ButtonUpEvent, self.handle_button_up, self)
 
 
     def scroll(self, enable: bool):
@@ -522,7 +521,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             self.is_scroll = enable
             self.scroll_offset = 0
             state = "enabled" if enable else "disabled"
-            self.notification = Notification(f"Scroll {state}")
+            self.notification = Notification(f"    Scroll    {state}")
 
 
     def draw(self, ctx):

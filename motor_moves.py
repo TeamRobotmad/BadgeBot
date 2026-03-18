@@ -25,7 +25,7 @@ from app_components.tokens import label_font_size, button_labels
 from tildagonos import tildagonos
 
 from .utils import chain
-from .app import (STATE_COUNTDOWN, STATE_LOGO, DEFAULT_BACKGROUND_UPDATE_PERIOD)
+from .app import (STATE_COUNTDOWN, STATE_MOTOR_MOVES, STATE_LOGO, DEFAULT_BACKGROUND_UPDATE_PERIOD)
 
 
 # Screen positioning for movement sequence text
@@ -134,6 +134,7 @@ class MotorMovesMgr:
     def __init__(self, app):
         self.app = app
         self._sub_state = _SUB_HELP
+        self._prev_state = _SUB_HELP
         # Motor-moves instance variables (previously on app)
         self.instructions = []
         self.current_instruction = None
@@ -148,6 +149,8 @@ class MotorMovesMgr:
     def start(self) -> bool:
         """Enter the Motor Moves flow from the main menu."""
         app = self.app
+        if app.settings['logging'].v:
+            print("Entered Motor Moves mode")
         app.set_menu(None)
         app.button_states.clear()
         app.animation_counter = 0
@@ -186,6 +189,12 @@ class MotorMovesMgr:
             # Run is primarily managed in the background update
         elif self._sub_state == _SUB_DONE:
             self._update_state_done(delta)
+
+        if self._sub_state != self._prev_state:
+            if self.app.settings['logging'].v:
+                print(f"M:State: {self._prev_state} -> {self._sub_state}")
+            self._prev_state = self._sub_state
+
         return True
 
 
@@ -197,7 +206,7 @@ class MotorMovesMgr:
     def background_update(self, delta: int) -> tuple[int, int] | None:
         """DC Motor control during RUN sub-state.  Returns output tuple or None."""
         output = self._get_current_power_level(delta)
-        if output is None:
+        if output is None and self._sub_state == _SUB_RUN:
             self._sub_state = _SUB_DONE
             self.app.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
         return output
@@ -214,12 +223,12 @@ class MotorMovesMgr:
             app.return_to_menu()
         elif app.button_states.get(BUTTON_TYPES["CONFIRM"]):
             app.button_states.clear()
+            app.scroll(False)            
             app.scroll_mode_enable(True)
-            app.scroll(True)
             self._sub_state = _SUB_RECEIVE_INSTR
         else:
-            app.animation_counter += delta / 1000
-            if app.animation_counter > 10:
+            app.animation_counter += delta
+            if app.animation_counter > 10000:
                 app.animation_counter = 0
                 app.current_state = STATE_LOGO
 
@@ -234,7 +243,7 @@ class MotorMovesMgr:
                     self._sub_state = _SUB_HELP
                 else:
                     self.finalize_instruction()
-                    #app.countdown_next_state = STATE_MOTOR_MOVES
+                    app.countdown_next_state = STATE_MOTOR_MOVES
                     app.run_countdown_elapsed_ms = 0
                     app.current_state = STATE_COUNTDOWN
                 app.scroll_mode_enable(False)
@@ -250,25 +259,25 @@ class MotorMovesMgr:
             elif app.button_states.get(BUTTON_TYPES["RIGHT"]):
                 self._handle_instruction_press(BUTTON_TYPES["RIGHT"])
                 app.button_states.clear()
-                app.set_direction_leds(BUTTON_TYPES["RIGHT"])
+                self.set_direction_leds(BUTTON_TYPES["RIGHT"])
                 app.refresh = True
             elif app.button_states.get(BUTTON_TYPES["LEFT"]):
                 self._handle_instruction_press(BUTTON_TYPES["LEFT"])
                 app.button_states.clear()
-                app.set_direction_leds(BUTTON_TYPES["LEFT"])
+                self.set_direction_leds(BUTTON_TYPES["LEFT"])
                 app.refresh = True
             elif app.button_states.get(BUTTON_TYPES["UP"]):
                 self._handle_instruction_press(BUTTON_TYPES["UP"])
                 app.button_states.clear()
-                app.set_direction_leds(BUTTON_TYPES["UP"])
+                self.set_direction_leds(BUTTON_TYPES["UP"])
                 app.refresh = True
             elif app.button_states.get(BUTTON_TYPES["DOWN"]):
                 self._handle_instruction_press(BUTTON_TYPES["DOWN"])
                 app.button_states.clear()
-                app.set_direction_leds(BUTTON_TYPES["DOWN"])
+                self.set_direction_leds(BUTTON_TYPES["DOWN"])
                 app.refresh = True
             else:
-                app.set_direction_leds(app.last_press)
+                self.set_direction_leds(app.last_press)
 
 
     def _update_state_done(self, delta: int):        # pylint: disable=unused-argument
@@ -284,7 +293,7 @@ class MotorMovesMgr:
                 app.hexdrive_app.set_power(False)
             app.run_countdown_elapsed_ms = 1
             self.current_power_duration = ((0, 0, 0, 0), 0)
-            #app.countdown_next_state = STATE_MOTOR_MOVES
+            app.countdown_next_state = STATE_MOTOR_MOVES
             app.current_state = STATE_COUNTDOWN
 
 

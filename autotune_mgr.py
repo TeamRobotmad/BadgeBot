@@ -171,7 +171,7 @@ class AutotuneMgr:
                 app.settings['pid_ki'].persist()
                 app.settings['pid_kd'].persist()
                 print(f"AUTOTUNE: Gains saved to settings: Kp={gains[0]:.4f} Ki={gains[1]:.6f} Kd={gains[2]:.4f}")
-            app.notification = Notification(" Tuning   Complete")
+            app.notification = Notification(" Tuning    Complete")
 
 
     # ------------------------------------------------------------------
