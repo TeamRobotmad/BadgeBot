@@ -555,6 +555,12 @@ class MotorController:
             scale_pct = max(1, int(self._settings['accel_scale'].v))
         target_m = abs(distance_mm) / 1000.0 * (100.0 / scale_pct)
 
+        # If the requested distance is zero or negative after scaling,
+        # there is nothing to do. Early-return to avoid division by zero
+        # when computing proportional deceleration.
+        if target_m <= 0:
+            return
+
         # Deceleration zone: start slowing at this fraction of the target
         DECEL_START = 0.70  # begin slowing at 70% of target
         decel_start_m = target_m * DECEL_START
