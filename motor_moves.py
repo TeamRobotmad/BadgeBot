@@ -144,7 +144,7 @@ class MotorMovesMgr:
         self.current_power_duration = ((0, 0, 0, 0), 0)
         self.power_plan_iter = iter([])
         self.long_press_delta = 0
-        self._run_task = None  # asyncio task for MotorController-based execution
+        self._mc_task = None  # asyncio task for MotorController-based execution
 
     # ------------------------------------------------------------------
     # Entry point from menu
@@ -172,7 +172,7 @@ class MotorMovesMgr:
         app = self.app
         if app.motor_controller is not None:
             # Use the MotorController for gyro-aided execution
-            self._run_task = asyncio.get_event_loop().create_task(
+            self._mc_task = asyncio.get_event_loop().create_task(
                 self._run_instructions_async()
             )
         else:
@@ -230,13 +230,13 @@ class MotorMovesMgr:
 
     def background_update(self, delta: int) -> tuple[int, int] | None:
         """DC Motor control during RUN sub-state.  Returns output tuple or None."""
-        if self._run_task is not None:
+        if self._mc_task is not None:
             # MotorController handles motors via its own async task;
             # we just check whether it has finished.
-            if self._run_task.done():
+            if self._mc_task.done():
                 self._sub_state = _SUB_DONE
                 self.app.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
-                self._run_task = None
+                self._mc_task = None
             return None  # MotorController manages motors directly
         # Legacy power-plan path
         output = self._get_current_power_level(delta)
@@ -359,9 +359,9 @@ class MotorMovesMgr:
     def reset_robot(self):
         """Reset sequence state and return to HELP."""
         app = self.app
-        if self._run_task is not None:
-            self._run_task.cancel()
-            self._run_task = None
+        if self._mc_task is not None:
+            self._mc_task.cancel()
+            self._mc_task = None
         if app.motor_controller is not None:
             app.motor_controller.stop()
         self._sub_state = _SUB_HELP

@@ -603,7 +603,7 @@ class HexpansionMgr:
                                 fwd_dir_setting=app.settings.get('fwd_dir'),
                                 front_face_setting=app.settings.get('front_face'),
                             )
-                        except Exception as e:
+                        except Exception as e:      # pylint: disable=broad-except
                             if app.settings['logging'].v:
                                 print(f"H:MotorController init failed: {e}")
                             app.motor_controller = None

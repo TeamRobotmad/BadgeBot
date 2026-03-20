@@ -36,14 +36,14 @@ class SensorManager:
 
         try:
             self._i2c = machine.I2C(port)
-        except Exception as e:
+        except Exception as e:      # pylint: disable=broad-exception-caught
             if self._logging:
                 print(f"SM:Cannot open I2C port {port}: {e}")
             return False
 
         try:
             found_addrs = set(self._i2c.scan())
-        except Exception as e:
+        except Exception as e:      # pylint: disable=broad-exception-caught
             if self._logging:
                 print(f"SM:I2C scan failed on port {port}: {e}")
             return False
@@ -71,7 +71,7 @@ class SensorManager:
         for s in self._sensors:
             try:
                 s.reset()
-            except Exception:
+            except Exception:       # pylint: disable=broad-exception-caught
                 pass
         self._sensors = []
         self._index = 0

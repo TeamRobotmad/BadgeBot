@@ -359,7 +359,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if bg_fn is not None:
             output = bg_fn(delta)
             if output is not None and self.hexdrive_app is not None:
-                self.hexdrive_app.set_motors(self._apply_fwd_dir(output))
+                self.hexdrive_app.set_motors(self.apply_fwd_dir(output))
             #else:
             #    if self.settings['logging'].v:
             #        print(f"No motor output from background function for state {self.current_state}")    
@@ -615,7 +615,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             self.notification.draw(ctx)
 
 
-
     # Value increment/decrement functions for positive integers only
     def _inc(self, v: int, l: int):
         if l==0:
@@ -639,8 +638,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         for i in range(1,13):
             tildagonos.leds[i] = (0, 0, 0)
 
-
-    def _apply_fwd_dir(self, output: tuple) -> tuple:
+    # todo - merge with motor_controller.apply_fwd_dir if we keep the motor_controller abstraction
+    def apply_fwd_dir(self, output: tuple) -> tuple:
         """Negate all motor outputs when fwd_dir=1 (HexDrive mounted facing front)."""
         if self.settings['fwd_dir'].v:
             return tuple(-v for v in output)
