@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-DEFAULT_APP_DIR_ON_DEVICE = ":apps/LineFollower"  # ":apps/TeamRobotMad_BadgeBot"
+DEFAULT_APP_DIR_ON_DEVICE = ":apps/TeamRobotMad_BadgeBot"
 STATE_DIR = Path(".deploy_state")
 STATE_PATH = STATE_DIR / "test_device_download_state.json"
 
@@ -142,13 +142,25 @@ def _ensure_device_dir(dir_path: str, *, mpremote_args: list[str], dry_run: bool
     """Create a directory on the device if it does not already exist.
 
     dir_path uses mpremote ':path' notation; the leading ':' is stripped to
-    obtain the on-device absolute path passed to os.makedirs.
+    obtain the on-device absolute path. Uses os.mkdir segment-by-segment
+    because MicroPython may not provide os.makedirs.
     """
     _log("INFO", f"ensuring device directory: {dir_path}")
     on_device = dir_path.lstrip(":")
     if not on_device.startswith("/"):
         on_device = "/" + on_device
-    exec_code = f"import os; os.makedirs('{on_device}', exist_ok=True)"
+    safe_path = on_device.replace("'", "\\'")
+    exec_code = (
+        "import os\n"
+        f"p='{safe_path}'\n"
+        "cur=''\n"
+        "for part in [x for x in p.split('/') if x]:\n"
+        "    cur += '/' + part\n"
+        "    try:\n"
+        "        os.stat(cur)\n"
+        "    except OSError:\n"
+        "        os.mkdir(cur)"
+    )
     _run_command(["mpremote", *mpremote_args, "exec", exec_code], dry_run=dry_run)
 
 
