@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-DEFAULT_APP_DIR_ON_DEVICE = ":apps/LineFollower"
+DEFAULT_APP_DIR_ON_DEVICE = ":apps/LineFollower"  # ":apps/TeamRobotMad_BadgeBot"
 STATE_DIR = Path(".deploy_state")
 STATE_PATH = STATE_DIR / "test_device_download_state.json"
 
@@ -53,6 +53,12 @@ MODULES: tuple[ModuleSpec, ...] = (
     ModuleSpec(Path("sensors/tcs3472.py"), Path("sensors/tcs3472.mpy")),
     ModuleSpec(Path("sensors/vl53l0x.py"), Path("sensors/vl53l0x.mpy")),
     ModuleSpec(Path("sensors/vl6180x.py"), Path("sensors/vl6180x.mpy")),
+)
+
+# Files copied to the device as-is (no compilation).
+STATIC_FILES: tuple[Path, ...] = (
+    Path("metadata.json"),
+    Path("tildagon.toml"),
 )
 
 
@@ -132,8 +138,41 @@ def _ensure_repo_root() -> Path:
     return repo_root
 
 
+def _ensure_device_dir(dir_path: str, *, mpremote_args: list[str], dry_run: bool) -> None:
+    """Create a directory on the device if it does not already exist.
+
+    dir_path uses mpremote ':path' notation; the leading ':' is stripped to
+    obtain the on-device absolute path passed to os.makedirs.
+    """
+    _log("INFO", f"ensuring device directory: {dir_path}")
+    on_device = dir_path.lstrip(":")
+    if not on_device.startswith("/"):
+        on_device = "/" + on_device
+    exec_code = f"import os; os.makedirs('{on_device}', exist_ok=True)"
+    _run_command(["mpremote", *mpremote_args, "exec", exec_code], dry_run=dry_run)
+
+
+def _ensure_device_dirs(app_dir: str, *, mpremote_args: list[str], dry_run: bool) -> None:
+    """Ensure every directory needed for uploads exists on the device.
+
+    Collects the app root dir plus any subdirectories implied by artifact and
+    static-file paths, de-duplicates, and creates them in sorted order so that
+    parent directories are always created before their children.
+    """
+    dirs: set[str] = {app_dir}
+    for spec in MODULES:
+        if spec.artifact.parent != Path("."):
+            dirs.add(f"{app_dir}/{spec.artifact.parent.as_posix()}")
+    for path in STATIC_FILES:
+        if path.parent != Path("."):
+            dirs.add(f"{app_dir}/{path.parent.as_posix()}")
+    for dir_path in sorted(dirs):
+        _ensure_device_dir(dir_path, mpremote_args=mpremote_args, dry_run=dry_run)
+
+
 def _validate_sources() -> None:
     missing = [str(spec.source) for spec in MODULES if not spec.source.exists()]
+    missing += [str(f) for f in STATIC_FILES if not f.exists()]
     if missing:
         missing_list = ", ".join(sorted(missing))
         raise FileNotFoundError(f"Missing source files: {missing_list}")
@@ -200,7 +239,7 @@ def _upload_changed_artifacts(
             _log("SKP", f"upload {spec.artifact} (artifact unchanged)")
             continue
 
-        destination = f"{app_dir}/{spec.artifact.name}"
+        destination = f"{app_dir}/{spec.artifact.as_posix()}"
         _log("INFO", f"upload {spec.artifact} -> {destination}")
 
         command = ["mpremote", *mpremote_args, "cp", str(spec.artifact), destination]
@@ -208,7 +247,46 @@ def _upload_changed_artifacts(
 
         state["uploaded"][artifact_key] = artifact_hash
         uploaded += 1
-        _log("OK ", f"uploaded {spec.artifact.name}")
+        _log("OK ", f"uploaded {spec.artifact}")
+
+    return uploaded, skipped
+
+
+def _upload_changed_static_files(
+    state: dict[str, dict[str, str]],
+    *,
+    force: bool,
+    dry_run: bool,
+    mpremote_args: list[str],
+    app_dir: str,
+) -> tuple[int, int]:
+    """Copy static (non-compiled) files to the device unchanged."""
+    uploaded = 0
+    skipped = 0
+
+    for path in STATIC_FILES:
+        if not path.exists() and not dry_run:
+            raise FileNotFoundError(f"Static file not found: {path}")
+
+        file_key = path.as_posix()
+        file_hash = "DRY-RUN" if dry_run else _sha256(path)
+        known_hash = state["uploaded"].get(file_key)
+
+        needs_upload = force or file_hash != known_hash
+        if not needs_upload:
+            skipped += 1
+            _log("SKP", f"upload {path} (file unchanged)")
+            continue
+
+        destination = f"{app_dir}/{path.as_posix()}"
+        _log("INFO", f"upload {path} -> {destination}")
+
+        command = ["mpremote", *mpremote_args, "cp", str(path), destination]
+        _run_command(command, dry_run=dry_run)
+
+        state["uploaded"][file_key] = file_hash
+        uploaded += 1
+        _log("OK ", f"uploaded {path.name}")
 
     return uploaded, skipped
 
@@ -275,12 +353,24 @@ def main() -> int:
 
         state = _load_state(STATE_PATH)
 
+        _ensure_device_dirs(
+            options.app_dir,
+            mpremote_args=options.mpremote_arg,
+            dry_run=options.dry_run,
+        )
         compiled, compile_skipped = _compile_changed_modules(
             state,
             force=options.force_compile,
             dry_run=options.dry_run,
         )
         uploaded, upload_skipped = _upload_changed_artifacts(
+            state,
+            force=options.force_upload,
+            dry_run=options.dry_run,
+            mpremote_args=options.mpremote_arg,
+            app_dir=options.app_dir,
+        )
+        static_uploaded, static_skipped = _upload_changed_static_files(
             state,
             force=options.force_upload,
             dry_run=options.dry_run,
@@ -295,7 +385,8 @@ def main() -> int:
             "SUMMARY",
             (
                 f"compiled: {compiled}, compile-skipped: {compile_skipped}, "
-                f"uploaded: {uploaded}, upload-skipped: {upload_skipped}, "
+                f"modules-uploaded: {uploaded}, modules-skipped: {upload_skipped}, "
+                f"static-uploaded: {static_uploaded}, static-skipped: {static_skipped}, "
                 f"dry-run: {options.dry_run}"
             ),
         )
