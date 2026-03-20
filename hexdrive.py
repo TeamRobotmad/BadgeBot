@@ -544,7 +544,7 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
         return True
 
 
-    def _check_port_for_hexdrive(self, port: int) -> int:
+    def _check_port_for_hexdrive(self, port: int) -> HexDriveType | None:
         #just read the part of the header which contains the PID
         try:
             pid_bytes = self.config.i2c.readfrom_mem(_EEPROM_ADDR, _PID_ADDR, 2, addrsize = (8*_EEPROM_NUM_ADDRESS_BYTES))
@@ -558,9 +558,9 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
         if pid_bytes[1] != 0xCB:
             return None
         # check if this is a HexDrive header by scanning the HEXDRIVE_TYPES list
-        for index, hexpansion_type in enumerate(_HEXDRIVE_TYPES):
+        for _, hexpansion_type in enumerate(_HEXDRIVE_TYPES):
             if pid_bytes[0] == hexpansion_type.pid:
-                return index
+                return hexpansion_type
         # we are not interested in this type of hexpansion
         return None
     
