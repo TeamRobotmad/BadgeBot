@@ -104,7 +104,7 @@ class ServoTestMgr:
     # Per-tick update
     # ------------------------------------------------------------------
 
-    def update(self, delta) -> bool:
+    def update(self, delta: int) -> bool:
         """Handle Servo Test UI.  Returns True if this module handled the state."""
         app = self.app
 
@@ -220,7 +220,7 @@ class ServoTestMgr:
             if self.servo_mode[i] == ServoMode.SCANNING:
                 if self.servo[self.servo_selected] is None:
                     self.servo[self.servo_selected] = 0
-                self.servo[i] = self.servo[i] + (10 * self.servo_rate[i] * delta / 1000)
+                self.servo[i] = self.servo[i] + ((10 * self.servo_rate[i] * delta) // 1000)
                 if self.servo_range[i] < (self.servo[i] + (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE)):
                     self.servo_rate[i] = -self.servo_rate[i]
                     self.servo[i] = self.servo_range[i] - (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE)
