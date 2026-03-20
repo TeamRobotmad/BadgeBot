@@ -470,7 +470,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         ### Delegate to functional area managers via dispatch table ###
         else:
             # Handle scroll mode input for any state where it is enabled, before delegating to the state-specific update function
-            if self.is_scroll:
+            if self.scroll_mode_enabled and self.is_scroll:
                 if self.button_states.get(BUTTON_TYPES["DOWN"]):
                     self.button_states.clear()
                     self.scroll_offset -= 1
@@ -581,7 +581,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
             if self.current_state == STATE_LOGO:
                 draw_logo_animated(ctx, self.rpm, self.animation_counter, [self.b_msg, self.t_msg], self.qr_code)
-            elif self.is_scroll:
+            elif self.scroll_mode_enabled and self.is_scroll:
                 # Scroll mode indicator border
                 ctx.rgb(0,0.2,0).rectangle(     -120,-120, 115+H_START,240).fill()
                 ctx.rgb(0,0  ,0).rectangle(H_START-5,-120,10-2*H_START,240).fill()
