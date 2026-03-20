@@ -233,9 +233,15 @@ class MotorController:
         # CCW = left motor rev, right motor fwd
         target_output = (speed * direction, -speed * direction)
 
+        dir_label = "CW" if direction > 0 else "CCW"
+        print("[MC-DIAG] turn start: %.1f deg %s, speed=%d, timeout=%d ms"
+              % (target_deg, dir_label, speed, timeout))
+
         self._busy = True
         self.integrated_deg = 0.0
         elapsed_ms = 0
+        loop_count = 0
+        peak_dps = 0.0
         last_time = time.ticks_ms()
 
         try:
@@ -253,14 +259,48 @@ class MotorController:
                 # Integrate gyro
                 self._read_gyro(delta)
                 elapsed_ms += delta
+                loop_count += 1
+                if abs(self.gyro_dps) > peak_dps:
+                    peak_dps = abs(self.gyro_dps)
+
+                # Periodic progress (every ~250 ms)
+                if loop_count % 25 == 0:
+                    remaining = target_deg - self.integrated_deg
+                    print("[MC-DIAG]   turn progress: %.1f / %.1f deg  "
+                          "gyro=%.1f dps  elapsed=%d ms  remaining=%.1f deg"
+                          % (self.integrated_deg, target_deg,
+                             self.gyro_dps, elapsed_ms, remaining))
 
                 if self.integrated_deg >= target_deg:
                     break
 
                 await asyncio.sleep(self._update_ms / 1000)
 
+            timed_out = elapsed_ms >= timeout
+            overshoot = self.integrated_deg - target_deg
+            avg_loop = elapsed_ms / loop_count if loop_count else 0
+
             # Ramp down to stop
             await self._ramp_stop()
+
+            # Read a few more gyro samples during coast-down
+            post_stop_deg = self.integrated_deg
+            for _ in range(5):
+                t = time.ticks_ms()
+                d = time.ticks_diff(t, last_time)
+                last_time = t
+                self._read_gyro(d)
+                await asyncio.sleep(self._update_ms / 1000)
+            coast_deg = self.integrated_deg - post_stop_deg
+
+            print("[MC-DIAG] turn done: integrated=%.2f deg  target=%.1f deg  "
+                  "overshoot=%.2f deg" % (self.integrated_deg, target_deg, overshoot))
+            print("[MC-DIAG]   elapsed=%d ms  loops=%d  avg_loop=%.1f ms"
+                  % (elapsed_ms, loop_count, avg_loop))
+            print("[MC-DIAG]   peak_dps=%.1f  coast_after_stop=%.2f deg"
+                  % (peak_dps, coast_deg))
+            if timed_out:
+                print("[MC-DIAG]   WARNING: turn timed out before reaching target")
         finally:
             self._busy = False
 
