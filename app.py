@@ -335,8 +335,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     async def handle_button_up(self, event: ButtonUpEvent):
         if self.scroll_mode_enabled and event.button == BUTTONS["C"]:
             # Toggle scroll mode on/off when "C" button is released
-            self.is_scroll = not self.is_scroll
-            self.scroll(self.is_scroll)
+            self.scroll(not self.is_scroll)
 
 
     async def background_task(self):
@@ -561,9 +560,10 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
     def scroll(self, enable: bool):
         """Enable or disable scroll mode, which allows the user to scroll the display up and downto see hidden content. This is indicated by a green border around the screen."""
+        self.is_scroll = enable
+        self.scroll_offset = 0
         if self.scroll_mode_enabled:
-            self.is_scroll = enable
-            self.scroll_offset = 0
+            # only show notification about scroll mode if the feature is enabled, otherwise it would be confusing to show a notification about a feature that can't be used
             state = "enabled" if enable else "disabled"
             self.notification = Notification(f"    Scroll    {state}")
 
