@@ -222,7 +222,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                                  HexpansionType(0xCBCD, "HexDrive", motors=1, servos=2, sub_type="1 Mot 2 Srvo", app_mpy_name="hexdrive.mpy", app_mpy_version=CURRENT_HEXDRIVE_APP_VERSION, app_name="HexDriveApp"),
                                  HexpansionType(0xCBCE, "HexDrive", steppers=1,         sub_type="Stepper", app_mpy_name="hexdrive.mpy", app_mpy_version=CURRENT_HEXDRIVE_APP_VERSION, app_name="HexDriveApp"), 
                                  HexpansionType(0xCBCF, "HexSense", sensors=2,          sub_type="2 Line Sensors")] # , app_mpy_name="hexsense.mpy", app_mpy_version=CURRENT_HEXSENSE_APP_VERSION, app_name="HexSenseApp")]  
-
+        self.HEXDRIVE_HEXPANSION_INDEX = 0
+        self.HEXSENSE_HEXPANSION_INDEX = 5
         self.hexpansion_update_required: bool = False # flag from async to main loop
         self.hexdrive_app = None
         self.hexsense_app = None

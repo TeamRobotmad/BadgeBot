@@ -212,10 +212,10 @@ class HexpansionMgr:
             if hexpansion_header.vid == hexpansion_type.vid and hexpansion_header.pid == hexpansion_type.pid:
                 if app.settings['logging'].v:
                     print(f"H:Found '{hexpansion_type.sub_type}' {hexpansion_type.name} on port {port}")
-                if hexpansion_type.name == app.HEXPANSION_TYPES[0].name:
+                if hexpansion_type.name == app.HEXPANSION_TYPES[app.HEXDRIVE_HEXPANSION_INDEX].name:
                     if port not in self.ports_with_latest_hexdrive:
                         self.ports_with_hexdrive.add(port)
-                elif hexpansion_type.name == app.HEXPANSION_TYPES[5].name:
+                elif hexpansion_type.name == app.HEXPANSION_TYPES[app.HEXSENSE_HEXPANSION_INDEX].name:
                     print(f"H:HexSense detected on port {port}, configuring line sensors")
                     app.num_line_sensors = hexpansion_type.sensors
                     app.line_sensors_hexpansion_config = HexpansionConfig(port)
@@ -737,7 +737,7 @@ class HexpansionMgr:
             hexpansion_type = app.HEXPANSION_TYPES[self.hexpansion_init_type].name
             hexpansion_sub_type = app.HEXPANSION_TYPES[self.hexpansion_init_type].sub_type
             app.draw_message(ctx, ["Hexpansion", f"in slot {self.detected_port}:", "Init EEPROM as", hexpansion_sub_type, f"{hexpansion_type}?"], [(1, 1, 1), (1, 1, 1), (1, 1, 1), (0, 0, 1), (1, 1, 0)], label_font_size)
-            button_labels(ctx, confirm_label="Yes", up_label="^", down_label="\u25BC", left_label=app.HEXPANSION_TYPES[1].name, right_label=app.HEXPANSION_TYPES[6].name, cancel_label="No")
+            button_labels(ctx, confirm_label="Yes", up_label="^", down_label="\u25BC", left_label=app.HEXPANSION_TYPES[app.HEXDRIVE_HEXPANSION_INDEX].name, right_label=app.HEXPANSION_TYPES[app.HEXSENSE_HEXPANSION_INDEX].name, cancel_label="No")
             return True
         elif self._sub_state == _SUB_ERASE:
             hexpansion_type = type_name_for_port(self.erase_port, self.hexpansion_init_type)
