@@ -15,6 +15,12 @@ from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
 from .app import (MAIN_MENU_ITEMS, MENU_ITEM_SETTINGS)
 
+# Front face direction labels (0=BtnA corner between slots 6 & 1, each step = 30° CW)
+_FRONT_FACE_LABELS = (
+    "BtnA", "Slot 1", "BtnB", "Slot 2", "BtnC", "Slot 3",
+    "BtnD", "Slot 4", "BtnE", "Slot 5", "BtnF", "Slot 6",
+)
+_FWD_DIR_LABELS = ("Normal", "Reverse")
 
 class MySetting:
     def __init__(self, container, default, minimum, maximum):
@@ -157,7 +163,6 @@ class SettingsMgr:
     @staticmethod
     def _format_setting_value(key, value):
         """Return a display-friendly string for the given setting key/value."""
-        from .app import _FWD_DIR_LABELS, _FRONT_FACE_LABELS
         if key == 'fwd_dir':
             try:
                 return _FWD_DIR_LABELS[int(value)]
