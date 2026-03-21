@@ -71,11 +71,11 @@ class ServoTestMgr:
 
     def __init__(self, app):
         self.app = app
-        self.servo               = [None]*4                    # Servo Positions
-        self.servo_centre        = [_SERVO_DEFAULT_CENTRE]*4   # Trim Servo Centre
-        self.servo_range         = [_SERVO_DEFAULT_RANGE]*4    # Limit Servo Range
-        self.servo_rate          = [_SERVO_DEFAULT_RATE]*4     # Servo Rate of Change
-        self.servo_mode          = [ServoMode()]*4             # Servo Mode
+        self.servo               = [None]*4                         # Servo Positions
+        self.servo_centre        = [_SERVO_DEFAULT_CENTRE]*4        # Trim Servo Centre
+        self.servo_range         = [_SERVO_DEFAULT_RANGE]*4         # Limit Servo Range
+        self.servo_rate          = [_SERVO_DEFAULT_RATE]*4          # Servo Rate of Change
+        self.servo_mode          = [ServoMode() for _ in range(4)]  # Servo Mode
         self.servo_selected: int = 0        
         self.time_since_last_input: int = 0
         self.timeout_period: int = 120000                     # ms (2 minutes - without any user input)       
@@ -218,8 +218,8 @@ class ServoTestMgr:
         for i in range(app.num_servos):
             _refresh = app.refresh
             if self.servo_mode[i] == ServoMode.SCANNING:
-                if self.servo[self.servo_selected] is None:
-                    self.servo[self.servo_selected] = 0
+                if self.servo[i] is None:
+                    self.servo[i] = 0
                 self.servo[i] = self.servo[i] + ((10 * self.servo_rate[i] * delta) // 1000)
                 if self.servo_range[i] < (self.servo[i] + (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE)):
                     self.servo_rate[i] = -self.servo_rate[i]
