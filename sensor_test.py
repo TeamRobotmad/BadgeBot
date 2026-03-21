@@ -140,7 +140,7 @@ class SensorTestMgr:
             if self._sensor_mgr.open(self._port_selected):
                 self._sub_state = _SUB_READING
             else:
-                app.notification = Notification("No Sensors")
+                app.notification = Notification("      No      Sensors")
         elif app.button_states.get(BUTTON_TYPES["CANCEL"]):
             app.button_states.clear()
             if self._sensor_mgr is not None:
