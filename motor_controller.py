@@ -391,8 +391,7 @@ class MotorController:
         """
         from events.input import BUTTON_TYPES
 
-        use_distance = (self._settings.get('drive_mode') is not None
-                        and int(self._settings['drive_mode'].v) == 1)
+        use_distance = True # (self._settings.get('drive_mode') is not None and int(self._settings['drive_mode'].v) == 1)
 
         self._power_on()
         try:

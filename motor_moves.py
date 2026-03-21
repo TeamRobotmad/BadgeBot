@@ -238,12 +238,13 @@ class MotorMovesMgr:
                 self.app.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
                 self._mc_task = None
             return None  # MotorController manages motors directly
-        # Legacy power-plan path
-        output = self._get_current_power_level(delta)
-        if output is None and self._sub_state == _SUB_RUN:
-            self._sub_state = _SUB_DONE
-            self.app.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
-        return output
+        else:
+            # Legacy power-plan path
+            output = self._get_current_power_level(delta)
+            if output is None and self._sub_state == _SUB_RUN:
+                self._sub_state = _SUB_DONE
+                self.app.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
+            return output
 
 
     # ------------------------------------------------------------------
