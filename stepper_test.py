@@ -45,19 +45,24 @@ class StepperMode:
     stepper_modes = ["OFF", "POSITION", "SPEED"]
 
     def __init__(self, mode=OFF):
-        self.mode = mode
+        self._mode = mode
 
-    def set(self, mode):
-        self.mode = mode
+    @property
+    def mode(self):
+        return self._mode
+
+    @mode.setter
+    def mode(self, mode):
+        self._mode = mode
 
     def inc(self):
-        self.mode = (self.mode + 1) % 3
+        self._mode = (self._mode + 1) % 3
 
     def __eq__(self, other):
-        return self.mode == other
+        return self._mode == other
 
     def __str__(self):
-        return self.stepper_modes[self.mode]
+        return self.stepper_modes[self._mode]
 
 
 # ---- Stepper Motor Class ---------------------------------------------------
@@ -338,7 +343,7 @@ class StepperTestMgr:
                     self.stepper.speed(speed)
                 else:
                     if self.stepper_mode != StepperMode.POSITION:
-                        self.stepper_mode.set(StepperMode.POSITION)
+                        self.stepper_mode.mode = StepperMode.POSITION
                         self.stepper.speed(_STEPPER_DEFAULT_SPEED)
                         self.stepper.track_target()
                     pos = self.stepper.get_pos()
@@ -355,7 +360,7 @@ class StepperTestMgr:
                     self.stepper.speed(speed)
                 else:
                     if self.stepper_mode != StepperMode.POSITION:
-                        self.stepper_mode.set(StepperMode.POSITION)
+                        self.stepper_mode.mode = StepperMode.POSITION
                         self.stepper.speed(_STEPPER_DEFAULT_SPEED)
                         self.stepper.track_target()
                     pos = self.stepper.get_pos()
