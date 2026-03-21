@@ -217,7 +217,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             pass
 
         # Hexpansion related
-        self.HEXPANSION_TYPES = [HexpansionType(0xCBCB, "HexDrive", motors=2, servos=4, app_mpy_name="hexdrive.mpy", app_mpy_version=CURRENT_HEXDRIVE_APP_VERSION, app_name="HexDriveApp"), 
+        self.HEXPANSION_TYPES = [HexpansionType(0xCBCB, "HexDrive", motors=2, servos=4, steppers=1, app_mpy_name="hexdrive.mpy", app_mpy_version=CURRENT_HEXDRIVE_APP_VERSION, app_name="HexDriveApp"), 
                                  HexpansionType(0xCBCA, "HexDrive", motors=2,           sub_type="2 Motor", app_mpy_name="hexdrive.mpy", app_mpy_version=CURRENT_HEXDRIVE_APP_VERSION, app_name="HexDriveApp"), 
                                  HexpansionType(0xCBCC, "HexDrive", servos=4,           sub_type="4 Servo", app_mpy_name="hexdrive.mpy", app_mpy_version=CURRENT_HEXDRIVE_APP_VERSION, app_name="HexDriveApp"), 
                                  HexpansionType(0xCBCD, "HexDrive", motors=1, servos=2, sub_type="1 Mot 2 Srvo", app_mpy_name="hexdrive.mpy", app_mpy_version=CURRENT_HEXDRIVE_APP_VERSION, app_name="HexDriveApp"),
