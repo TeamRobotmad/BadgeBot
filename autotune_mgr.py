@@ -58,21 +58,22 @@ class AutotuneMgr:
             return False
         if app.hexdrive_app is not None:
             app.hexdrive_app.set_logging(False)
-            if not app.hexdrive_app.set_power(True):
-                print("Failed to enable HexDrive power")
-        else:
-            print("No HexDrive App")
-            return False
-        #self.follower.line_sensors.enable() # using blocking_read which does not require enabling.
-        app.set_menu(None)
-        app.button_states.clear()
-        self.autotuner = None
-        app.update_period = AUTOTUNER_UPDATE_PERIOD
-        app.refresh = True
+            if app.hexdrive_app.initialise() and app.hexdrive_app.set_power(True):
+                #self.follower.line_sensors.enable() # using blocking_read which does not require enabling.
+                app.set_menu(None)
+                app.button_states.clear()
+                self.autotuner = None
+                app.update_period = AUTOTUNER_UPDATE_PERIOD
+                app.refresh = True
+                if app.settings['logging'].v:
+                    print("AUTOTUNE: Entered PID Auto Tune mode")
+                return True
         if app.settings['logging'].v:
-            print("AUTOTUNE: Entered PID Auto Tune mode")
-        return True
-
+            print("H:Failed to initialise HexDrive for autotune")
+        app.notification = Notification("HexDrive Init Failed")
+        return False
+    
+    
     # ------------------------------------------------------------------
     # Begin tuning (called after countdown completes)
     # ------------------------------------------------------------------

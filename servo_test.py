@@ -246,22 +246,27 @@ class ServoTestMgr:
     def reset_servo(self) -> bool:
         app = self.app
         if app.hexdrive_app is not None:
-            if app.hexdrive_app.set_power(True):
-                if app.hexdrive_app.set_freq(1000 // app.settings['servo_period'].v):
-                    for i in range(app.num_servos):
-                        app.hexdrive_app.set_servocentre(self.servo_centre[self.servo_selected], self.servo_selected)
-                        self.servo_range[i] = app.settings['servo_range'].v
-                        if self.servo[i] is not None:
-                            if self.servo[i] > self.servo_range[i]:
-                                self.servo[i] = self.servo_range[i]
-                            elif self.servo[i] < -self.servo_range[i]:
-                                self.servo[i] = -self.servo_range[i]
-                            if not app.hexdrive_app.set_servoposition(i, int(self.servo[i])):
+            if app.hexdrive_app.initialise() and app.hexdrive_app.set_power(True) and app.hexdrive_app.set_freq(1000 // app.settings['servo_period'].v):
+                for i in range(app.num_servos):
+                    app.hexdrive_app.set_servocentre(self.servo_centre[self.servo_selected], self.servo_selected)
+                    self.servo_range[i] = app.settings['servo_range'].v
+                    if self.servo[i] is not None:
+                        if self.servo[i] > self.servo_range[i]:
+                            self.servo[i] = self.servo_range[i]
+                        elif self.servo[i] < -self.servo_range[i]:
+                            self.servo[i] = -self.servo_range[i]
+                        if not app.hexdrive_app.set_servoposition(i, int(self.servo[i])):
+                            if app.settings['logging'].v:
                                 print("H:Failed to set servo position")
-                    self.servo_selected = 0
-                    app.time_since_last_update = 0
-                    self.time_since_last_input = 0
-                    return True
+                self.servo_selected = 0
+                app.time_since_last_update = 0
+                self.time_since_last_input = 0
+                if app.settings['logging'].v:
+                    print("H:HexDrive initialised for servo test")
+                return True
+        if app.settings['logging'].v:
+            print("H:Failed to initialise HexDrive for servo test")
+        app.notification = Notification("HexDrive Init Failed")
         return False
 
 

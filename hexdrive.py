@@ -61,7 +61,7 @@ class HexDriveType:
 
 _HEXDRIVE_TYPES = (
     HexDriveType(0xCA, motors=2, name="2 Motor"),
-    HexDriveType(0xCB, motors=2, servos=4),
+    HexDriveType(0xCB, motors=2, servos=4, steppers=1),
     HexDriveType(0xCC, servos=4, name="4 Servo"),
     HexDriveType(0xCD, motors=1, servos=2, name="1 Mot 2 Srvo"),
     HexDriveType(0xCE, steppers=1, name="1 Stepper"),

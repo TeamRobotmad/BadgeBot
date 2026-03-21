@@ -327,35 +327,31 @@ class LineFollowMgr:
         else:
             if app.hexdrive_app is not None:
                 app.hexdrive_app.set_logging(False)
-                if not app.hexdrive_app.set_power(True):
-                    print("Failed to enable HexDrive power")
-                    # try to continue anyway
-                #self.line_sensors.enable()
-                #self.line_sensors.read()    # initiate first sensor reading
-                self.line_sensors.read_blocking()    # initiate first sensor reading
-                app.update_period = _LINE_SENSOR_UPDATE_PERIOD_MS
-                app.set_menu(None)
-                app.button_states.clear()            
-                app.refresh = True
-                app.auto_repeat_clear()
-                self.motor_output = (0,0)
-                self.kp = app.settings['pid_kp'].v
-                self.ki = app.settings['pid_ki'].v
-                self.kd = app.settings['pid_kd'].v
-                self.max_pwr = app.settings['max_power'].v
-                if self.ki > 0:
-                    self.integral_limit = self.max_pwr // self.ki
-                else:
-                    self.integral_limit = 0            
-                if app.settings['logging'].v:
-                    print("Entered Line Follower mode")
-                return True                    
-            else:
-                print("No HexDrive App")
-                # shouldn't be possible as menu option not enabled if there is no HexDrive app
-                Notification(app, "No HexDrive App")
+                if app.hexdrive_app.initialise() and app.hexdrive_app.set_power(True):
+                    #self.line_sensors.enable()
+                    #self.line_sensors.read()    # initiate first sensor reading
+                    self.line_sensors.read_blocking()    # initiate first sensor reading
+                    app.update_period = _LINE_SENSOR_UPDATE_PERIOD_MS
+                    app.set_menu(None)
+                    app.button_states.clear()            
+                    app.refresh = True
+                    app.auto_repeat_clear()
+                    self.motor_output = (0,0)
+                    self.kp = app.settings['pid_kp'].v
+                    self.ki = app.settings['pid_ki'].v
+                    self.kd = app.settings['pid_kd'].v
+                    self.max_pwr = app.settings['max_power'].v
+                    if self.ki > 0:
+                        self.integral_limit = self.max_pwr // self.ki
+                    else:
+                        self.integral_limit = 0            
+                    if app.settings['logging'].v:
+                        print("Entered Line Follower mode")
+                    return True                    
+            if app.settings['logging'].v:
+                print("HexDrive not available; Line Follower requires HexDrive to run")
+            Notification(app, "HexDrive Init Failed")
             return False                
-        return False
 
 
     # ------------------------------------------------------------------

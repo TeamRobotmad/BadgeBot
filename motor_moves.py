@@ -23,6 +23,7 @@
 import asyncio
 from events.input import BUTTON_TYPES, Button
 from app_components.tokens import label_font_size, button_labels
+from app_components.notification import Notification
 
 from .utils import chain
 from .app import (STATE_COUNTDOWN, STATE_MOTOR_MOVES, STATE_LOGO, DEFAULT_BACKGROUND_UPDATE_PERIOD)
@@ -179,7 +180,14 @@ class MotorMovesMgr:
             # Fallback: old power-plan iterator
             self.power_plan_iter = chain(*(instr.power_plan for instr in self.instructions))
             if app.hexdrive_app is not None:
-                app.hexdrive_app.set_power(True)
+                if app.hexdrive_app.initialise() and app.hexdrive_app.set_power(True):
+                    pass
+                else:
+                    if app.settings['logging'].v:
+                        print("H:Failed to initialise HexDrive for motor moves")
+                    app.notification = Notification("HexDrive Init Failed")
+                    self._sub_state = _SUB_DONE
+                    return
         self._sub_state = _SUB_RUN
         app.update_period = _TICK_MS
         app.refresh = True
