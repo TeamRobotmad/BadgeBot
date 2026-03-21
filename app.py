@@ -176,7 +176,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.message_type = None
         self.current_menu: str = None
         self.menu: Menu = None
-        self.scroll_mode_enabled: bool = False
+        self.scroll_mode_enabled: bool = False  # Whether pressing the "C" button can toggle scroll mode on/off, which allows the user to scroll through lines on the display.
+        self.scroll_ignore_next_c_button: bool = False # Used to ignore the "C" button event that triggers scroll mode on, otherwise it would immediately toggle scroll mode off again
         self.is_scroll: bool = False        # Whether we are in scroll mode - this is displayed by a green border around the screen 
         self.scroll_offset: int = 0
 
@@ -334,6 +335,9 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
     async def handle_button_up(self, event: ButtonUpEvent):
         if self.scroll_mode_enabled and event.button == BUTTONS["C"]:
+            if self.scroll_ignore_next_c_button:
+                self.scroll_ignore_next_c_button = False
+                return
             # Toggle scroll mode on/off when "C" button is released
             self.scroll(not self.is_scroll)
 
@@ -552,6 +556,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         """Enable the potential for scroll mode to be toggled on and off by pressing the "C" button"""
         if enable:
             self.scroll_mode_enabled = True
+            self.scroll_ignore_next_c_button = True # we want to ignore the "C" button event that triggered this, otherwise it would immediately toggle scroll mode on 
             eventbus.on_async(ButtonUpEvent, self.handle_button_up, self)
         else:
             self.scroll_mode_enabled = False
