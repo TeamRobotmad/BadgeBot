@@ -13,7 +13,7 @@
 from events.input import BUTTON_TYPES
 from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
-
+from .utils import inc_value, dec_value
 
 # Servo Tester - Defaults
 _SERVO_DEFAULT_STEP    = 10
@@ -125,7 +125,7 @@ class ServoTestMgr:
                     else:
                         negative = False
                         rate = self.servo_rate[self.servo_selected]
-                    rate = app.inc_value(rate, app.auto_repeat_level)
+                    rate = inc_value(rate, app.auto_repeat_level)
                     if _SERVO_MAX_RATE < rate:
                         rate = _SERVO_MAX_RATE
                     if negative:
@@ -157,7 +157,7 @@ class ServoTestMgr:
                     else:
                         negative = False
                         rate = self.servo_rate[self.servo_selected]
-                    rate = app.dec_value(rate, app.auto_repeat_level)
+                    rate = dec_value(rate, app.auto_repeat_level)
                     if _SERVO_MIN_RATE > rate:
                         rate = _SERVO_MIN_RATE
                     if negative:
@@ -234,7 +234,7 @@ class ServoTestMgr:
 
         return True
 
-
+        
     # ------------------------------------------------------------------
     # Servo reset
     # ------------------------------------------------------------------
@@ -252,7 +252,8 @@ class ServoTestMgr:
                                 self.servo[i] = self.servo_range[i]
                             elif self.servo[i] < -self.servo_range[i]:
                                 self.servo[i] = -self.servo_range[i]
-                            app.hexdrive_app.set_servoposition(i, int(self.servo[i]))
+                            if not app.hexdrive_app.set_servoposition(i, int(self.servo[i])):
+                                print("H:Failed to set servo position")
                     self.servo_selected = 0
                     app.time_since_last_update = 0
                     self.time_since_last_input = 0

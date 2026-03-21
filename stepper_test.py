@@ -19,6 +19,8 @@ try:
 except ImportError:
     Timer = None
 
+from .utils import inc_value, dec_value
+
 
 # Stepper Tester - Defaults
 _STEPPER_MAX_SPEED     = 200
@@ -170,6 +172,7 @@ class Stepper:
         except Exception as e:      # pylint: disable=broad-except
             print(f"step phase {self._phase} failed:{e}")
 
+
     def _hit_endstop(self):
         print("Endstop - hit")
         if not self._calibrated:
@@ -180,11 +183,14 @@ class Stepper:
         elif self._free_run_mode == 0 and self._target_pos < self._pos:
             self.speed(0)
 
+
     def _timer_callback_fwd(self, t):   # pylint: disable=unused-argument
         self.step(1)
 
+
     def _timer_callback_rev(self, t):   # pylint: disable=unused-argument
         self.step(-1)
+
 
     def _timer_callback(self, t):       # pylint: disable=unused-argument
         if self._target_pos > self._pos:
@@ -192,16 +198,19 @@ class Stepper:
         elif self._target_pos < self._pos:
             self.step(-1)
 
+
     def free_run(self, d=1):
         """Run the stepper at the current speed in the given direction, ignoring position feedback."""
         self._free_run_mode = d
         if d != 0:
             self._update_timer((2 // self._step_size) * abs(self._steps_per_sec))
 
+
     def track_target(self):
         """Run the stepper, using position feedback to maintain the target position."""
         self._free_run_mode = 0
         self._update_timer((2 // self._step_size) * abs(self._steps_per_sec))
+
 
     def _update_timer(self, freq):
         if self._timer is None:
@@ -231,6 +240,7 @@ class Stepper:
         elif freq == 0:
             print("Timer: 0Hz")
 
+
     def stop(self):
         '''Stop the motor and disable the coils.'''
         self._update_timer(0)
@@ -238,6 +248,7 @@ class Stepper:
             self._hexdrive_app.motor_release()
         except Exception as e:      # pylint: disable=broad-except
             print(f"stop failed:{e}")
+
 
     def enable(self, e=True):
         '''Enable or disable the stepper motor coils & HexDrive power.'''
@@ -253,6 +264,7 @@ class Stepper:
             self._hexdrive_app.set_power(e)
         except Exception:      # pylint: disable=broad-except
             print("enable failed")
+
 
     def is_enabled(self):
         '''Return True if the stepper is currently enabled (i.e. not in a power-saving state).'''
@@ -307,6 +319,7 @@ class StepperTestMgr:
             print("Entered Stepper Test mode")
         return True
 
+
     # ------------------------------------------------------------------
     # Per-tick update
     # ------------------------------------------------------------------
@@ -319,7 +332,7 @@ class StepperTestMgr:
             if app.auto_repeat_check(delta, True):
                 if self.stepper_mode == StepperMode.SPEED:
                     speed = self.stepper.get_speed()
-                    speed = app.inc_value(speed, app.auto_repeat_level + 1)
+                    speed = inc_value(speed, app.auto_repeat_level + 1)
                     if _STEPPER_MAX_SPEED < speed:
                         speed = _STEPPER_MAX_SPEED
                     self.stepper.speed(speed)
@@ -329,14 +342,14 @@ class StepperTestMgr:
                         self.stepper.speed(_STEPPER_DEFAULT_SPEED)
                         self.stepper.track_target()
                     pos = self.stepper.get_pos()
-                    pos = app.inc_value(pos, app.auto_repeat_level + 1)
+                    pos = inc_value(pos, app.auto_repeat_level + 1)
                     self.stepper.target(pos)
                 app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["LEFT"]):
             if app.auto_repeat_check(delta, True):
                 if self.stepper_mode == StepperMode.SPEED:
                     speed = self.stepper.get_speed()
-                    speed = app.dec_value(speed, app.auto_repeat_level + 1)
+                    speed = dec_value(speed, app.auto_repeat_level + 1)
                     if -_STEPPER_MAX_SPEED > speed:
                         speed = -_STEPPER_MAX_SPEED
                     self.stepper.speed(speed)
@@ -346,7 +359,7 @@ class StepperTestMgr:
                         self.stepper.speed(_STEPPER_DEFAULT_SPEED)
                         self.stepper.track_target()
                     pos = self.stepper.get_pos()
-                    pos = app.dec_value(pos, app.auto_repeat_level + 1)
+                    pos = dec_value(pos, app.auto_repeat_level + 1)
                     self.stepper.target(pos)
                 app.refresh = True
         else:
@@ -390,6 +403,7 @@ class StepperTestMgr:
             self.stepper.step()
             app.time_since_last_update = 0
         return True
+
 
     # ------------------------------------------------------------------
     # Draw

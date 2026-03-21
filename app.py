@@ -621,24 +621,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             self.notification.draw(ctx)
 
 
-    # Value increment/decrement functions for positive integers only
-    def _inc(self, v: int, l: int):
-        if l==0:
-            return v+1
-        else:
-            d = 10**l
-            v = ((v // d) + 1) * d   # round up to the next multiple of 10^l
-            return v
-
-    def _dec(self, v: int, l: int):
-        if l==0:
-            return v-1
-        else:
-            d = 10**l
-            v = (((v+(9*(10**(l-1)))) // d) - 1) * d   # round down to the next multiple of 10^l
-            return v
-
-
     def clear_leds(self):
         """Utility function to clear all LEDs. This is used when setting direction LEDs to ensure only the relevant ones are lit."""
         for i in range(1,13):
