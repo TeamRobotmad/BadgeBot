@@ -280,7 +280,7 @@ class MotorController:
                 if self.integrated_deg >= target_deg:
                     break
 
-                await asyncio.sleep(self._update_ms / 1000)
+                await asyncio.sleep_ms(self._update_ms)
 
             timed_out = elapsed_ms >= timeout
             overshoot = self.integrated_deg - target_deg
@@ -296,7 +296,7 @@ class MotorController:
                 d = time.ticks_diff(t, last_time)
                 last_time = t
                 self._read_gyro(d)
-                await asyncio.sleep(self._update_ms / 1000)
+                await asyncio.sleep_ms(self._update_ms)
             coast_deg = self.integrated_deg - post_stop_deg
 
             print("[MC-DIAG] turn done: integrated=%.2f deg  target=%.1f deg  "
@@ -551,12 +551,11 @@ class MotorController:
             last_time = cur_time
             self._ramp_toward((0, 0), max(delta, 1))
             self._send_output()
-            await asyncio.sleep(self._update_ms / 1000)
+            await asyncio.sleep_ms(self._update_ms)
         self._send_output()
         # Zero velocity when we know the robot has stopped (drift reset)
         self.velocity_mps = 0.0
-        await asyncio.sleep(_DEFAULT_SETTLE_MS / 1000)
-
+        await asyncio.sleep_ms(_DEFAULT_SETTLE_MS)
 
     async def _ramp_stop_with_accel(self):
         """Ramp motors to zero while continuing to read the accelerometer.
@@ -572,10 +571,10 @@ class MotorController:
             self._ramp_toward((0, 0), max(delta, 1))
             self._send_output()
             self._read_accel(max(delta, 1))
-            await asyncio.sleep(self._update_ms / 1000)
+            await asyncio.sleep_ms(self._update_ms)
         self._send_output()
         self.velocity_mps = 0.0
-        await asyncio.sleep(_DEFAULT_SETTLE_MS / 1000)
+        await asyncio.sleep_ms(_DEFAULT_SETTLE_MS)
 
 
     async def _timed_drive(self, target, duration_ms):
@@ -595,7 +594,7 @@ class MotorController:
                 self._ramp_toward(target, delta)
                 self._send_output()
                 elapsed += delta
-                await asyncio.sleep(self._update_ms / 1000)
+                await asyncio.sleep_ms(self._update_ms)
 
             # Phase 2 — ramp down
             await self._ramp_stop()
@@ -697,7 +696,7 @@ class MotorController:
                     print("[MC-DIAG]  t=%5dms a=%+.4f m/s2 v=%+.5f m/s d=%.2f/%.1f mm spd=%d%% mot=%s" % (
                         elapsed, self.accel_mps2, self.velocity_mps, d_mm, target_mm, spd_pct, str(self.motor_output)))
 
-                await asyncio.sleep(self._update_ms / 1000)
+                await asyncio.sleep_ms(self._update_ms)
             else:
                 d_mm = self.distance_m * 1000
                 print("[MC-DIAG]  TIMEOUT after %d ms  dist=%.2f mm" % (elapsed, d_mm))
