@@ -453,7 +453,7 @@ class MotorController:
             return 0.0
         return radians(-(int(self._front_face.v) * 30))
 
-    def _calibrate_accel(self):
+    async def _calibrate_accel(self):
         """Sample the accelerometer while stationary to estimate bias.
 
         Both X and Y axes are sampled so the forward projection
@@ -479,6 +479,8 @@ class MotorController:
             except Exception:           # pylint: disable=broad-exception-caught
                 # Ignore individual read failures; we'll check how many succeeded below.
                 pass
+            # we need to wait a bit between samples to let the IMU update, otherwise we just get the same reading repeatedly
+            await asyncio.sleep_ms(10)
         success_count = len(samples_x)
         if success_count == 0:
             # No valid samples: leave calibration disabled and report failure.
@@ -632,6 +634,8 @@ class MotorController:
         min_frac = 0.15
 
         self._busy = True
+        # wait a moment to let any previous motion settle, then calibrate the accelerometer bias
+        await asyncio.sleep_ms(250)
         self._calibrate_accel()
         self._reset_distance()
         elapsed = 0
