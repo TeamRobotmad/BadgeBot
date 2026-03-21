@@ -28,10 +28,10 @@ from .utils import draw_logo_animated, parse_version
 #micropython.alloc_emergency_exception_buf(100)
 
 
-CURRENT_HEXDRIVE_APP_VERSION = 6 # HEXDRIVE.PY Integer Version Number - checked against the EEPROM app.py version to determine if it needs updating
+CURRENT_HEXDRIVE_APP_VERSION = 7 # HEXDRIVE.PY Integer Version Number - checked against the EEPROM app.py version to determine if it needs updating
 
 
-APP_VERSION = "1.3" # BadgeBot App Version Number
+APP_VERSION = "1.5" # BadgeBot App Version Number
 
 # If you change the URL then you will need to regenerate the QR code
 # using the generate_qr_code.py script, and update the _QR_CODE constant below with the new code generated for your URL

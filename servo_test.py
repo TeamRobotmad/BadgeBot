@@ -99,6 +99,7 @@ class ServoTestMgr:
                 print("Entered Servo Test mode")
             return True
         return False
+    
 
     # ------------------------------------------------------------------
     # Per-tick update
@@ -233,6 +234,7 @@ class ServoTestMgr:
 
         return True
 
+
     # ------------------------------------------------------------------
     # Servo reset
     # ------------------------------------------------------------------
@@ -240,22 +242,23 @@ class ServoTestMgr:
     def reset_servo(self) -> bool:
         app = self.app
         if app.hexdrive_app is not None:
-            app.hexdrive_app.set_power(True)
-            app.hexdrive_app.set_freq(1000 // app.settings['servo_period'].v)
-            for i in range(app.num_servos):
-                app.hexdrive_app.set_servocentre(self.servo_centre[self.servo_selected], self.servo_selected)
-                self.servo_range[i] = app.settings['servo_range'].v
-                if self.servo[i] is not None:
-                    if self.servo[i] > self.servo_range[i]:
-                        self.servo[i] = self.servo_range[i]
-                    elif self.servo[i] < -self.servo_range[i]:
-                        self.servo[i] = -self.servo_range[i]
-                    app.hexdrive_app.set_servoposition(i, int(self.servo[i]))
-            self.servo_selected = 0
-            app.time_since_last_update = 0
-            self.time_since_last_input = 0
-            return True
+            if app.hexdrive_app.set_power(True):
+                if app.hexdrive_app.set_freq(1000 // app.settings['servo_period'].v):
+                    for i in range(app.num_servos):
+                        app.hexdrive_app.set_servocentre(self.servo_centre[self.servo_selected], self.servo_selected)
+                        self.servo_range[i] = app.settings['servo_range'].v
+                        if self.servo[i] is not None:
+                            if self.servo[i] > self.servo_range[i]:
+                                self.servo[i] = self.servo_range[i]
+                            elif self.servo[i] < -self.servo_range[i]:
+                                self.servo[i] = -self.servo_range[i]
+                            app.hexdrive_app.set_servoposition(i, int(self.servo[i]))
+                    self.servo_selected = 0
+                    app.time_since_last_update = 0
+                    self.time_since_last_input = 0
+                    return True
         return False
+
 
     # ------------------------------------------------------------------
     # Draw

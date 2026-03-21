@@ -12,7 +12,7 @@ from system.scheduler.events import RequestStopAppEvent
 import app
 
 # HexDrive.py App Version - used to check if upgrade is required
-HEXDRIVE_APP_VERSION = 6
+HEXDRIVE_APP_VERSION = 7
 
 # HexDrive Hexpansion constants
 # Hardware defintions:
@@ -258,9 +258,9 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
                 try:
                     pwm.freq(int(freq))
                     if self._logging:
-                        print(f"H:{self.config.port}:PWM[{channel}]:{int(freq)}Hz")
+                        print(f"H:{self.config.port}:PWM[{this_channel}]:{int(freq)}Hz")
                 except Exception as e:  # pylint: disable=broad-except
-                    print(f"H:{self.config.port}:PWM[{channel}]:set freq failed {e}")
+                    print(f"H:{self.config.port}:PWM[{this_channel}]:set freq failed {e}")
                     return False
                 self._freq[this_channel] = int(freq)
         return True
@@ -315,16 +315,26 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
                     return False
             # check if all channels are now off and set outputs_energised accordingly
             self._check_outputs_energised()          
-        else:           
+        elif channel is not None:           
             if channel < 0 or channel >= 4:
-                return False            
+                return False
             if abs(position) > _MAX_SERVO_RANGE:
                 return False
-            self._outputs_energised = True
-            self._stepper = False                
-            try:             
+            if self.PWMOutput[channel] is None:
+                # Channel hasn't been setup yet so we need to initialise it before we can set the position
+                self._freq[channel] = self._freq[channel] if self._freq[channel] != 0 else _DEFAULT_PWM_FREQ
+                hs_pin = self.config.pin[channel]
+                try:
+                    self.PWMOutput[channel] = PWM(hs_pin, freq = self._freq[channel], duty_u16 = 0)
+                    if self._logging:
+                        print(f"H:{self.config.port}:PWM[{channel}]:{self.PWMOutput[channel]}")
+                except Exception as e:      # pylint: disable=broad-except
+                    # There are a finite number of PWM resources so it is possible that we run out
+                    print(f"H:{self.config.port}:PWM[{channel}]:PWM(init) failed {e}")
+                    return False
+            try:
                 if _MAX_SERVO_FREQ < self.PWMOutput[channel].freq():
-                    # Ensure PWM frequency is suitable for use with Servos
+                    # Ensure the frequency is suitable for use with Servos
                     # otherwise the pulse width will not be accepted
                     self.PWMOutput[channel].freq(_DEFAULT_SERVO_FREQ)
                     if self._logging:
@@ -332,6 +342,8 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
             except Exception as e:          # pylint: disable=broad-except
                 print(f"H:{self.config.port}:PWM[{channel}]:set freq failed {e}")
                 return False
+            self._outputs_energised = True
+            self._stepper = False
             # Scale servo position to PWM duty cycle (500-2500us)
             pulse_width = int((self._servo_centre[channel] + position) * 1000)
             try:
