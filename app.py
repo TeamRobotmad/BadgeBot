@@ -492,7 +492,11 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
     def _update_state_message(self, delta: int):      # pylint: disable=unused-argument
         if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
-            if self.message_type == "error":
+            if self.message_type == "reboop":
+                self.button_states.clear()
+                # Reboot has been acknowledged by the user - perform reboot
+                return # leave the message on screen.
+            elif self.message_type == "error":
                 # Error has been acknowledged by the user
                 self.button_states.clear()
                 # Recheck Hexpansions - in case the issue is resolved

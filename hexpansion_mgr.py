@@ -471,7 +471,7 @@ class HexpansionMgr:
                 if app.settings['logging'].v:
                     print(f"H:Hexpansion on port {self.upgrade_port} upgraded")
                 self._sub_state = _SUB_CHECK
-                app.show_message(["Upgraded:", "Please", "reboop"], [(0,1,0),(1,1,1),(1,1,1)])
+                app.show_message(["Upgraded:", "Please", "reboop"], [(0,1,0),(1,1,1),(1,1,1)], "reboop")
             else:
                 app.notification = Notification("Failed", port=self.upgrade_port)
                 self._sub_state = _SUB_CHECK
@@ -533,7 +533,7 @@ class HexpansionMgr:
                 app.notification = Notification("Erased", port=self.erase_port)
                 self.ports_with_blank_eeprom.add(self.erase_port)                
                 self._sub_state = _SUB_CHECK
-                app.show_message(["Erased:", "Please", "reboop"], [(0,1,0),(1,1,1),(1,1,1)])
+                app.show_message(["Erased:", "Please", "reboop"], [(0,1,0),(1,1,1),(1,1,1)], "reboop")
             else:
                 app.notification = Notification("Failed", port=self.erase_port)
                 self._sub_state = _SUB_CHECK
@@ -617,12 +617,12 @@ class HexpansionMgr:
                         if app.settings['logging'].v:
                             print(f"H:HexDrive {valid_port}: Failed to initialise PWM resources")
                         self._sub_state = _SUB_CHECK
-                        app.show_message([f"HexDrive {valid_port}", "PWM Init", "Failed", "Please", "Reboop"], [(1,0,0),(1,0,0),(1,0,0),(1,1,1),(1,1,1)], "error")
+                        app.show_message([f"HexDrive {valid_port}", "PWM Init", "Failed", "Please", "reboop"], [(1,0,0),(1,0,0),(1,0,0),(1,1,1),(1,1,1)], "reboop")
                 else:
                     if app.settings['logging'].v:
                         print(f"H:HexDrive {valid_port}: App not found, please reboop")
                     self._sub_state = _SUB_CHECK
-                    app.show_message([f"HexDrive {valid_port}", "App not found.", "Please", "reboop"], [(1,0,0),(1,0,0),(1,1,1),(1,1,1)], "error")
+                    app.show_message([f"HexDrive {valid_port}", "App not found.", "Please", "reboop"], [(1,0,0),(1,0,0),(1,1,1),(1,1,1)], "reboop")
             else:
                 self._sub_state = _SUB_CHECK
                 app.return_to_menu()
