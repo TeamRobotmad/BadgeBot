@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -226,6 +227,76 @@ def _compile_changed_modules(
     return compiled, skipped
 
 
+def _get_device_files(
+    *,
+    app_dir: str,
+    mpremote_args: list[str],
+) -> set[str] | None:
+    """Return the set of files present under *app_dir* on the device.
+
+    Returns a set of POSIX paths relative to *app_dir*, e.g.
+    ``{'app.mpy', 'sensors/__init__.mpy'}``.  Returns *None* on any error
+    (connection failure, mpremote not found, etc.) so the caller can fall back
+    to hash-only comparison for that run.
+
+    A single ``mpremote exec`` call walks the directory tree on the device.
+    """
+    on_device = app_dir.lstrip(":")
+    if not on_device.startswith("/"):
+        on_device = "/" + on_device
+
+    safe_path = on_device.replace("'", "\\'")
+    exec_code = (
+        "import os,json\n"
+        "def _ls(p):\n"
+        "    r=[]\n"
+        "    try:\n"
+        "        es=os.listdir(p)\n"
+        "    except OSError:\n"
+        "        return r\n"
+        "    for e in es:\n"
+        "        fp=p+'/'+e\n"
+        "        try:\n"
+        "            s=os.stat(fp)\n"
+        "            if s[0]&0x4000: r.extend(_ls(fp))\n"
+        "            else: r.append(fp)\n"
+        "        except OSError: pass\n"
+        "    return r\n"
+        f"print(json.dumps(_ls('{safe_path}')))"
+    )
+
+    command = ["mpremote", *mpremote_args, "exec", exec_code]
+    quoted = " ".join(f'"{p}"' if " " in p else p for p in command)
+    _log("CMD", quoted)
+
+    completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    if completed.returncode != 0:
+        _log("WARN", f"could not list device files (will upload all unverified): "
+                     f"{completed.stderr.strip() or completed.stdout.strip()}")
+        return None
+
+    match = re.search(r"\[.*?\]", completed.stdout, re.DOTALL)
+    if not match:
+        _log("WARN", "could not parse device file list (will upload all unverified)")
+        return None
+
+    try:
+        device_paths: list[str] = json.loads(match.group())
+    except json.JSONDecodeError as exc:
+        _log("WARN", f"could not decode device file list (will upload all unverified): {exc}")
+        return None
+
+    prefix = on_device.rstrip("/") + "/"
+    result: set[str] = set()
+    for p in device_paths:
+        p = p.replace("\\", "/")
+        if p.startswith(prefix):
+            result.add(p[len(prefix):])
+
+    _log("INFO", f"device has {len(result)} file(s) under {app_dir}")
+    return result
+
+
 def _upload_changed_artifacts(
     state: dict[str, dict[str, str]],
     *,
@@ -233,6 +304,7 @@ def _upload_changed_artifacts(
     dry_run: bool,
     mpremote_args: list[str],
     app_dir: str,
+    device_files: set[str] | None,
 ) -> tuple[int, int]:
     uploaded = 0
     skipped = 0
@@ -245,15 +317,19 @@ def _upload_changed_artifacts(
         artifact_hash = "DRY-RUN" if dry_run else _sha256(spec.artifact)
         known_hash = state["uploaded"].get(artifact_key)
 
-        needs_upload = force or artifact_hash != known_hash
+        on_device = device_files is None or artifact_key in device_files
+        needs_upload = force or artifact_hash != known_hash or not on_device
         if not needs_upload:
             skipped += 1
-            _log("SKP", f"upload {spec.artifact} (artifact unchanged)")
+            _log("SKP", f"upload {spec.artifact} (artifact unchanged, present on device)")
             continue
 
-        destination = f"{app_dir}/{spec.artifact.as_posix()}"
-        _log("INFO", f"upload {spec.artifact} -> {destination}")
+        if not on_device:
+            _log("INFO", f"upload {spec.artifact} (missing from device)")
+        else:
+            _log("INFO", f"upload {spec.artifact} -> {app_dir}/{spec.artifact.as_posix()}")
 
+        destination = f"{app_dir}/{spec.artifact.as_posix()}"
         command = ["mpremote", *mpremote_args, "cp", str(spec.artifact), destination]
         _run_command(command, dry_run=dry_run)
 
@@ -271,6 +347,7 @@ def _upload_changed_static_files(
     dry_run: bool,
     mpremote_args: list[str],
     app_dir: str,
+    device_files: set[str] | None,
 ) -> tuple[int, int]:
     """Copy static (non-compiled) files to the device unchanged."""
     uploaded = 0
@@ -284,15 +361,19 @@ def _upload_changed_static_files(
         file_hash = "DRY-RUN" if dry_run else _sha256(path)
         known_hash = state["uploaded"].get(file_key)
 
-        needs_upload = force or file_hash != known_hash
+        on_device = device_files is None or file_key in device_files
+        needs_upload = force or file_hash != known_hash or not on_device
         if not needs_upload:
             skipped += 1
-            _log("SKP", f"upload {path} (file unchanged)")
+            _log("SKP", f"upload {path} (file unchanged, present on device)")
             continue
 
-        destination = f"{app_dir}/{path.as_posix()}"
-        _log("INFO", f"upload {path} -> {destination}")
+        if not on_device:
+            _log("INFO", f"upload {path} (missing from device)")
+        else:
+            _log("INFO", f"upload {path} -> {app_dir}/{path.as_posix()}")
 
+        destination = f"{app_dir}/{path.as_posix()}"
         command = ["mpremote", *mpremote_args, "cp", str(path), destination]
         _run_command(command, dry_run=dry_run)
 
@@ -375,12 +456,21 @@ def main() -> int:
             force=options.force_compile,
             dry_run=options.dry_run,
         )
+        device_files = (
+            None
+            if options.dry_run
+            else _get_device_files(
+                app_dir=options.app_dir,
+                mpremote_args=options.mpremote_arg,
+            )
+        )
         uploaded, upload_skipped = _upload_changed_artifacts(
             state,
             force=options.force_upload,
             dry_run=options.dry_run,
             mpremote_args=options.mpremote_arg,
             app_dir=options.app_dir,
+            device_files=device_files,
         )
         static_uploaded, static_skipped = _upload_changed_static_files(
             state,
@@ -388,6 +478,7 @@ def main() -> int:
             dry_run=options.dry_run,
             mpremote_args=options.mpremote_arg,
             app_dir=options.app_dir,
+            device_files=device_files,
         )
 
         if not options.dry_run:
