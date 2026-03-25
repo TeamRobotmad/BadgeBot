@@ -13,11 +13,11 @@ import asyncio
 from events.input import BUTTON_TYPES
 from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
-
 try:
     import imu as _imu
 except ImportError:
     _imu = None
+from .app import MOTOR_PWM_FREQ
 
 # Sub-state constants for the auto-drive state machine
 _AUTO_SUB_DRIVE     = 0       # driving forward
@@ -130,6 +130,8 @@ class AutoDriveMgr:
         app.refresh = True
         if app.hexdrive_app is not None:
             app.hexdrive_app.set_power(True)
+            app.hexdrive_app.set_freq(MOTOR_PWM_FREQ)
+
 
         # Reset driving state
         self._active = True

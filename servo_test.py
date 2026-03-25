@@ -10,9 +10,18 @@
 #   update(delta)   – per-tick state machine update
 #   draw(ctx)       – render servo tester UI
 
+import gc
+import time
 from events.input import BUTTON_TYPES
 from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
+try:
+    from machine import Pin, disable_irq, enable_irq
+except ImportError:
+    # Simulator fallback
+    class Pin:
+        OUT = 1
+from system.hexpansion.config import HexpansionConfig
 from .utils import inc_value, dec_value
 
 # Servo Tester - Defaults
@@ -25,6 +34,7 @@ _SERVO_MAX_RATE        = 10000      # Maximum scanning rate in us/s
 _SERVO_MIN_RATE        = 10         # Minimum scanning rate in us/s
 _SERVO_MAX_TRIM        = 1000       # Maximum trim in microseconds
 _MAX_SERVO_RANGE       = 1400
+_LS_SERVO_PIN_INDEXES  = (2, 3, 4)  # HexDrive LS0/LS1 are reserved
 
 
 # ---- Settings initialisation -----------------------------------------------
@@ -84,7 +94,117 @@ class ServoTestMgr:
         self.time_since_last_input: int = 0
         self.timeout_period: int = 300000                     # ms (5 minutes - without any user input)       
         self.keep_alive_period: int = 500                     # ms (half the value used in hexdrive.py)  
+        self._ls_pins = []
 
+
+    def _available_hs_servos(self) -> int:
+        return min(4, max(0, self.app.num_servos))
+
+
+    @property
+    def available_servo_count(self) -> int:
+        if self.app.hexdrive_port is None:
+            return self._available_hs_servos()
+        return min(4, self._available_hs_servos() + len(_LS_SERVO_PIN_INDEXES))
+
+
+    def _is_ls_servo_index(self, index: int) -> bool:
+        return index >= self._available_hs_servos()
+
+
+    def _ls_pin_for_servo_index(self, index: int):
+        if not self._is_ls_servo_index(index):
+            return None
+        ls_idx = index - self._available_hs_servos()
+        if 0 <= ls_idx < len(self._ls_pins):
+            return self._ls_pins[ls_idx]
+        return None
+
+
+    def _pin_high(self, pin) -> None:
+        if pin is None:
+            return
+        pin.value(1)
+
+
+    def _pin_low(self, pin) -> None:
+        if pin is None:
+            return
+        pin.value(0)
+
+
+    def _prepare_ls_pin(self, pin) -> None:
+        if pin is None:
+            return
+        pin.init(mode=Pin.OUT)
+        pin.value(0)
+
+
+    def _clear_all_ls_outputs(self) -> None:
+        for pin in self._ls_pins:
+            self._pin_low(pin)
+
+
+    def _effective_pulse_us(self, index: int):
+        if self.servo_mode[index] == ServoMode.OFF or self.servo[index] is None:
+            return None
+        pulse = int(self.servo[index] + self.servo_centre[index])
+        if pulse <= 0:
+            return None
+        return pulse
+
+
+    def _apply_servo_output(self, index: int) -> None:
+        app = self.app
+        pulse = self._effective_pulse_us(index)
+        if self._is_ls_servo_index(index):
+            # LS channels are pulsed in background_update().
+            if pulse is None:
+                self._pin_low(self._ls_pin_for_servo_index(index))
+            return
+
+        if app.hexdrive_app is None:
+            return
+
+        if pulse is None:
+            app.hexdrive_app.set_servoposition(index, None)
+        else:
+            app.hexdrive_app.set_servoposition(index, int(self.servo[index]))
+
+
+    def _pulse_ls_servos(self) -> None:
+        active = []
+        for i in range(self._available_hs_servos(), self.available_servo_count):
+            pin = self._ls_pin_for_servo_index(i)
+            pulse_us = self._effective_pulse_us(i)
+            if pin is None or pulse_us is None:
+                self._pin_low(pin)
+                continue
+            active.append((pulse_us, pin))
+
+        if not active:
+            return
+
+        active.sort(key=lambda item: item[0])
+
+        #print(f"Pulsing LS servos: {[(pulse, str(pin)) for pulse, pin in active]}")
+        gc.disable()
+        try:
+            for _, pin in active:
+                self._pin_high(pin)
+
+            irq_state = disable_irq()    
+            start = time.ticks_us()
+            for pulse_us, pin in active:
+                while time.ticks_diff(time.ticks_us(), start) < pulse_us:
+                    pass
+                enable_irq(irq_state)
+                self._pin_low(pin)
+                irq_state = disable_irq()
+        finally:
+            enable_irq(irq_state)
+            gc.enable()
+        #print("Finished pulsing LS servos")
 
     # ------------------------------------------------------------------
     # Entry point from menu
@@ -94,6 +214,7 @@ class ServoTestMgr:
         """Enter servo test from the main menu."""
         app = self.app
         if self.reset_servo():
+            app.update_period = app.settings['servo_period'].v
             app.set_menu(None)
             app.button_states.clear()
             app.refresh = True
@@ -119,7 +240,7 @@ class ServoTestMgr:
                     self.servo_centre[self.servo_selected] += app.settings['servo_step'].v
                     if self.servo_centre[self.servo_selected] > (_SERVO_DEFAULT_CENTRE + _SERVO_MAX_TRIM):
                         self.servo_centre[self.servo_selected] = _SERVO_DEFAULT_CENTRE + _SERVO_MAX_TRIM
-                    if app.hexdrive_app is not None:
+                    if (not self._is_ls_servo_index(self.servo_selected)) and app.hexdrive_app is not None:
                         if not app.hexdrive_app.set_servocentre(self.servo_centre[self.servo_selected], self.servo_selected):
                             print("H:Failed to set servo centre")
                 elif self.servo_mode[self.servo_selected] == ServoMode.SCANNING:
@@ -151,7 +272,7 @@ class ServoTestMgr:
                     self.servo_centre[self.servo_selected] -= app.settings['servo_step'].v
                     if self.servo_centre[self.servo_selected] < (_SERVO_DEFAULT_CENTRE - _SERVO_MAX_TRIM):
                         self.servo_centre[self.servo_selected] = _SERVO_DEFAULT_CENTRE - _SERVO_MAX_TRIM
-                    if app.hexdrive_app is not None:
+                    if (not self._is_ls_servo_index(self.servo_selected)) and app.hexdrive_app is not None:
                         if not app.hexdrive_app.set_servocentre(self.servo_centre[self.servo_selected], self.servo_selected):
                             print("H:Failed to set servo centre")
                 elif self.servo_mode[self.servo_selected] == ServoMode.SCANNING:
@@ -181,24 +302,27 @@ class ServoTestMgr:
             app.auto_repeat_clear()
             if app.button_states.get(BUTTON_TYPES["UP"]):
                 app.button_states.clear()
-                self.servo_selected = (self.servo_selected - 1) % app.num_servos
+                self.servo_selected = (self.servo_selected - 1) % self.available_servo_count
                 app.refresh = True
             elif app.button_states.get(BUTTON_TYPES["DOWN"]):
                 app.button_states.clear()
-                self.servo_selected = (self.servo_selected + 1) % app.num_servos
+                self.servo_selected = (self.servo_selected + 1) % self.available_servo_count
                 app.refresh = True
             elif app.button_states.get(BUTTON_TYPES["CANCEL"]):
                 app.button_states.clear()
                 if app.hexdrive_app is not None:
                     app.hexdrive_app.set_power(False)
                     app.hexdrive_app.set_servoposition()
+                self._clear_all_ls_outputs()
                 app.return_to_menu()
                 return True
             elif app.button_states.get(BUTTON_TYPES["CONFIRM"]):
                 app.button_states.clear()
                 self.servo_mode[self.servo_selected].inc()
                 if self.servo_mode[self.servo_selected] == ServoMode.OFF:
-                    if app.hexdrive_app is not None:
+                    if self._is_ls_servo_index(self.servo_selected):
+                        self._pin_low(self._ls_pin_for_servo_index(self.servo_selected))
+                    elif app.hexdrive_app is not None:
                         app.hexdrive_app.set_servoposition(self.servo_selected, None)
                 else:
                     app.refresh = True
@@ -212,6 +336,7 @@ class ServoTestMgr:
                 if app.hexdrive_app is not None:
                     app.hexdrive_app.set_power(False)
                     app.hexdrive_app.set_servoposition()
+                self._clear_all_ls_outputs()
                 app.return_to_menu()
                 app.notification = Notification("  Servo:\n Timeout")
 
@@ -220,7 +345,7 @@ class ServoTestMgr:
             app.time_since_last_update = 0
             app.refresh = True
 
-        for i in range(app.num_servos):
+        for i in range(self.available_servo_count):
             _refresh = app.refresh
             if self.servo_mode[i] == ServoMode.SCANNING:
                 if self.servo[i] is None:
@@ -233,10 +358,15 @@ class ServoTestMgr:
                     self.servo_rate[i] = -self.servo_rate[i]
                     self.servo[i] = -self.servo_range[i] - (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE)
                 _refresh = True
-            if _refresh and app.hexdrive_app is not None and self.servo_mode[i] != ServoMode.OFF and self.servo[i] is not None:
-                app.hexdrive_app.set_servoposition(i, int(self.servo[i]))
+            if _refresh:
+                self._apply_servo_output(i)
 
         return True
+
+
+    def background_update(self, _delta: int):
+        self._pulse_ls_servos()
+        return None
 
         
     # ------------------------------------------------------------------
@@ -245,19 +375,36 @@ class ServoTestMgr:
 
     def reset_servo(self) -> bool:
         app = self.app
+
+        self._ls_pins = []
+        if app.hexdrive_port is not None:
+            try:
+                config = HexpansionConfig(app.hexdrive_port)
+                for pin_index in _LS_SERVO_PIN_INDEXES:
+                    try:
+                        pin = config.ls_pin[pin_index]
+                        self._prepare_ls_pin(pin)
+                        self._ls_pins.append(pin)
+                    except Exception:       # pylint: disable=broad-exception-caught
+                        pass
+            except Exception:               # pylint: disable=broad-exception-caught
+                self._ls_pins = []
+
         if app.hexdrive_app is not None:
             if app.hexdrive_app.initialise() and app.hexdrive_app.set_power(True) and app.hexdrive_app.set_freq(1000 // app.settings['servo_period'].v):
-                for i in range(app.num_servos):
-                    app.hexdrive_app.set_servocentre(self.servo_centre[self.servo_selected], self.servo_selected)
+                for i in range(self.available_servo_count):
+                    if not self._is_ls_servo_index(i):
+                        app.hexdrive_app.set_servocentre(self.servo_centre[i], i)
                     self.servo_range[i] = app.settings['servo_range'].v
                     if self.servo[i] is not None:
                         if self.servo[i] > self.servo_range[i]:
                             self.servo[i] = self.servo_range[i]
                         elif self.servo[i] < -self.servo_range[i]:
                             self.servo[i] = -self.servo_range[i]
-                        if not app.hexdrive_app.set_servoposition(i, int(self.servo[i])):
-                            if app.settings['logging'].v:
-                                print("H:Failed to set servo position")
+                        if not self._is_ls_servo_index(i):
+                            if not app.hexdrive_app.set_servoposition(i, int(self.servo[i])):
+                                if app.settings['logging'].v:
+                                    print("H:Failed to set servo position")
                 self.servo_selected = 0
                 app.time_since_last_update = 0
                 self.time_since_last_input = 0
@@ -278,11 +425,12 @@ class ServoTestMgr:
         """Render Servo Tester UI.  Returns True if handled."""
         app = self.app
 
-        servo_text = ["S"] * (1 + app.num_servos)
-        servo_text_colours = [(0.4, 0.0, 0.0)] * (1 + app.num_servos)
+        servo_count = self.available_servo_count
+        servo_text = ["S"] * (1 + servo_count)
+        servo_text_colours = [(0.4, 0.0, 0.0)] * (1 + servo_count)
         servo_text[0] = "Servo Test"
         servo_text_colours[0] = (1, 1, 1)
-        for i in range(app.num_servos):
+        for i in range(servo_count):
             if self.servo[i] is None or self.servo_mode[i] == ServoMode.OFF:
                 body_colour = (0.2, 0.2, 0.2)
                 bar_colour = (0.4, 0.4, 0.4)
@@ -296,7 +444,7 @@ class ServoTestMgr:
                 servo_text_colours[1 + i] = (0.4, 0.4, 0.0)
 
             ctx.save()
-            ctx.translate(0, (i - (app.num_servos / 2) + 0.5) * label_font_size)
+            ctx.translate(0, (i - (servo_count / 2) + 0.5) * label_font_size)
             background_colour = (0.1, 0.1, 0.1) if i != self.servo_selected else (0.15, 0.15, 0.15)
             ctx.rgb(*background_colour).rectangle(-100, 1, 200, label_font_size - 2).fill()
             c = 100 * (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE) / self.servo_range[i]

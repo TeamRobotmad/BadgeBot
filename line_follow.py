@@ -31,6 +31,7 @@ except ImportError:
     def enable_irq(_state):
         pass
 from system.hexpansion.config import HexpansionConfig
+from .app import MOTOR_PWM_FREQ
 
 # Line Follower constants
 _NUM_LINE_SENSORS = 2
@@ -327,7 +328,8 @@ class LineFollowMgr:
         else:
             if app.hexdrive_app is not None:
                 app.hexdrive_app.set_logging(False)
-                if app.hexdrive_app.initialise() and app.hexdrive_app.set_power(True):
+                if app.hexdrive_app.initialise() and app.hexdrive_app.set_power(True) and app.hexdrive_app.set_freq(MOTOR_PWM_FREQ):
+
                     #self.line_sensors.enable()
                     #self.line_sensors.read()    # initiate first sensor reading
                     self.line_sensors.read_blocking()    # initiate first sensor reading

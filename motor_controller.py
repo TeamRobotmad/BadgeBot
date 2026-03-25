@@ -22,6 +22,8 @@ try:
 except ImportError:
     _imu = None
 
+from .app import MOTOR_PWM_FREQ
+
 # Constants inlined from Sensor_Testing constants.py to avoid splitting
 # application constants into a separate module.
 _TICK_MS                = 10        # Smallest unit of change for power, in ms
@@ -441,6 +443,7 @@ class MotorController:
     def _power_on(self):
         if self._hexdrive is not None:
             self._hexdrive.set_power(True)
+            self._hexdrive.set_freq(MOTOR_PWM_FREQ)
 
     def _get_front_angle_rad(self):
         """Return the front-face rotation in radians.

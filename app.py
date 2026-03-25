@@ -69,6 +69,7 @@ _BRIGHTNESS = 1.0
 H_START = -63
 
 # Timings
+MOTOR_PWM_FREQ = 40000   # 20kHz is a good default for motors as it is above the audible range for most people and works with most motors and ESC
 _LONG_PRESS_MS = 750        # Time for long button press to register, in ms
 _RUN_COUNTDOWN_MS = 5000    # Time after running program until drive starts, in ms
 _AUTO_REPEAT_MS = 200       # Time between auto-repeats, in ms
@@ -272,6 +273,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             STATE_MOTOR_MOVES: self._motor_moves_mgr.background_update,
             STATE_FOLLOWER:    self._line_follow_mgr.background_update,
             STATE_AUTOTUNE:    self._autotune_mgr.background_update,
+            STATE_SERVO:       self._servo_test_mgr.background_update,
             STATE_AUTO:        self._autodrive_mgr.background_update,
         }
 
@@ -758,7 +760,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if menu_name == "main":
             # construct the main menu based on template
             menu_items = MAIN_MENU_ITEMS.copy()
-            if self.num_servos == 0:
+            if self._servo_test_mgr.available_servo_count == 0:
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_SERVO_TEST])   
             if self.num_steppers == 0:
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_STEPPER_TEST])   
@@ -825,7 +827,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 if self._stepper_test_mgr.start():
                     self.current_state = STATE_STEPPER
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_SERVO_TEST]: # Servo Test
-            if self.num_servos == 0:
+            if self._servo_test_mgr.available_servo_count == 0:
                 self.notification = Notification("No Servos")
             else:
                 if self._servo_test_mgr.start():
