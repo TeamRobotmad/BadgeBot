@@ -181,11 +181,11 @@ class ServoTestMgr:
             app.auto_repeat_clear()
             if app.button_states.get(BUTTON_TYPES["UP"]):
                 app.button_states.clear()
-                self.servo_selected = (self.servo_selected - 1) % app.num_servos
+                self.servo_selected = (self.servo_selected - 1) % self.available_servo_count
                 app.refresh = True
             elif app.button_states.get(BUTTON_TYPES["DOWN"]):
                 app.button_states.clear()
-                self.servo_selected = (self.servo_selected + 1) % app.num_servos
+                self.servo_selected = (self.servo_selected + 1) % self.available_servo_count
                 app.refresh = True
             elif app.button_states.get(BUTTON_TYPES["CANCEL"]):
                 app.button_states.clear()
@@ -220,7 +220,7 @@ class ServoTestMgr:
             app.time_since_last_update = 0
             app.refresh = True
 
-        for i in range(app.num_servos):
+        for i in range(self.available_servo_count):
             _refresh = app.refresh
             if self.servo_mode[i] == ServoMode.SCANNING:
                 if self.servo[i] is None:
@@ -238,6 +238,10 @@ class ServoTestMgr:
 
         return True
 
+
+    def background_update(self, _delta: int):
+        return None
+
         
     # ------------------------------------------------------------------
     # Servo reset
@@ -246,9 +250,9 @@ class ServoTestMgr:
     def reset_servo(self) -> bool:
         app = self.app
         if app.hexdrive_app is not None:
-            if app.hexdrive_app.initialise() and app.hexdrive_app.set_power(True) and app.hexdrive_app.set_freq(1000 // app.settings['servo_period'].v):
-                for i in range(app.num_servos):
-                    app.hexdrive_app.set_servocentre(self.servo_centre[self.servo_selected], self.servo_selected)
+            if app.hexdrive_app.initialise() and app.hexdrive_app.set_power(True) and app.hexdrive_app.set_freq(1000 // self.app.settings['servo_period'].v):
+                for i in range(self.available_servo_count):
+                    app.hexdrive_app.set_servocentre(self.servo_centre[i], i)
                     self.servo_range[i] = app.settings['servo_range'].v
                     if self.servo[i] is not None:
                         if self.servo[i] > self.servo_range[i]:
@@ -278,11 +282,12 @@ class ServoTestMgr:
         """Render Servo Tester UI.  Returns True if handled."""
         app = self.app
 
-        servo_text = ["S"] * (1 + app.num_servos)
-        servo_text_colours = [(0.4, 0.0, 0.0)] * (1 + app.num_servos)
+        servo_count = self.available_servo_count
+        servo_text = ["S"] * (1 + servo_count)
+        servo_text_colours = [(0.4, 0.0, 0.0)] * (1 + servo_count)
         servo_text[0] = "Servo Test"
         servo_text_colours[0] = (1, 1, 1)
-        for i in range(app.num_servos):
+        for i in range(servo_count):
             if self.servo[i] is None or self.servo_mode[i] == ServoMode.OFF:
                 body_colour = (0.2, 0.2, 0.2)
                 bar_colour = (0.4, 0.4, 0.4)
@@ -296,7 +301,7 @@ class ServoTestMgr:
                 servo_text_colours[1 + i] = (0.4, 0.4, 0.0)
 
             ctx.save()
-            ctx.translate(0, (i - (app.num_servos / 2) + 0.5) * label_font_size)
+            ctx.translate(0, (i - (servo_count / 2) + 0.5) * label_font_size)
             background_colour = (0.1, 0.1, 0.1) if i != self.servo_selected else (0.15, 0.15, 0.15)
             ctx.rgb(*background_colour).rectangle(-100, 1, 200, label_font_size - 2).fill()
             c = 100 * (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE) / self.servo_range[i]

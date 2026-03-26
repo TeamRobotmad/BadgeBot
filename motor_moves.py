@@ -26,8 +26,7 @@ from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
 
 from .utils import chain
-from .app import (STATE_COUNTDOWN, STATE_MOTOR_MOVES, STATE_LOGO, DEFAULT_BACKGROUND_UPDATE_PERIOD)
-
+from .app import (STATE_COUNTDOWN, STATE_MOTOR_MOVES, STATE_LOGO, DEFAULT_BACKGROUND_UPDATE_PERIOD, MOTOR_PWM_FREQ)
 
 # Screen positioning for movement sequence text
 H_START = -63
@@ -180,7 +179,7 @@ class MotorMovesMgr:
             # Fallback: old power-plan iterator
             self.power_plan_iter = chain(*(instr.power_plan for instr in self.instructions))
             if app.hexdrive_app is not None:
-                if app.hexdrive_app.initialise() and app.hexdrive_app.set_power(True):
+                if app.hexdrive_app.initialise() and app.hexdrive_app.set_power(True) and app.hexdrive_app.set_freq(MOTOR_PWM_FREQ):
                     pass
                 else:
                     if app.settings['logging'].v:

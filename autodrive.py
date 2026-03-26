@@ -18,6 +18,7 @@ try:
     import imu as _imu
 except ImportError:
     _imu = None
+from .app import MOTOR_PWM_FREQ
 
 # Sub-state constants for the auto-drive state machine
 _AUTO_SUB_DRIVE     = 0       # driving forward
@@ -130,6 +131,8 @@ class AutoDriveMgr:
         app.refresh = True
         if app.hexdrive_app is not None:
             app.hexdrive_app.set_power(True)
+            app.hexdrive_app.set_freq(MOTOR_PWM_FREQ)
+
 
         # Reset driving state
         self._active = True

@@ -24,7 +24,7 @@ from app_components.notification import Notification
 
 from .autotune import PIDAutoTuner, METHOD_ZIEGLER_NICHOLS
 from .line_follow import create_line_sensors
-from .app import (STATE_AUTOTUNE, STATE_COUNTDOWN)
+from .app import (STATE_AUTOTUNE, STATE_COUNTDOWN, MOTOR_PWM_FREQ)
 
 AUTOTUNER_UPDATE_PERIOD = 10  # ms between updates while tuning
 
@@ -58,7 +58,7 @@ class AutotuneMgr:
             return False
         if app.hexdrive_app is not None:
             app.hexdrive_app.set_logging(False)
-            if app.hexdrive_app.initialise() and app.hexdrive_app.set_power(True):
+            if app.hexdrive_app.initialise() and app.hexdrive_app.set_power(True) and app.hexdrive_app.set_freq(MOTOR_PWM_FREQ):
                 #self.follower.line_sensors.enable() # using blocking_read which does not require enabling.
                 app.set_menu(None)
                 app.button_states.clear()
@@ -73,7 +73,7 @@ class AutotuneMgr:
         app.notification = Notification("HexDrive Init Failed")
         return False
     
-    
+
     # ------------------------------------------------------------------
     # Begin tuning (called after countdown completes)
     # ------------------------------------------------------------------
