@@ -273,7 +273,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             STATE_MOTOR_MOVES: self._motor_moves_mgr.background_update,
             STATE_FOLLOWER:    self._line_follow_mgr.background_update,
             STATE_AUTOTUNE:    self._autotune_mgr.background_update,
-            STATE_SERVO:       self._servo_test_mgr.background_update,
+            #STATE_SERVO:       self._servo_test_mgr.background_update,
             STATE_AUTO:        self._autodrive_mgr.background_update,
         }
 

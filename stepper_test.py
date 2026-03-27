@@ -93,6 +93,11 @@ class Stepper:
         self._step_size = int(step_size)
         self._last_step_time = 0
         self.track_target()
+    
+
+    @property
+    def max_pos(self):
+        return self._max_pos
 
     def step_size(self, sz=1):
         if sz < 1:
@@ -437,7 +442,7 @@ class StepperTestMgr:
             background_colour = (0.15, 0.15, 0.15)
             ctx.rgb(*background_colour).rectangle(-100, 1, 200, label_font_size - 2).fill()
             c = 0
-            x = 200 * (self.stepper.get_pos() / app.settings['step_max_pos'].v) - 100
+            x = 200 * (self.stepper.get_pos() / self.stepper.max_pos) - 100
             ctx.rgb(*bar_colour).rectangle(x - 2, 1, 5, label_font_size - 2).fill()
             ctx.rgb(*body_colour)
             if x > (c + 4):
