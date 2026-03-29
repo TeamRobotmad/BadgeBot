@@ -361,9 +361,9 @@ class ServoTestMgr:
         servo_text_colours[1 + self.servo_selected] = tuple(int(j * 2.5) for j in servo_text_colours[1 + self.servo_selected])
         app.draw_message(ctx, servo_text, servo_text_colours, label_font_size)
         if self.servo_mode[self.servo_selected] == ServoMode.SCANNING:
-            button_labels(ctx, up_label="^", down_label="\u25BC", confirm_label="Mode", cancel_label="Exit", left_label="Slower", right_label="Faster")
+            button_labels(ctx, up_label=app.special_chars["up"], down_label="\u25BC", confirm_label="Mode", cancel_label="Back", left_label="Slower", right_label="Faster")
         elif self.servo_mode[self.servo_selected] == ServoMode.TRIM:
-            button_labels(ctx, up_label="^", down_label="\u25BC", confirm_label="Mode", cancel_label="Exit", left_label="Trim-", right_label="+Trim")
+            button_labels(ctx, up_label=app.special_chars['up'], down_label="\u25BC", confirm_label="Mode", cancel_label="Back", left_label="Trim-", right_label="+Trim")
         else:
-            button_labels(ctx, up_label="^", down_label="\u25BC", confirm_label="Mode", cancel_label="Exit", left_label="<--", right_label="-->")
+            button_labels(ctx, up_label=app.special_chars["up"], down_label="\u25BC", confirm_label="Mode", cancel_label="Back", left_label="<--", right_label="-->")
         return True

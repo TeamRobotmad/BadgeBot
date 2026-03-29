@@ -266,6 +266,17 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 # e.g. if ver < [1, 9, 0]:
         except Exception: # pylint: disable=broad-exception-caught  
             pass
+        
+        # make use of special characters if running on compatible badge s/w version
+        if ver is not None and ver > [1, 10, 0]:
+            self.special_chars = { 'up': "\u25B2",        # up arrow
+                                # 'down': "\u25BC",     # down arrow - has always existed
+                                  'left': "\u25C0",     # left arrow
+                                  'right': "\u25B6" }   # right arrow
+        else:
+            self.special_chars = {'up': "^", 'left': "<", 'right': ">"}
+
+
 
         # Hexpansion related
         self.HEXPANSION_TYPES = [HexpansionType(0xCBCB, "HexDrive", motors=2, servos=4, steppers=1, app_mpy_name="hexdrive.mpy", app_mpy_version=CURRENT_HEXDRIVE_APP_VERSION, app_name="HexDriveApp"), 
