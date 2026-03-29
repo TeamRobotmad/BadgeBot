@@ -75,7 +75,6 @@ class ServoTestMgr:
 
     def __init__(self, app):
         self.app = app
-        self._settings = app.settings
         self.servo               = [None]*4                         # Servo Positions
         self.servo_centre        = [_SERVO_DEFAULT_CENTRE]*4        # Trim Servo Centre
         self.servo_range         = [_SERVO_DEFAULT_RANGE]*4         # Limit Servo Range
@@ -89,17 +88,17 @@ class ServoTestMgr:
 
     @property
     def step(self):
-        return int(self._settings['servo_step'].v)
+        return int(self.app.settings['servo_step'].v) if 'servo_step' in self.app.settings else _SERVO_DEFAULT_STEP
     
 
     @property
     def range(self):
-        return int(self._settings['servo_range'].v)
+        return int(self.app.settings['servo_range'].v) if 'servo_range' in self.app.settings else _SERVO_DEFAULT_RANGE
     
 
     @property
     def period(self):
-        return int(self._settings['servo_period'].v)    
+        return int(self.app.settings['servo_period'].v) if 'servo_period' in self.app.settings else _SERVO_DEFAULT_PERIOD
     
 
     @property
@@ -121,7 +120,7 @@ class ServoTestMgr:
             app.refresh = True
             app.auto_repeat_clear()
             self.time_since_last_input = 0
-            if app.settings['logging'].v:
+            if app.logging:
                 print("Entered Servo Test mode")
             return True
         return False
@@ -283,15 +282,15 @@ class ServoTestMgr:
                         elif self.servo[i] < -self.servo_range[i]:
                             self.servo[i] = -self.servo_range[i]
                         if not app.hexdrive_app.set_servoposition(i, int(self.servo[i])):
-                            if app.settings['logging'].v:
+                            if app.logging:
                                 print("H:Failed to set servo position")
                 self.servo_selected = 0
                 app.time_since_last_update = 0
                 self.time_since_last_input = 0
-                if app.settings['logging'].v:
+                if app.logging:
                     print("H:HexDrive initialised for servo test")
                 return True
-        if app.settings['logging'].v:
+        if app.logging:
             print("H:Failed to initialise HexDrive for servo test")
         app.notification = Notification("HexDrive Init Failed")
         return False

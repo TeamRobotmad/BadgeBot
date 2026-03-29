@@ -161,7 +161,7 @@ Each functional area is encapsulated in a manager class with a consistent interf
 - `background_update(delta)` – (optional) high-frequency motor control; returns `(int, int)` motor output or `None`
 
 The main app uses dispatch tables (`_state_update_dispatch`, `_state_draw_dispatch`,
-`_BG_DISPATCH`) to route to the correct manager based on `current_state`.
+`_state_background_dispatch`) to route to the correct manager based on `current_state`.
 
 | Manager class | Module | State | Has `background_update` |
 |---------------|--------|-------|------------------------|
@@ -297,7 +297,7 @@ No dedicated settings currently; the `init_settings` hook exists for future use.
   `sensors/__init__.py`.
 - **State constants**: Defined in `app.py` and imported by sub-modules via
   `from .app import STATE_*`.
-- **Logging**: Use `if app.settings['logging'].v:` guard before `print()` statements.
+- **Logging**: Use `if app.logging:` guard before `print()` statements.
 - **Import style**: Standard library first, then badge-specific, then relative imports.
 - **Comments**: Use `#` line comments; docstrings for public classes/methods.
 - **MicroPython compatibility**: Avoid features not available in MicroPython (e.g. some

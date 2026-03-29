@@ -119,6 +119,7 @@ MENU_ITEM_EXIT = 9
 
 # Front face direction labels (0=BtnA corner between slots 6 & 1, each step = 30° CW)
 _FRONT_FACE_DEFAULT = 0
+_FRONT_FACE_NUM_ORIENTATIONS = 12   
 _FRONT_FACE_LABELS = (
     "BtnA", "Slot 1", "BtnB", "Slot 2", "BtnC", "Slot 3",
     "BtnD", "Slot 4", "BtnE", "Slot 5", "BtnF", "Slot 6",
@@ -129,24 +130,68 @@ _FWD_DIR_LABELS = ("Normal", "Reverse")
 
 # Import sub-modules after constants are defined so they can safely
 # `from .app import STATE_*` without circular-import timing issues.
-from .hexpansion_mgr import HexpansionMgr, HexpansionType
-from .settings_mgr import SettingsMgr, MySetting
-from .motor_moves import MotorMovesMgr
-from .servo_test import ServoTestMgr
-from .stepper_test import StepperTestMgr
-from .line_follow import  LineFollowMgr
-from .autotune_mgr import AutotuneMgr
-from .sensor_test import SensorTestMgr
-from .autodrive import AutoDriveMgr
-
 # Each module registers its own settings via init_settings()
-from .hexpansion_mgr import init_settings as _hexpansion_init_settings
-from .motor_moves import init_settings as _motor_moves_init_settings
-from .servo_test import init_settings as _servo_test_init_settings
-from .stepper_test import init_settings as _stepper_test_init_settings
-from .line_follow import init_settings as _line_follow_init_settings
-from .sensor_test import init_settings as _sensor_test_init_settings
-from .autodrive import init_settings as _autodrive_init_settings
+try:
+    from .hexpansion_mgr import HexpansionMgr, HexpansionType
+    from .hexpansion_mgr import init_settings as _hexpansion_init_settings
+except ImportError:
+    HexpansionMgr = None
+    HexpansionType = None
+    _hexpansion_init_settings = None
+
+try:    
+    from .settings_mgr import SettingsMgr, MySetting
+except ImportError:
+    SettingsMgr = None
+    MySetting = None
+
+try:
+    from .motor_moves import MotorMovesMgr
+    from .motor_moves import init_settings as _motor_moves_init_settings
+except ImportError:
+    MotorMovesMgr = None
+    _motor_moves_init_settings = None
+
+try:
+    from .servo_test import ServoTestMgr
+    from .servo_test import init_settings as _servo_test_init_settings
+except ImportError:
+    ServoTestMgr = None
+    _servo_test_init_settings = None
+
+try:
+    from .stepper_test import StepperTestMgr
+    from .stepper_test import init_settings as _stepper_test_init_settings
+except ImportError:
+    StepperTestMgr = None
+    _stepper_test_init_settings = None
+
+try:
+    from .line_follow import LineFollowMgr  
+    from .line_follow import init_settings as _line_follow_init_settings    
+except ImportError:
+    LineFollowMgr = None
+    _line_follow_init_settings = None
+
+try:
+    from .autotune_mgr import AutotuneMgr
+except ImportError:
+    AutotuneMgr = None
+
+try:
+    from .sensor_test import SensorTestMgr
+    from .sensor_test import init_settings as _sensor_test_init_settings
+except ImportError:
+    SensorTestMgr = None
+    _sensor_test_init_settings = None
+
+try:
+    from .autodrive import AutoDriveMgr
+    from .autodrive import init_settings as _autodrive_init_settings
+except ImportError:
+    AutoDriveMgr = None
+    _autodrive_init_settings = None
+
 
 
 class BadgeBotApp(app.App):         # pylint: disable=no-member
@@ -168,13 +213,14 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.animation_counter: int = 0
         self.pattern_status: bool = True     # True = Pattern Enabled, False = Pattern Disabled
         self.qr_code = _QR_CODE
-        self.APP_VERSION = APP_VERSION
-        self.b_msg: str = f"BadgeBot V{APP_VERSION}"
+        self.app_version: str = APP_VERSION
+        # strings shown on the Logo screen
+        self.b_msg: str = f"BadgeBot V{self.app_version}"
         self.t_msg: str = "RobotMad"
         self.notification: Notification = None
-        self.message = []
-        self.message_colours = []
-        self.message_type = None
+        self.message: list = []
+        self.message_colours: list = []
+        self.message_type: str = None
         self.current_menu: str = None
         self.menu: Menu = None
         self.scroll_mode_enabled: bool = False  # Whether pressing the "C" button can toggle scroll mode on/off, which allows the user to scroll through lines on the display.
@@ -186,31 +232,27 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.run_countdown_elapsed_ms: int = 0
         self.countdown_next_state: int = None  # which state to go to after countdown
 
-        # Settings - common settings first, then each module registers its own
-        self.settings = {}
-        self.settings['brightness']    = MySetting(self.settings, _BRIGHTNESS, 0.1, 1.0)
-        self.settings['logging']       = MySetting(self.settings, _LOGGING, False, True)
-        # Module-specific settings
-        _motor_moves_init_settings(self.settings, MySetting)
-        _servo_test_init_settings(self.settings, MySetting)
-        _stepper_test_init_settings(self.settings, MySetting)
-        _hexpansion_init_settings(self.settings, MySetting)
-        _line_follow_init_settings(self.settings, MySetting)
-        _sensor_test_init_settings(self.settings, MySetting)
-        _autodrive_init_settings(self.settings, MySetting)
-        # Direction settings
-        self.settings['fwd_dir']       = MySetting(self.settings, _FWD_DIR_DEFAULT, 0, 1)
-        self.settings['front_face']    = MySetting(self.settings, _FRONT_FACE_DEFAULT, 0, 11)
+        # Settings - common settings first, then each module registers its own later
+        self.settings: dict = {}
+        if MySetting is not None:
+            # General settings
+            self.settings['brightness']    = MySetting(self.settings, _BRIGHTNESS, 0.1, 1.0)
+            self.settings['logging']       = MySetting(self.settings, _LOGGING, False, True)
+            # Direction settings
+            self.settings['fwd_dir']       = MySetting(self.settings, _FWD_DIR_DEFAULT, 0, 1)
+            self.settings['front_face']    = MySetting(self.settings, _FRONT_FACE_DEFAULT, 0, _FRONT_FACE_NUM_ORIENTATIONS-1)
+        
+            # Module-specific settings - only initialise modules which are NOT dependent on Hexpansion hardware here, as we want to be able to access settings in the HexpansionMgr before we have detected what hardware is present.  For Hexpansion-dependent modules, we will initialise their settings after we have scanned for hardware and know which modules we will be using.
+            if _hexpansion_init_settings is not None:
+                _hexpansion_init_settings(self.settings, MySetting)
 
-        self.edit_setting: int  = None
-        self.edit_setting_value = None       
-        self.update_settings()   
+            self.update_settings()
 
         # Check what version of the Badge s/w we are running on
         try:
             ver = parse_version(ota.get_version())
             if ver is not None:
-                if self.settings['logging'].v:
+                if self.logging:
                     print(f"BadgeSW V{ver}")
                 # Potential to do things differently based on badge s/w version
                 # e.g. if ver < [1, 9, 0]:
@@ -224,81 +266,68 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                                  HexpansionType(0xCBCD, "HexDrive", motors=1, servos=2, sub_type="1 Mot 2 Srvo", app_mpy_name="hexdrive.mpy", app_mpy_version=CURRENT_HEXDRIVE_APP_VERSION, app_name="HexDriveApp"),
                                  HexpansionType(0xCBCE, "HexDrive", steppers=1,         sub_type="Stepper", app_mpy_name="hexdrive.mpy", app_mpy_version=CURRENT_HEXDRIVE_APP_VERSION, app_name="HexDriveApp"), 
                                  HexpansionType(0xCBCF, "HexSense", sensors=2,          sub_type="2 Line Sensors")] # , app_mpy_name="hexsense.mpy", app_mpy_version=CURRENT_HEXSENSE_APP_VERSION, app_name="HexSenseApp")]  
-        self.HEXDRIVE_HEXPANSION_INDEX = 0
-        self.HEXSENSE_HEXPANSION_INDEX = 5
+        self.HEXDRIVE_HEXPANSION_INDEX = 0  # Index in the HEXPANSION_TYPES list which corresponds to the basic HexDrive type
+        self.HEXSENSE_HEXPANSION_INDEX = 5  # Index in the HEXPANSION_TYPES list which corresponds to the basic HexSense type 
         self.hexpansion_update_required: bool = False # flag from async to main loop
         self.hexdrive_app = None
         self.hexsense_app = None
-        self.line_sensors_hexpansion_config  = None            # Store the HexpansionConfig of the HexSense that is providing the line sensors
+        self.hexsense_config  = None            # Store the HexpansionConfig of the HexSense that is providing the line sensors
+        
         self.time_since_last_update: int = 0
 
         # High-level motor controller (created when HexDrive is found)
         self.motor_controller = None
 
         # Functional area managers
-        self._hexpansion_mgr   = HexpansionMgr(self)
-        self._motor_moves_mgr  = MotorMovesMgr(self)
-        self._servo_test_mgr   = ServoTestMgr(self)
-        self._stepper_test_mgr = StepperTestMgr(self)
-        self._settings_mgr     = SettingsMgr(self)
-        self._line_follow_mgr  = LineFollowMgr(self)
-        self._autotune_mgr     = AutotuneMgr(self, self._line_follow_mgr)
-        self._sensor_test_mgr  = SensorTestMgr(self)
-        self._autodrive_mgr    = AutoDriveMgr(self)
+        self._hexpansion_mgr   = HexpansionMgr(self)  if HexpansionMgr is not None else None
+        self._motor_moves_mgr  = MotorMovesMgr(self)  if MotorMovesMgr is not None else None
+        self._servo_test_mgr   = ServoTestMgr(self)   if ServoTestMgr is not None else None
+        self._stepper_test_mgr = StepperTestMgr(self) if StepperTestMgr is not None else None
+        self._settings_mgr     = SettingsMgr(self)    if SettingsMgr is not None else None
+        self._line_follow_mgr  = LineFollowMgr(self)  if LineFollowMgr is not None else None
+        self._autotune_mgr     = AutotuneMgr(self, self._line_follow_mgr) if AutotuneMgr is not None else None
+        self._sensor_test_mgr  = SensorTestMgr(self)  if SensorTestMgr is not None else None
+        self._autodrive_mgr    = AutoDriveMgr(self)   if AutoDriveMgr is not None else None
 
-        # State → manager dispatch table (for efficient update/draw routing)
-        self._state_update_dispatch = {
-            STATE_HEXPANSION:  self._hexpansion_mgr.update,
-            STATE_MOTOR_MOVES: self._motor_moves_mgr.update,
-            STATE_FOLLOWER:    self._line_follow_mgr.update,
-            STATE_AUTOTUNE:    self._autotune_mgr.update,
-            STATE_SERVO:       self._servo_test_mgr.update,
-            STATE_STEPPER:     self._stepper_test_mgr.update,
-            STATE_SETTINGS:    self._settings_mgr.update,
-            STATE_SENSOR:      self._sensor_test_mgr.update,
-            STATE_AUTO:        self._autodrive_mgr.update,
-        }
-        self._state_draw_dispatch = {
-            STATE_HEXPANSION:  self._hexpansion_mgr.draw,
-            STATE_MOTOR_MOVES: self._motor_moves_mgr.draw,
-            STATE_FOLLOWER:    self._line_follow_mgr.draw,
-            STATE_AUTOTUNE:    self._autotune_mgr.draw,
-            STATE_SERVO:       self._servo_test_mgr.draw,
-            STATE_STEPPER:     self._stepper_test_mgr.draw,
-            STATE_SETTINGS:    self._settings_mgr.draw,
-            STATE_SENSOR:      self._sensor_test_mgr.draw,
-            STATE_AUTO:        self._autodrive_mgr.draw,
-        }
-        self._BG_DISPATCH = {
-            STATE_MOTOR_MOVES: self._motor_moves_mgr.background_update,
-            STATE_FOLLOWER:    self._line_follow_mgr.background_update,
-            STATE_AUTOTUNE:    self._autotune_mgr.background_update,
-            #STATE_SERVO:       self._servo_test_mgr.background_update,
-            STATE_AUTO:        self._autodrive_mgr.background_update,
-        }
+        # State -> manager dispatch tables (only include managers that exist)
+        self._state_update_dispatch = {}
+        self._state_draw_dispatch = {}
+        self._state_background_dispatch = {}
+
+        self._register_state_functions(STATE_HEXPANSION, self._hexpansion_mgr)
+        self._register_state_functions(STATE_MOTOR_MOVES, self._motor_moves_mgr)
+        self._register_state_functions(STATE_FOLLOWER, self._line_follow_mgr)
+        self._register_state_functions(STATE_AUTOTUNE, self._autotune_mgr)
+        self._register_state_functions(STATE_SERVO, self._servo_test_mgr)
+        self._register_state_functions(STATE_STEPPER, self._stepper_test_mgr)
+        self._register_state_functions(STATE_SETTINGS, self._settings_mgr)
+        self._register_state_functions(STATE_SENSOR, self._sensor_test_mgr)
+        self._register_state_functions(STATE_AUTO, self._autodrive_mgr)
+
 
         # Motor Driver Hardware
-        self.num_motors: int = 2         # Default assumed for a single HexDrive
-        self.num_steppers: int = 1       # Default assumed for a single HexDrive
+        self.num_motors: int = 0        # initialised to 0 until we detect a HexDrive Hexpansion and can set this based on the actual number of motors it has
+        self.num_steppers: int = 0      # initialised to 0 until we detect a HexDrive Hexpansion and can set this based on the actual number of steppers it has
 
         # Line Sensors Hardware
-        self.num_line_sensors: int = 0                         # initialised to 0 until we detect a HexSense Hexpansion and can set this based on the actual number of sensors it has 
+        self.num_line_sensors: int = 0  # initialised to 0 until we detect a HexSense Hexpansion and can set this based on the actual number of sensors it has 
 
         # Servo Hardware
-        self.num_servos: int     = 4                           # Default assumed for a single HexDrive
+        self.num_servos: int = 0        # initialised to 0 until we detect a HexDrive Hexpansion and can set this based on the actual number of servos it has
 
         # Overall app state (controls what is displayed and what user inputs are accepted)
         self.current_state = STATE_HEXPANSION
         self.previous_state = self.current_state
         self.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD   # mS
 
-        # Countdown timer value 
+        # Countdown timer value
         self.countdown_value: int = 0
 
         # Hexpansion event handlers registered directly by hexpansion_mgr
-        self._hexpansion_mgr.register_events()
+        if self._hexpansion_mgr is not None:
+            self._hexpansion_mgr.register_events()
 
-        # 
+        # Event handlers for gaining and losing focus
         eventbus.on_async(RequestForegroundPushEvent, self._gain_focus, self)
         eventbus.on_async(RequestForegroundPopEvent, self._lose_focus, self)
 
@@ -306,18 +335,49 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         # This version is compatible with the simulator
         asyncio.get_event_loop().create_task(self._gain_focus(RequestForegroundPushEvent(self)))  
 
+        if self.logging:
+            print(f"BadgeBot App V{self.app_version} Initialised")
 
-    ### ASYNC EVENT HANDLERS ###
+
+    def _register_state_functions(self, state: int, manager: object):
+        """Register the update, draw, and background update functions for each state in the dispatch tables.""" 
+        if manager is not None and hasattr(manager, 'update'):
+            self._state_update_dispatch[state] = manager.update
+        if manager is not None and hasattr(manager, 'draw'):
+            self._state_draw_dispatch[state] = manager.draw
+        if manager is not None and hasattr(manager, 'background_update'):
+            self._state_background_dispatch[state] = manager.background_update
+
+
+    @property
+    def logging(self):
+        """Convenience property to access logging setting."""
+        if 'logging' in self.settings:
+            return self.settings['logging'].v
+        return True
+
+
+    @property
+    def front_face(self):
+        """Convenience property to access front_face setting."""
+        if 'front_face' in self.settings:
+            return self.settings['front_face'].v
+        return _FRONT_FACE_DEFAULT  
+
 
     @property
     def hexdrive_port(self):
         """Proxy to HexpansionMgr.hexdrive_port for convenience."""
-        return self._hexpansion_mgr.hexdrive_port
+        return app.hexdrive_config.port if app.hexdrive_config is not None else None
+
 
     @property
     def sensor_test_mgr(self):
         """Public access to the SensorTestMgr, used by AutoDriveMgr to share the sensor manager."""
         return self._sensor_test_mgr
+
+
+    ### ASYNC EVENT HANDLERS ###
 
     async def _gain_focus(self, event: RequestForegroundPushEvent):
         if event.app is self:
@@ -361,16 +421,16 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     def background_update(self, delta: int):
         """Background update function that is called at a regular interval from the background task loop.
            It dispatches to the appropriate manager based on the current state, and if motor outputs are returned, it sends them to the HexDrive app."""
-        bg_fn = self._BG_DISPATCH.get(self.current_state)
+        bg_fn = self._state_background_dispatch.get(self.current_state)
         if bg_fn is not None:
             output = bg_fn(delta)
             if output is not None and self.hexdrive_app is not None:
                 self.hexdrive_app.set_motors(self.apply_fwd_dir(output))
             #else:
-            #    if self.settings['logging'].v:
+            #    if self.logging:
             #        print(f"No motor output from background function for state {self.current_state}")    
         #else:
-        #    if self.settings['logging'].v:
+        #    if self.logging:
         #        print(f"Error: No background function found for state {self.current_state}")
 
 # Manual Override                       
@@ -385,8 +445,57 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 #                output = (app.settings['max_power'].v, -app.settings['max_power'].v)
 
 
+    @property
+    def enable_motor_moves(self):
+        return self.num_motors > 1 and self._motor_moves_mgr is not None
+    
+
+    @property
+    def enable_servo_test(self):
+        return self.num_servos > 0 and self._servo_test_mgr is not None
+    
+
+    @property
+    def enable_stepper_test(self):
+        return self.num_steppers > 0 and self._stepper_test_mgr is not None
+
+
+    @property
+    def enable_line_follow(self):
+        return self.num_motors > 1 and self.num_line_sensors > 0 and self._line_follow_mgr is not None
+    
+
+    @property
+    def enable_sensor_test(self):
+        return self._sensor_test_mgr is not None
+
+
+    @property
+    def enable_autodrive(self):
+        return self.num_motors > 1 and self._autodrive_mgr is not None
+    
+
+    def initialise_settings(self):
+        """Initialise settings with default values and register them in the app's settings dictionary."""
+        if MySetting is None:
+            return  # Settings system not available, skip initialisation
+        # Module-specific settings
+        if self.enable_motor_moves and _motor_moves_init_settings is not None:
+            _motor_moves_init_settings(self.settings, MySetting)
+        if self.enable_servo_test and _servo_test_init_settings is not None:            
+            _servo_test_init_settings(self.settings, MySetting)
+        if self.enable_stepper_test and _stepper_test_init_settings is not None:
+            _stepper_test_init_settings(self.settings, MySetting)
+        if self.enable_line_follow and _line_follow_init_settings is not None:
+            _line_follow_init_settings(self.settings, MySetting)
+        if self.enable_sensor_test and _sensor_test_init_settings is not None:
+            _sensor_test_init_settings(self.settings, MySetting)
+        if self.enable_autodrive and _autodrive_init_settings is not None:
+            _autodrive_init_settings(self.settings, MySetting)
+
+
     def update_settings(self):
-        """Update settings from EEPROM and apply any necessary changes to the app's behaviour or appearance."""
+        """Update settings from EEPROM."""
         for s in self.settings:
             self.settings[s].v = settings.get(f"badgebot.{s}", self.settings[s].d)
 
@@ -415,7 +524,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
         # Update Hexpansion management if something 'hexpansion' related has changed
         if self.hexpansion_update_required:
-            if self.current_state != STATE_HEXPANSION:
+            if self.current_state != STATE_HEXPANSION and self._hexpansion_mgr is not None:
                 # Trigger an update cycle for hexpansion_mgr even though it is not currently active
                 self._hexpansion_mgr.update(delta)
 
@@ -423,7 +532,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self._update_main_application(delta)
 
         if self.current_state != self.previous_state:
-            if self.settings['logging'].v:
+            if self.logging:
                 print(f"State: {self.previous_state} -> {self.current_state}")
             self.previous_state = self.current_state
             # manage LED PatternEnable/Disable for all states
@@ -446,7 +555,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                     # saw this crash randomly - hence protected by try/except to prevent whole app crashing, and added logging to investigate further
                     tildagonos.leds.write()
                 except OSError as e:
-                    if self.settings['logging'].v:
+                    if self.logging:
                         print(f"Error writing to LEDs: {e}")
 
 
@@ -458,7 +567,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             else:
                 self.menu.update(delta)    
                 if self.menu.is_animating != "none":
-                    if self.settings['logging'].v:
+                    if self.logging:
                         print("Menu is animating")
                     self.refresh = True
         elif self.button_states.get(BUTTON_TYPES["CANCEL"]) and self.current_state in MINIMISE_VALID_STATES:
@@ -585,6 +694,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             self.refresh = False
             clear_background(ctx)
             ctx.save()
+            if False: # if a mode where rotated display is desirable:
+                ctx.rotate(self.front_face * 2.0 * pi / _FRONT_FACE_NUM_ORIENTATIONS)  # Rotate the entire display based on the front_face setting, so that "forward" is always at the top of the display regardless of how the badge is oriented    
             ctx.font_size = label_font_size
             if ctx.text_align != ctx.LEFT:
                 # See https://github.com/emfcamp/badge-2024-software/issues/181             
@@ -627,7 +738,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             self.notification.draw(ctx)
 
 
-    def clear_leds(self):
+    @staticmethod
+    def clear_leds():
         """Utility function to clear all LEDs. This is used when setting direction LEDs to ensure only the relevant ones are lit."""
         for i in range(1,13):
             tildagonos.leds[i] = (0, 0, 0)
@@ -644,7 +756,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         """LED positions rotate based on 'front_face' (0-11, each step = 30° CW).
         Each position p maps to LED pair: (p if p>0 else 12) and (p+1).
         This is independent of motor direction (fwd_dir)."""
-        f = self.settings['front_face'].v
+        f = self.front_face
         if direction == BUTTON_TYPES["UP"]:
             pos = f % 12
             colour = (0, 255, 255)   # Cyan = forward
@@ -666,7 +778,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         tildagonos.leds[led_b] = colour
 
 
-    def draw_message(self, ctx, message, colours, size=label_font_size):
+    @staticmethod
+    def draw_message(ctx, message, colours, size=label_font_size):
         """Utility function to draw a multi-line message on the screen, with optional colour for each line. The message is centred on the screen, and the y-position of each line is adjusted based on the total number of lines to ensure it is visually balanced."""
         ctx.font_size = size
         num_lines = len(message)
@@ -688,7 +801,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
     def return_to_menu(self):
         """Utility function to return to the main menu from any state. This is used when the user cancels out of a submenu or after acknowledging a warning message."""
-        if self.settings['logging'].v:
+        if self.logging:
             print("Returning to menu")
         self.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
         self.current_state = STATE_MENU
@@ -723,7 +836,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 self._auto_repeat_count = 0
                 if self.auto_repeat_level < (_AUTO_REPEAT_SPEED_LEVEL_MAX if speed_up else _AUTO_REPEAT_LEVEL_MAX):
                     self.auto_repeat_level += 1
-                    if self.settings['logging'].v:
+                    if self.logging:
                         print(f"Auto Repeat Level: {self.auto_repeat_level}")
 
             return True
@@ -746,7 +859,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         """Set the current menu to the specified menu name, and construct the menu if necessary. 
            If menu_name is None, it will clear the current menu and return to the previous state 
            (e.g. from a submenu back to the main menu)."""
-        if self.settings['logging'].v:
+        if self.logging:
             print(f"H:Set Menu {menu_name}")
         if self.menu is not None:
             try:
@@ -760,19 +873,22 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if menu_name == "main":
             # construct the main menu based on template
             menu_items = MAIN_MENU_ITEMS.copy()
-            if self.num_servos == 0:
+            if not self.enable_servo_test and MAIN_MENU_ITEMS[MENU_ITEM_SERVO_TEST] in menu_items:
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_SERVO_TEST])   
-            if self.num_steppers == 0:
+            if not self.enable_stepper_test and MAIN_MENU_ITEMS[MENU_ITEM_STEPPER_TEST] in menu_items:
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_STEPPER_TEST])   
-            if self.num_motors == 0:
+            if not self.enable_motor_moves and MAIN_MENU_ITEMS[MENU_ITEM_MOTOR_MOVES] in menu_items:
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_MOTOR_MOVES])
+            if not self.enable_line_follow and MAIN_MENU_ITEMS[MENU_ITEM_LINE_FOLLOWER] in menu_items:                
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_LINE_FOLLOWER])
+            if not self.enable_line_follow and MAIN_MENU_ITEMS[MENU_ITEM_PID_AUTOTUNE] in menu_items:
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_PID_AUTOTUNE])
+            if not self.enable_sensor_test and MAIN_MENU_ITEMS[MENU_ITEM_SENSOR_TEST] in menu_items:
+                menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_SENSOR_TEST])
+            if not self.enable_autodrive and MAIN_MENU_ITEMS[MENU_ITEM_AUTO_DRIVE] in menu_items:    
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_AUTO_DRIVE])
-            if self.num_line_sensors == 0:
-                menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_LINE_FOLLOWER])
-                if MAIN_MENU_ITEMS[MENU_ITEM_PID_AUTOTUNE] in menu_items:
-                    menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_PID_AUTOTUNE])
+            if self._settings_mgr is None and MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS] in menu_items:
+                menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS])
             self.menu = Menu(
                     self,
                     menu_items,
@@ -794,7 +910,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
     # this appears to be able to be called at any time
     def _main_menu_select_handler(self, item: str, idx: int):
-        if self.settings['logging'].v:
+        if self.logging:
             print(f"H:Main Menu {item} at index {idx}")
         if   item == MAIN_MENU_ITEMS[MENU_ITEM_LINE_FOLLOWER]: # Line Follower
             if self.num_motors == 0:
@@ -802,7 +918,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             elif self.num_motors == 1:
                 self.notification = Notification(" 2 Motors  Required")
             else:
-                if self._line_follow_mgr.start():
+                if self._line_follow_mgr is not None and self._line_follow_mgr.start():
                     self.current_state = STATE_FOLLOWER
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_MOTOR_MOVES]: # Motor Moves
             if self.num_motors == 0:
@@ -810,7 +926,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             elif self.num_motors == 1:
                 self.notification = Notification(" 2 Motors  Required")
             else:
-                if self._motor_moves_mgr.start():
+                if self._motor_moves_mgr is not None and self._motor_moves_mgr.start():
                     self.current_state = STATE_MOTOR_MOVES
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_PID_AUTOTUNE]: # PID Auto Tune
             if self.num_motors == 0:
@@ -818,25 +934,25 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             elif self.num_motors == 1:
                 self.notification = Notification(" 2 Motors  Required")
             else:
-                if self._autotune_mgr.start():
+                if self._autotune_mgr is not None and self._autotune_mgr.start():
                     self.current_state = STATE_AUTOTUNE
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_STEPPER_TEST]: # Stepper Test
             if self.num_steppers == 0:
                 self.notification = Notification("No Steppers")
             else:
-                if self._stepper_test_mgr.start():
+                if self._stepper_test_mgr is not None and self._stepper_test_mgr.start():
                     self.current_state = STATE_STEPPER
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_SERVO_TEST]: # Servo Test
             if self.num_servos == 0:
                 self.notification = Notification("No Servos")
             else:
-                if self._servo_test_mgr.start():
+                if self._servo_test_mgr is not None and self._servo_test_mgr.start():
                     self.current_state = STATE_SERVO
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_SENSOR_TEST]: # Sensor Test
-            if self._sensor_test_mgr.start():
+            if self._sensor_test_mgr is not None and self._sensor_test_mgr.start():
                 self.current_state = STATE_SENSOR
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_AUTO_DRIVE]: # Auto Drive
-            if self._autodrive_mgr.start():
+            if self._autodrive_mgr is not None and self._autodrive_mgr.start():
                 self.current_state = STATE_AUTO
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS]:   # Settings
             self.set_menu(MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS])
@@ -847,38 +963,33 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             self.current_state = STATE_LOGO
             self.refresh = True   
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_EXIT]:       # Exit
-            self._hexpansion_mgr.unregister_events()
+            if self._hexpansion_mgr is not None:
+                self._hexpansion_mgr.unregister_events()
             eventbus.remove(RequestForegroundPushEvent, self._gain_focus, self)
             eventbus.remove(RequestForegroundPopEvent, self._lose_focus, self)
             eventbus.emit(RequestStopAppEvent(self))
 
 
     def _settings_menu_select_handler(self, item: str, idx: int):
-        if self.settings['logging'].v:
+        if self.logging:
             print(f"H:Setting {item} @ {idx}")
         if idx == 0: #Save
-            if self.settings['logging'].v:
+            if self.logging:
                 print("H:Settings Save All")
             settings.save()
             self.notification = Notification("  Settings  Saved")
             self.set_menu("main")
         elif idx == 1: #Default
-            if self.settings['logging'].v:
+            if self.logging:
                 print("H:Settings Default All")
             for s in self.settings:
                 self.settings[s].v = self.settings[s].d
                 self.settings[s].persist()
             self.notification = Notification("  Settings Defaulted")
-
             self.set_menu("main")
         else:
-            self.set_menu(None)
-            self.button_states.clear()
-            self.current_state = STATE_SETTINGS
-            self.refresh = True
-            self.auto_repeat_clear()
-            self.edit_setting = item
-            self.edit_setting_value = self.settings[item].v
+            if self._settings_mgr is not None and self._settings_mgr.start(item):
+                self.current_state = STATE_SETTINGS
 
 
     def _menu_back_handler(self):

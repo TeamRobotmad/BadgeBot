@@ -310,9 +310,11 @@ class StepperTestMgr:
         if self.stepper is None:
             for i in range(4):
                 try:
-                    self.stepper = Stepper(app, app.hexdrive_app, step_size=1,
+                    self.stepper = Stepper(app,
+                                           app.hexdrive_app,
+                                           step_size=1,
                                            timer_id=i,
-                                           max_pos=app.settings['step_max_pos'].v)
+                                           max_pos=self.step_max_pos)
                     break
                 except Exception:   # pylint: disable=broad-except
                     pass
@@ -325,9 +327,15 @@ class StepperTestMgr:
         app.auto_repeat_clear()
         self.stepper.enable(True)
         self.time_since_last_input = 0
-        if app.settings['logging'].v:
+        if app.logging:
             print("Entered Stepper Test mode")
         return True
+
+
+    @property
+    def step_max_pos(self) -> int:
+        """Get the maximum position for the stepper from settings."""
+        return self.app.settings['step_max_pos'].v if 'step_max_pos' in self.app.settings else _STEPPER_MAX_POSITION
 
 
     # ------------------------------------------------------------------

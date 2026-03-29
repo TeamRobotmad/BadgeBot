@@ -134,24 +134,36 @@ class MotorController:
         self._avg_loop_ms = _TICK_MS           # measured average loop period
         self._busy = False
 
+
     # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
 
     @property
-    def max_power(self):
+    def max_power(self) -> int:
         return int(self._settings['max_power'].v)
 
 
     @property
-    def acceleration(self):
+    def acceleration(self) -> int:
         return max(1, int(self._settings['acceleration'].v))
+
+
+    @property
+    def drive_step_ms(self) -> int:
+        return int(self._settings['drive_step_ms'].v) if 'drive_step_ms' in self._settings else 0
+    
+
+    @property
+    def turn_step_ms(self) -> int:
+        return int(self._settings['turn_step_ms'].v) if 'turn_step_ms' in self._settings else 0
 
 
     @property
     def is_busy(self):
         """True while a command is executing."""
         return self._busy
+    
 
     # ------------------------------------------------------------------
     # Public high-level commands (all awaitable)
@@ -404,34 +416,34 @@ class MotorController:
                 if btn == BUTTON_TYPES["UP"]:
                     if use_distance:
                         # temprarily use drive_step_ms as the time per step to estimate distance, until we have a real distance-per-step calibration value
-                        mm = self._settings['drive_step_ms'].v * count
+                        mm = self.drive_step_ms * count
                         await self.forward_mm(mm)
                     else:
-                        dur = self._settings['drive_step_ms'].v * count
+                        dur = self.drive_step_ms * count
                         await self.forward(dur)
                 elif btn == BUTTON_TYPES["DOWN"]:
                     if use_distance:
                         # temprarily use drive_step_ms as the time per step to estimate distance, until we have a real distance-per-step calibration value
-                        mm = self._settings['drive_step_ms'].v * count
+                        mm = self.drive_step_ms * count
                         await self.backward_mm(mm)
                     else:
-                        dur = self._settings['drive_step_ms'].v * count
+                        dur = self.drive_step_ms * count
                         await self.backward(dur)
                 elif btn == BUTTON_TYPES["LEFT"]:
                     if use_distance:
                         # temprarily use turn_step_ms as the time per step to estimate distance, until we have a real distance-per-step calibration value
-                        deg = self._settings['turn_step_ms'].v * count
+                        deg = self.turn_step_ms * count
                         await self.turn_left(deg)
                     else:
-                        dur = self._settings['turn_step_ms'].v * count
+                        dur = self.turn_step_ms * count
                         await self.timed_turn_left(dur)
                 elif btn == BUTTON_TYPES["RIGHT"]:
                     if use_distance:
                         # temprarily use turn_step_ms as the time per step to estimate distance, until we have a real distance-per-step calibration value
-                        deg = self._settings['turn_step_ms'].v * count
+                        deg = self.turn_step_ms * count
                         await self.turn_right(deg)
                     else:
-                        dur = self._settings['turn_step_ms'].v * count
+                        dur = self.turn_step_ms * count
                         await self.timed_turn_right(dur)
         finally:
             await self.brake()
@@ -519,9 +531,10 @@ class MotorController:
 
     def apply_fwd_dir(self, output: tuple) -> tuple:
         """Negate all motor outputs when fwd_dir=1 (HexDrive mounted facing front)."""
-        if self._settings['fwd_dir'].v:
+        if 'fwd_dir' in self._settings and self._settings['fwd_dir'].v:
             return tuple(-v for v in output)
         return output
+    
     
     @staticmethod
     def _slew(current, target, step):

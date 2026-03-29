@@ -39,6 +39,12 @@ class MySetting:
                 return k
         return None
 
+    @staticmethod
+    def _quantize_tenths(value: float) -> float:
+        """Round to 0.1 steps deterministically to avoid float drift artifacts."""
+        scaled = int((value * 10) + (0.5 if value >= 0 else -0.5))
+        return scaled / 10.0
+
     def inc(self, v, l=0):
         """ Increment the setting value.  If l > 0, increment by the next highest order of magnitude (e.g. 10s place for l=1, 100s place for l=2, etc.)"""
         if isinstance(self.v, bool):
@@ -52,9 +58,10 @@ class MySetting:
             if v > self._max:
                 v = self._max
         elif isinstance(self.v, float):
-            v += 0.1
+            v = self._quantize_tenths(v) + 0.1
             if v > self._max:
                 v = self._max
+            v = self._quantize_tenths(v)
         elif self._container['logging'].v:
             print(f"H:inc type: {type(self.v)}")
         return v
@@ -72,9 +79,10 @@ class MySetting:
             if v < self._min:
                 v = self._min
         elif isinstance(self.v, float):
-            v -= 0.1
+            v = self._quantize_tenths(v) - 0.1
             if v < self._min:
                 v = self._min
+            v = self._quantize_tenths(v)
         elif self._container['logging'].v:
             print(f"H: dec type: {type(self.v)}")
         return v
@@ -101,6 +109,23 @@ class SettingsMgr:
 
     def __init__(self, app):
         self.app = app
+        self.edit_setting: int  = None
+        self.edit_setting_value = None
+
+
+    def  start(self, item: str) -> bool:
+        """Enter Settings editing mode from the main menu."""
+        app = self.app
+        app.set_menu(None)
+        app.button_states.clear()
+        app.refresh = True
+        app.auto_repeat_clear()
+        self.time_since_last_input = 0
+        if app.logging:
+            print("Entered Settings editing mode")
+        self.edit_setting = item
+        self.edit_setting_value = app.settings[item].v
+        return True
 
     # ------------------------------------------------------------------
     # Per-tick update
@@ -112,38 +137,38 @@ class SettingsMgr:
 
         if app.button_states.get(BUTTON_TYPES["UP"]):
             if app.auto_repeat_check(delta, False):
-                app.edit_setting_value = app.settings[app.edit_setting].inc(app.edit_setting_value, app.auto_repeat_level)
-                if app.settings['logging'].v:
-                    print(f"Setting: {app.edit_setting} (+) Value: {app.edit_setting_value}")
+                self.edit_setting_value = app.settings[self.edit_setting].inc(self.edit_setting_value, app.auto_repeat_level)
+                if app.logging:
+                    print(f"Setting: {self.edit_setting} (+) Value: {self.edit_setting_value}")
                 app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["DOWN"]):
             if app.auto_repeat_check(delta, False):
-                app.edit_setting_value = app.settings[app.edit_setting].dec(app.edit_setting_value, app.auto_repeat_level)
-                if app.settings['logging'].v:
-                    print(f"Setting: {app.edit_setting} (-) Value: {app.edit_setting_value}")
+                self.edit_setting_value = app.settings[self.edit_setting].dec(self.edit_setting_value, app.auto_repeat_level)
+                if app.logging:
+                    print(f"Setting: {self.edit_setting} (-) Value: {self.edit_setting_value}")
                 app.refresh = True
         else:
             app.auto_repeat_clear()
             if app.button_states.get(BUTTON_TYPES["RIGHT"]) or app.button_states.get(BUTTON_TYPES["LEFT"]):
                 app.button_states.clear()
-                app.edit_setting_value = app.settings[app.edit_setting].d
-                if app.settings['logging'].v:
-                    print(f"Setting: {app.edit_setting} Default: {app.edit_setting_value}")
+                self.edit_setting_value = app.settings[self.edit_setting].d
+                if app.logging:
+                    print(f"Setting: {self.edit_setting} Default: {self.edit_setting_value}")
                 app.refresh = True
                 app.notification = Notification("Default")
             elif app.button_states.get(BUTTON_TYPES["CANCEL"]):
                 app.button_states.clear()
-                if app.settings['logging'].v:
-                    print(f"Setting: {app.edit_setting} Cancelled")
+                if app.logging:
+                    print(f"Setting: {self.edit_setting} Cancelled")
                 app.set_menu(MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS])
                 app.return_to_menu()
             elif app.button_states.get(BUTTON_TYPES["CONFIRM"]):
                 app.button_states.clear()
-                if app.settings['logging'].v:
-                    print(f"Setting: {app.edit_setting} = {app.edit_setting_value}")
-                app.settings[app.edit_setting].v = app.edit_setting_value
-                app.settings[app.edit_setting].persist()
-                app.notification = Notification(f"  Setting:   {app.edit_setting}={app.edit_setting_value}")
+                if app.logging:
+                    print(f"Setting: {self.edit_setting} = {self.edit_setting_value}")
+                app.settings[self.edit_setting].v = self.edit_setting_value
+                app.settings[self.edit_setting].persist()
+                app.notification = Notification(f"  Setting:   {self.edit_setting}={self.edit_setting_value}")
                 app.set_menu(MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS])
                 app.return_to_menu()
         return True
@@ -155,8 +180,8 @@ class SettingsMgr:
     def draw(self, ctx):
         """Render Settings editing UI.  Returns True if handled."""
         app = self.app
-        disp_val = self._format_setting_value(app.edit_setting, app.edit_setting_value)
-        app.draw_message(ctx, ["Edit Setting", f"{app.edit_setting}:", f"{disp_val}"], [(1, 1, 1), (0, 0, 1), (0, 1, 0)], label_font_size)
+        disp_val = self._format_setting_value(self.edit_setting, self.edit_setting_value)
+        app.draw_message(ctx, ["Edit Setting", f"{self.edit_setting}:", f"{disp_val}"], [(1, 1, 1), (0, 0, 1), (0, 1, 0)], label_font_size)
         button_labels(ctx, up_label="+", down_label="-", confirm_label="Set", cancel_label="Cancel", right_label="Default")
         return True
 
@@ -173,4 +198,6 @@ class SettingsMgr:
                 return _FRONT_FACE_LABELS[int(value)]
             except (IndexError, ValueError, TypeError):
                 pass
+        if isinstance(value, float):
+            return f"{value:.1f}"
         return str(value)

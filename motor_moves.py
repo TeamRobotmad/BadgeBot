@@ -83,7 +83,7 @@ class Instruction:
         elif self._press_type == BUTTON_TYPES["RIGHT"]:
             return (power, -power)
 
-
+# TODO - better link to settings
     def directional_duration(self, mysettings) -> int:
         if self._press_type == BUTTON_TYPES["UP"] or self._press_type == BUTTON_TYPES["DOWN"]:
             return (mysettings['drive_step_ms'].v)
@@ -153,7 +153,7 @@ class MotorMovesMgr:
     def start(self) -> bool:
         """Enter the Motor Moves flow from the main menu."""
         app = self.app
-        if app.settings['logging'].v:
+        if app.logging:
             print("Entered Motor Moves mode")
         app.set_menu(None)
         app.button_states.clear()
@@ -182,7 +182,7 @@ class MotorMovesMgr:
                 if app.hexdrive_app.initialise() and app.hexdrive_app.set_power(True) and app.hexdrive_app.set_freq(MOTOR_PWM_FREQ):
                     pass
                 else:
-                    if app.settings['logging'].v:
+                    if app.logging:
                         print("H:Failed to initialise HexDrive for motor moves")
                     app.notification = Notification("HexDrive Init Failed")
                     self._sub_state = _SUB_DONE
@@ -223,7 +223,7 @@ class MotorMovesMgr:
             self._update_state_done(delta)
 
         if self._sub_state != self._prev_state:
-            if self.app.settings['logging'].v:
+            if self.app.logging:
                 print(f"M:State: {self._prev_state} -> {self._sub_state}")
             self._prev_state = self._sub_state
 

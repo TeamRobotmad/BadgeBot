@@ -61,20 +61,20 @@ class SensorTestMgr:
         app.button_states.clear()
         self._sensor_data = {}
         app.refresh = True
-
+        self._ensure_sensor_mgr()
+        self._read_timer = 0
         # If a HexDrive is present, try its port first
-        if app.hexdrive_port is not None:
-            self._ensure_sensor_mgr()
-            self._read_timer = 0
-            if self._sensor_mgr.open(app.hexdrive_port):
-                self._port_selected = app.hexdrive_port
-                self._sub_state = _SUB_READING
-            else:
-                self._sub_state = _SUB_SELECT_PORT
-                self._port_selected = app.hexdrive_port
+        if app.hexdrive_port is not None and self._sensor_mgr.open(app.hexdrive_port):
+            self._port_selected = app.hexdrive_port
+            self._sub_state = _SUB_READING
+        # If no HexDrive, but a HexSense is present, try its port next
+        elif app.hexsense_config is not None and app.hexsense_config.port is not None and self._sensor_mgr.open(app.hexsense_config.port):
+            self._port_selected = app.hexsense_config.port
+            self._sub_state = _SUB_READING
+        # Otherwise, start in port selection mode
         else:
-            self._sub_state = _SUB_SELECT_PORT
             self._port_selected = 1
+            self._sub_state = _SUB_SELECT_PORT
         return True
 
     # ------------------------------------------------------------------
@@ -85,7 +85,7 @@ class SensorTestMgr:
         """Lazy-import and create SensorManager if needed."""
         if self._sensor_mgr is None:
             from .sensor_manager import SensorManager
-            self._sensor_mgr = SensorManager(logging=self.app.settings['logging'].v)
+            self._sensor_mgr = SensorManager(logging=self.app.logging)
         else:
             self._sensor_mgr.close()
 

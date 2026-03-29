@@ -113,6 +113,8 @@ class AutoDriveMgr:
             ports_to_try = [sensor_test.port_selected]
             if app.hexdrive_port is not None and app.hexdrive_port != sensor_test.port_selected:
                 ports_to_try.append(app.hexdrive_port)
+            if app.hexsense_config.port is not None and app.hexsense_config.port != sensor_test.port_selected:
+                ports_to_try.append(app.hexsense_config.port)                
             for probe_port in ports_to_try:
                 if sensor_test.open_sensor_port(probe_port):
                     sensor_test.port_selected = probe_port
@@ -282,7 +284,7 @@ class AutoDriveMgr:
         except Exception:           # pylint: disable=broad-except
             self.distance = None
             self.lux = None
-        if self.app.settings['logging'].v:
+        if self.app.logging:
             print(f"A:sens dist={self.distance} lux={self.lux}")
 
     def _stop_motors(self):
@@ -351,7 +353,7 @@ class AutoDriveMgr:
         """Back away briefly when the obstacle is very close before scanning."""
         self.sub_state = _AUTO_SUB_REVERSE
         self.reverse_timer = 0
-        if self.app.settings['logging'].v:
+        if self.app.logging:
             print("A:Obstacle " + str(self.distance) + "mm - reversing before scan")
         # Use MotorController distance-based reverse if available
         if self._mc is not None:
@@ -360,7 +362,7 @@ class AutoDriveMgr:
             self._mc_task = asyncio.get_event_loop().create_task(
                 self._mc.backward_mm(backup_mm, speed_frac=_AUTO_BACKUP_SPEED_FRAC))
             self.status = "Reverse %dmm (MC)" % backup_mm
-            if self.app.settings['logging'].v:
+            if self.app.logging:
                 print("A:MC backward_mm(%d)" % backup_mm)
         else:
             speed = max(self.app.settings['auto_speed'].v, _AUTO_CRUISE_MIN_PWM)
@@ -404,7 +406,7 @@ class AutoDriveMgr:
         else:
             self.target_output = (speed, -speed)
         self.status = "Scan 0deg"
-        if self.app.settings['logging'].v:
+        if self.app.logging:
             print("A:Starting scan dist=" + str(self.distance) + "mm")
 
     def _scan_record_sample(self):
@@ -435,7 +437,7 @@ class AutoDriveMgr:
             return
 
         if not self.scan_data:
-            if self.app.settings['logging'].v:
+            if self.app.logging:
                 print("A:Scan aborted - no samples collected")
             self._enter_drive()
             return
@@ -446,7 +448,7 @@ class AutoDriveMgr:
         self.best_dist = best_dist
         scan_total_ms = self.scan_timer
 
-        if self.app.settings['logging'].v:
+        if self.app.logging:
             reason = "360deg" if gyro_full else "timeout"
             n = len(self.scan_data)
             print("A:Scan done (" + reason + ") imu=" + str(round(self.imu_deg, 1)) + "deg in " + str(scan_total_ms) + "ms, best=" + str(round(best_angle, 1)) + "deg=" + str(best_dist) + "mm samples=" + str(n))
@@ -478,7 +480,7 @@ class AutoDriveMgr:
             self._mc_task = asyncio.get_event_loop().create_task(
                 self._mc.turn(turn_degrees))
             self.status = "Turn %s %.0fdeg (MC)" % (lbl, self.target_deg)
-            if self.app.settings['logging'].v:
+            if self.app.logging:
                 print("A:MC turn(%.1f) for best_angle=%.1f best_dist=%d"
                       % (turn_degrees, best_angle, best_dist))
         else:
@@ -501,7 +503,7 @@ class AutoDriveMgr:
         if self._mc_task is not None:
             # MC gyro turn in progress
             if self._mc_task.done():
-                if self.app.settings['logging'].v:
+                if self.app.logging:
                     actual = self._mc.integrated_deg if self._mc else 0
                     print("A:MC turn done  actual=%.1fdeg  target=%.1fdeg"
                           % (actual, self.target_deg))
@@ -522,7 +524,7 @@ class AutoDriveMgr:
         gyro_done = (self.target_deg > 0 and self.imu_deg >= self.target_deg)
         time_done = (self.turn_timer >= self.turn_ms)
         if gyro_done or time_done:
-            if self.app.settings['logging'].v:
+            if self.app.logging:
                 reason = "gyro" if gyro_done else "timeout"
                 print(f"A:Turn done ({reason}) imu={self.imu_deg:.1f}deg target={self.target_deg:.1f}deg t={self.turn_timer}ms")
             self._enter_turn_back()
@@ -535,7 +537,7 @@ class AutoDriveMgr:
         self.imu_deg = 0.0   # reset integrator for the back-sweep
         lbl = "left" if self.turn_dir > 0 else "right"  # reverse of initial turn dir
         self.status = f"Return {lbl} tgt={self.best_dist}mm"
-        if self.app.settings['logging'].v:
+        if self.app.logging:
             print(f"A:TurnBack start - target={self.best_dist}mm dir={'left' if self.turn_dir > 0 else 'right'} deg_target={self.target_deg:.1f}deg")
 
     def _update_turn_back(self, delta: int):
@@ -570,7 +572,7 @@ class AutoDriveMgr:
         gyro_matched = (self.target_deg > 0 and self.imu_deg >= self.target_deg)
 
         if tof_matched or gyro_matched or self.turn_back_timer >= _AUTO_TURN_BACK_TIMEOUT_MS:
-            if self.app.settings['logging'].v:
+            if self.app.logging:
                 reasons = []
                 if tof_matched:   reasons.append(f"tof={self.distance}mm")
                 if gyro_matched:  reasons.append(f"gyro={self.imu_deg:.1f}deg")

@@ -50,7 +50,7 @@ class AutotuneMgr:
         """Enter PID Auto Tune mode from the main menu."""
         app = self.app
         if self.follower.line_sensors is None:
-            self.follower.line_sensors = create_line_sensors(app.line_sensors_hexpansion_config, app.num_line_sensors)
+            self.follower.line_sensors = create_line_sensors(app.hexsense_config, app.num_line_sensors)
 
         if self.follower.line_sensors is None:
             # Line sensors are not available; inform the user and abort autotune.
@@ -65,10 +65,10 @@ class AutotuneMgr:
                 self.autotuner = None
                 app.update_period = AUTOTUNER_UPDATE_PERIOD
                 app.refresh = True
-                if app.settings['logging'].v:
+                if app.logging:
                     print("AUTOTUNE: Entered PID Auto Tune mode")
                 return True
-        if app.settings['logging'].v:
+        if app.logging:
             print("H:Failed to initialise HexDrive for autotune")
         app.notification = Notification("HexDrive Init Failed")
         return False
@@ -92,10 +92,10 @@ class AutotuneMgr:
             hysteresis=50,  # out of 1000
             target_cycles=12,
             method=METHOD_ZIEGLER_NICHOLS,
-            logging=app.settings['logging'].v
+            logging=app.logging
         )
         self.autotuner.start()
-        if app.settings['logging'].v:
+        if app.logging:
             print(f"AUTOTUNE: Starting with relay_amp={relay_amp} base_power={base_power}")
         app.refresh = True
 

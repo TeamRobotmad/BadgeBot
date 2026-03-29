@@ -22,6 +22,7 @@ from events.input import BUTTON_TYPES
 from app_components.notification import Notification
 from app_components.tokens import label_font_size, button_labels
 from machine import Pin
+from motor_moves import DEFAULT_MAX_POWER
 try:
     from machine import disable_irq, enable_irq
 except ImportError:
@@ -42,15 +43,15 @@ _LINE_SENSOR_UPDATE_PERIOD_MS = 10
 _LINE_SENSOR_SAMPLE_RATE_UPDATE_PERIOD_MS = 1000
 
 # PID Gains
-FOLLOWER_PID_KP_DEFAULT = 20000
-FOLLOWER_PID_KI_DEFAULT = 0
-FOLLOWER_PID_KD_DEFAULT = 0
+_FOLLOWER_PID_KP_DEFAULT = 20000
+_FOLLOWER_PID_KI_DEFAULT = 0
+_FOLLOWER_PID_KD_DEFAULT = 0
 
-FOLLOWER_FORWARD_POWER = 20000
+_FOLLOWER_FORWARD_POWER = 20000
 
 # Line Follower Modes
-FOLLOWER_MODE_DIFFERENTIAL = 0
-FOLLOWER_MODE_BINARY = 1
+_FOLLOWER_MODE_DIFFERENTIAL = 0
+_FOLLOWER_MODE_BINARY = 1
 
 # Dedicated Pins
 SENSOR_1_CTRL   = 3
@@ -251,9 +252,9 @@ class LineSensor:
 def init_settings(s, MySetting):
     """Register line-follower-specific settings in the shared settings dict."""
     s['line_threshold'] = MySetting(s, _LINE_SENSOR_DEFAULT_THRESHOLD, 0, 65535)
-    s['pid_kp']         = MySetting(s, FOLLOWER_PID_KP_DEFAULT, 0, 65536)
-    s['pid_ki']         = MySetting(s, FOLLOWER_PID_KI_DEFAULT, 0, 65535)
-    s['pid_kd']         = MySetting(s, FOLLOWER_PID_KD_DEFAULT, 0, 65535)
+    s['pid_kp']         = MySetting(s, _FOLLOWER_PID_KP_DEFAULT, 0, 65536)
+    s['pid_ki']         = MySetting(s, _FOLLOWER_PID_KI_DEFAULT, 0, 65535)
+    s['pid_kd']         = MySetting(s, _FOLLOWER_PID_KD_DEFAULT, 0, 65535)
 
 
 # ---- Shared helper: create LineSensors from hexpansion config --------------
@@ -298,14 +299,15 @@ class LineFollowMgr:
         self.line_sensors = None                               # Will be a LineSensors instance when active
         self.sample_time: int   = 0
         self.sensor_rate: int = 0     # sample rate
-        self.follower_mode: int = FOLLOWER_MODE_DIFFERENTIAL   # Default follower mode
-        self.forward_power: int = -FOLLOWER_FORWARD_POWER      # Default forward power for line follower (sign sets direction)
+        self.follower_mode: int = _FOLLOWER_MODE_DIFFERENTIAL   # Default follower mode
+        self.forward_power: int = -_FOLLOWER_FORWARD_POWER      # Default forward power for line follower (sign sets direction)
         self.pid_integral: int = 0                             # Accumulated integral term for PID controller
         self.pid_previous_error: int = 0                       # Previous error for derivative term of PID controller
-        self.kp: int = FOLLOWER_PID_KP_DEFAULT
-        self.ki: int = FOLLOWER_PID_KI_DEFAULT
-        self.kd: int = FOLLOWER_PID_KD_DEFAULT
-        self.max_pwr: int = 0
+        self.kp: int = _FOLLOWER_PID_KP_DEFAULT
+        self.ki: int = _FOLLOWER_PID_KI_DEFAULT
+        self.kd: int = _FOLLOWER_PID_KD_DEFAULT
+        self.max_pwr: int = DEFAULT_MAX_POWER
+        self.line_threshold: int = _LINE_SENSOR_DEFAULT_THRESHOLD
         self.integral_limit: int = 0
         self.motor_output = (0,0)
 
@@ -319,7 +321,7 @@ class LineFollowMgr:
         app = self.app
 
         if self.line_sensors is None:
-            self.line_sensors = create_line_sensors(app.line_sensors_hexpansion_config, app.num_line_sensors)
+            self.line_sensors = create_line_sensors(app.hexsense_config, app.num_line_sensors)
 
         if self.line_sensors is None:
             # Line sensors are not available; inform the user and abort line follower.
@@ -342,15 +344,16 @@ class LineFollowMgr:
                     self.kp = app.settings['pid_kp'].v
                     self.ki = app.settings['pid_ki'].v
                     self.kd = app.settings['pid_kd'].v
-                    self.max_pwr = app.settings['max_power'].v
+                    self.max_pwr = app.settings['max_power'].v if 'max_power' in app.settings else DEFAULT_MAX_POWER
+                    self.line_threshold = app.settings['line_threshold'].v
                     if self.ki > 0:
                         self.integral_limit = self.max_pwr // self.ki
                     else:
                         self.integral_limit = 0            
-                    if app.settings['logging'].v:
+                    if app.logging:
                         print("Entered Line Follower mode")
                     return True                    
-            if app.settings['logging'].v:
+            if app.logging:
                 print("HexDrive not available; Line Follower requires HexDrive to run")
             Notification(app, "HexDrive Init Failed")
             return False                
@@ -405,7 +408,7 @@ class LineFollowMgr:
         #app = self.app
         #output = (0, 0)
         #s = self.line_sensors.values()
-        #if self.follower_mode == FOLLOWER_MODE_DIFFERENTIAL:
+        #if self.follower_mode == _FOLLOWER_MODE_DIFFERENTIAL:
             # PID control
             # Calculate the error as the normalised difference between the two sensor readings
         self.line_sensors.read_blocking()    # wait for sensor reading        
@@ -458,13 +461,14 @@ class LineFollowMgr:
         # Limit output to max power
         output = (max(min(output[0], self.max_pwr), -self.max_pwr), max(min(output[1], self.max_pwr), -self.max_pwr))
 
-        #if self.app.settings['logging'].v:
+        #if self.app.logging:
         #    print(f"PID: err={error} P={p_term} I={i_term} D={d_term} corr={correction} out={output}")
 
         return output
     
     
-    def compute_error(self, left_raw: int, right_raw: int) -> int:
+    @staticmethod
+    def compute_error(left_raw: int, right_raw: int) -> int:
         """Compute a normalised error from raw sensor discharge times.
 
         Parameters
@@ -500,18 +504,18 @@ class LineFollowMgr:
         app = self.app
  
         ctx.save()
-        ctx.rgb(1, 1, 0).move_to(0, -1 * label_font_size).text(f"TH:{app.settings['line_threshold'].v}")
+        ctx.rgb(1, 1, 0).move_to(0, -1 * label_font_size).text(f"TH:{self.line_threshold}")
         ctx.rgb(1, 1, 1).move_to(-70, -1 * label_font_size).text(f"{self.sensor_rate} Hz")
         spacing = 80
         offset = (spacing // 2) * (app.num_line_sensors // 2)
         for i in range(app.num_line_sensors):
             x = offset - i * spacing
             # make a simple visualization of the sensor reading as a filled circle, with colour indicating whether it's above or below the threshold
-            colour = (0, 1, 0) if self.line_sensors.raw_value(i) < app.settings['line_threshold'].v else (0, 0, 0)
+            colour = (0, 1, 0) if self.line_sensors.raw_value(i) < self.line_threshold else (0, 0, 0)
             ctx.rgb(*colour).arc(x, 0, 24, 0, 2 * pi, True).fill()
             ctx.rgb(1, 1, 1).arc(x, 0, 25, 0, 2 * pi, True).stroke()
             ctx.rgb(1, 1, 0).move_to(x - 20, 2 * label_font_size).text(f"{self.line_sensors.raw_value(i):4}")
-        #    if app.settings['logging'].v:
+        #    if app.logging:
         #        print(f"Sensor {i}: {self.line_sensors.value(i)} (raw: {self.line_sensors.raw_value(i)})")
         ctx.restore()
         button_labels(ctx, up_label="+", down_label="-", cancel_label="Cancel")
