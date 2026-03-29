@@ -918,47 +918,66 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if self.logging:
             print(f"H:Main Menu {item} at index {idx}")
         if   item == MAIN_MENU_ITEMS[MENU_ITEM_LINE_FOLLOWER]: # Line Follower
+            # Check for required hardware and show message if not present, otherwise start the line follower manager and switch to follower state
             if self.num_motors == 0:
                 self.notification = Notification("No Motors")
             elif self.num_motors == 1:
                 self.notification = Notification(" 2 Motors  Required")
             else:
-                if self._line_follow_mgr is not None and self._line_follow_mgr.start():
-                    self.current_state = STATE_FOLLOWER
+                if self._line_follow_mgr is not None:
+                    self._line_follow_mgr.logging = self.logging # update logging setting in line follow manager based on current app setting, in case it was changed
+                    if self._line_follow_mgr.start():
+                        self.current_state = STATE_FOLLOWER
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_MOTOR_MOVES]: # Motor Moves
+            # Check for required hardware and show message if not present, otherwise start the motor moves manager and switch to motor moves state
             if self.num_motors == 0:
                 self.notification = Notification("No Motors")
             elif self.num_motors == 1:
                 self.notification = Notification(" 2 Motors  Required")
             else:
-                if self._motor_moves_mgr is not None and self._motor_moves_mgr.start():
-                    self.current_state = STATE_MOTOR_MOVES
+                if self._motor_moves_mgr is not None:
+                    self._motor_moves_mgr.logging = self.logging # update logging setting in motor moves manager based on current app setting, in case it was changed
+                    if self._motor_moves_mgr.start():
+                        self.current_state = STATE_MOTOR_MOVES
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_PID_AUTOTUNE]: # PID Auto Tune
+            # Check for required hardware and show message if not present, otherwise start the autotune manager and switch to autotune state
             if self.num_motors == 0:
                 self.notification = Notification("No Motors")
             elif self.num_motors == 1:
                 self.notification = Notification(" 2 Motors  Required")
             else:
-                if self._autotune_mgr is not None and self._autotune_mgr.start():
-                    self.current_state = STATE_AUTOTUNE
+                if self._autotune_mgr is not None:
+                    self._autotune_mgr.logging = self.logging # update logging setting in autotune manager based on current app setting, in case it was changed
+                    if self._autotune_mgr.start():
+                        self.current_state = STATE_AUTOTUNE
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_STEPPER_TEST]: # Stepper Test
+            # Check for required hardware and show message if not present, otherwise start the stepper test manager and switch to stepper test state
             if self.num_steppers == 0:
                 self.notification = Notification("No Steppers")
             else:
-                if self._stepper_test_mgr is not None and self._stepper_test_mgr.start():
-                    self.current_state = STATE_STEPPER
+                if self._stepper_test_mgr is not None:
+                    self._stepper_test_mgr.logging = self.logging # update logging setting in stepper test manager based on current app setting, in case it was changed
+                    if self._stepper_test_mgr.start():
+                        self.current_state = STATE_STEPPER
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_SERVO_TEST]: # Servo Test
+            # Check for required hardware and show message if not present, otherwise start the servo test manager and switch to servo test state
             if self.num_servos == 0:
                 self.notification = Notification("No Servos")
             else:
-                if self._servo_test_mgr is not None and self._servo_test_mgr.start():
-                    self.current_state = STATE_SERVO
+                if self._servo_test_mgr is not None:
+                    self._servo_test_mgr.logging = self.logging # update logging setting in servo test manager based on current app setting, in case it was changed
+                    if self._servo_test_mgr.start():
+                        self.current_state = STATE_SERVO
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_SENSOR_TEST]: # Sensor Test
-            if self._sensor_test_mgr is not None and self._sensor_test_mgr.start():
-                self.current_state = STATE_SENSOR
+            if self._sensor_test_mgr is not None:
+                self._sensor_test_mgr.logging = self.logging # update logging setting in sensor test manager based on current app setting, in case it was changed
+                if self._sensor_test_mgr.start():
+                    self.current_state = STATE_SENSOR
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_AUTO_DRIVE]: # Auto Drive
-            if self._autodrive_mgr is not None and self._autodrive_mgr.start():
-                self.current_state = STATE_AUTODRIVE
+            if self._autodrive_mgr is not None:
+                self._autodrive_mgr.logging = self.logging # update logging setting in autodrive manager based on current app setting, in case it was changed
+                if self._autodrive_mgr.start():
+                    self.current_state = STATE_AUTODRIVE
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS]:   # Settings
             self.set_menu(MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS])
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_ABOUT]:      # About

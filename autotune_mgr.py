@@ -62,6 +62,13 @@ class AutotuneMgr:
 
     @logging.setter
     def logging(self, value: bool):
+        """Enable or disable debug logging for the autotune manager."""
+        # pass setting changes through to the autotune manager instance if it exists
+        if self.autotuner is not None:
+            self.autotuner.logging = value
+        # pass setting changes through to the line follow manager instance if it exists, as it is used within the autotune manager
+        if self.follower is not None:
+            self.follower.logging = value
         self._logging = value
 
 

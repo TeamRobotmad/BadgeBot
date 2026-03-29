@@ -63,6 +63,9 @@ class SensorTestMgr:
     
     @logging.setter
     def logging(self, value: bool):
+        # Update logging setting in this manager and also in the SensorManager if it exists, so that sensor manager logs will be shown/hidden based on the current app setting
+        if self._sensor_mgr is not None:
+            self._sensor_mgr.logging = value
         self._logging = value
 
 
