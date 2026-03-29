@@ -91,13 +91,13 @@ STATE_STEPPER = 7         # Stepper test
 STATE_FOLLOWER = 8        # Line Follower
 STATE_AUTOTUNE = 9        # PID Auto Tune
 STATE_SENSOR = 10         # Sensor Test
-STATE_AUTO = 11           # Autonomous Drive
+STATE_AUTODRIVE = 11      # Autonomous Drive
 
 # App states where user can minimise app (Menu, Message, Logo)
 MINIMISE_VALID_STATES = [STATE_MENU, STATE_MESSAGE, STATE_LOGO]
  
 # App states where BadgeBot directly controls the badge LEDs (Motor Moves, Countdown, Message, Logo, Line Follower, AutoTune)
-_LED_CONTROL_STATES    = [STATE_MOTOR_MOVES, STATE_COUNTDOWN, STATE_MESSAGE, STATE_LOGO, STATE_FOLLOWER, STATE_AUTOTUNE, STATE_AUTO]
+_LED_CONTROL_STATES    = [STATE_MOTOR_MOVES, STATE_COUNTDOWN, STATE_MESSAGE, STATE_LOGO, STATE_FOLLOWER, STATE_AUTOTUNE, STATE_AUTODRIVE]
 
 #Misceallaneous Settings
 _LOGGING = False
@@ -313,7 +313,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self._register_state_functions(STATE_STEPPER, self._stepper_test_mgr)
         self._register_state_functions(STATE_SETTINGS, self._settings_mgr)
         self._register_state_functions(STATE_SENSOR, self._sensor_test_mgr)
-        self._register_state_functions(STATE_AUTO, self._autodrive_mgr)
+        self._register_state_functions(STATE_AUTODRIVE, self._autodrive_mgr)
 
 
         # Motor Driver Hardware
@@ -958,7 +958,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 self.current_state = STATE_SENSOR
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_AUTO_DRIVE]: # Auto Drive
             if self._autodrive_mgr is not None and self._autodrive_mgr.start():
-                self.current_state = STATE_AUTO
+                self.current_state = STATE_AUTODRIVE
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS]:   # Settings
             self.set_menu(MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS])
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_ABOUT]:      # About

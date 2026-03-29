@@ -128,7 +128,7 @@ STATE_STEPPER = 7        Stepper tester
 STATE_FOLLOWER = 8       Line follower
 STATE_AUTOTUNE = 9       PID auto-tuner
 STATE_SENSOR = 10        Sensor test (I2C sensor probing and live display)
-STATE_AUTO = 11          Autonomous drive (obstacle avoidance via ToF spin-scan)
+STATE_AUTODRIVE = 11     Autonomous drive (obstacle avoidance via ToF spin-scan)
 ```
 
 ### Main Menu
@@ -173,7 +173,7 @@ The main app uses dispatch tables (`_state_update_dispatch`, `_state_draw_dispat
 | `LineFollowMgr` | `line_follow.py` | `STATE_FOLLOWER` | Yes |
 | `AutotuneMgr` | `autotune_mgr.py` | `STATE_AUTOTUNE` | Yes |
 | `SensorTestMgr` | `sensor_test.py` | `STATE_SENSOR` | No |
-| `AutoDriveMgr` | `autodrive.py` | `STATE_AUTO` | Yes |
+| `AutoDriveMgr` | `autodrive.py` | `STATE_AUTODRIVE` | Yes |
 
 ### MotorController
 

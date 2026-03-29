@@ -180,7 +180,7 @@ class AutoDriveMgr:
     # ------------------------------------------------------------------
 
     def update(self, delta: int):
-        """Main update tick, called from BadgeBotApp.update when in STATE_AUTO."""
+        """Main update tick, called from BadgeBotApp.update when in STATE_AUTODRIVE."""
         if not self._active:
             return
         # CANCEL always exits cleanly

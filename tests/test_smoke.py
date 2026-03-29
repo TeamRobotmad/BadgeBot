@@ -86,11 +86,11 @@ def test_hexdrive_type_pids_consistent():
 
 
 def test_new_states_exist():
-    """Verify the new STATE_SENSOR and STATE_AUTO constants are defined."""
+    """Verify the new STATE_SENSOR and STATE_AUTODRIVE constants are defined."""
     import sim.apps.BadgeBot.app as BadgeBot
     assert hasattr(BadgeBot, 'STATE_SENSOR')
-    assert hasattr(BadgeBot, 'STATE_AUTO')
-    assert BadgeBot.STATE_SENSOR != BadgeBot.STATE_AUTO
+    assert hasattr(BadgeBot, 'STATE_AUTODRIVE')
+    assert BadgeBot.STATE_SENSOR != BadgeBot.STATE_AUTODRIVE
 
 
 def test_new_settings_registered():
