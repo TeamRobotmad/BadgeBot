@@ -484,5 +484,5 @@ class StepperTestMgr:
             else:
                 stepper_text[i + 1] = "Off" if (self.stepper_mode == StepperMode.OFF) else f"{int(self.stepper.get_pos()):+6} "
         app.draw_message(ctx, stepper_text, stepper_text_colours, label_font_size)
-        button_labels(ctx, confirm_label="Mode", cancel_label="Exit", left_label="<--", right_label="-->")
+        button_labels(ctx, confirm_label="Mode", cancel_label="Back", left_label="<--", right_label="-->")
         return True
