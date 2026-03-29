@@ -243,8 +243,7 @@ class MotorMovesMgr:
         elif self._sub_state == _SUB_RECEIVE_INSTR:
             self._update_state_receive_instr(delta)
         elif self._sub_state == _SUB_RUN:
-            self.app.clear_leds()
-            # Run is primarily managed in the background update
+            self._update_state_run(delta)
         elif self._sub_state == _SUB_DONE:
             self._update_state_done(delta)
 
@@ -348,7 +347,18 @@ class MotorMovesMgr:
                 self.set_direction_leds(app.last_press)
 
 
-    def _update_state_done(self, delta: int):        # pylint: disable=unused-argument
+    def _update_state_run(self, delta: int) -> None:        # pylint: disable=unused-argument
+        app = self.app
+        app.clear_leds()
+        # Run is primarily managed in the background update - but we allow CANCEL here as well to stop immediately
+        if app.button_states.get(BUTTON_TYPES["CANCEL"]):
+            app.button_states.clear()
+            if app.hexdrive_app is not None:
+                app.hexdrive_app.set_power(False)
+            self.reset_robot()
+
+
+    def _update_state_done(self, delta: int) -> None:        # pylint: disable=unused-argument
         app = self.app
         if app.button_states.get(BUTTON_TYPES["CANCEL"]):
             app.button_states.clear()
@@ -399,7 +409,6 @@ class MotorMovesMgr:
         if app.motor_controller is not None:
             app.motor_controller.stop()
         self._sub_state = _SUB_HELP
-        #app.current_state = STATE_MOTOR_MOVES
         app.last_press = BUTTON_TYPES["CONFIRM"]
         app.animation_counter = 0
         app.long_press_delta = 0
