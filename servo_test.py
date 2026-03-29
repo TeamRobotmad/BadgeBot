@@ -73,8 +73,9 @@ class ServoTestMgr:
         Reference to the main application instance.
     """
 
-    def __init__(self, app):
+    def __init__(self, app, logging: bool = False):
         self.app = app
+        self._logging: bool = logging
         self.servo               = [None]*4                         # Servo Positions
         self.servo_centre        = [_SERVO_DEFAULT_CENTRE]*4        # Trim Servo Centre
         self.servo_range         = [_SERVO_DEFAULT_RANGE]*4         # Limit Servo Range
@@ -84,20 +85,36 @@ class ServoTestMgr:
         self.time_since_last_input: int = 0
         self.timeout_period: int = 300000                     # ms (5 minutes - without any user input)       
         self.keep_alive_period: int = 500                     # ms (half the value used in hexdrive.py)  
+        if self._logging:
+            print("ServoTestMgr initialised")
+            
 
+    # ------------------------------------------------------------------
+
+    @property
+    def logging(self) -> bool:
+        """Whether to print debug logs to the console."""
+        return self._logging
+    
+    @logging.setter
+    def logging(self, value: bool):
+        self._logging = value
 
     @property
     def step(self):
+        """Get the current servo step size."""
         return int(self.app.settings['servo_step'].v) if 'servo_step' in self.app.settings else _SERVO_DEFAULT_STEP
     
 
     @property
     def range(self):
+        """Get the current servo range."""
         return int(self.app.settings['servo_range'].v) if 'servo_range' in self.app.settings else _SERVO_DEFAULT_RANGE
     
 
     @property
     def period(self):
+        """Get the current servo period."""
         return int(self.app.settings['servo_period'].v) if 'servo_period' in self.app.settings else _SERVO_DEFAULT_PERIOD
     
 
@@ -120,7 +137,7 @@ class ServoTestMgr:
             app.refresh = True
             app.auto_repeat_clear()
             self.time_since_last_input = 0
-            if app.logging:
+            if self._logging:
                 print("Entered Servo Test mode")
             return True
         return False
@@ -282,15 +299,15 @@ class ServoTestMgr:
                         elif self.servo[i] < -self.servo_range[i]:
                             self.servo[i] = -self.servo_range[i]
                         if not app.hexdrive_app.set_servoposition(i, int(self.servo[i])):
-                            if app.logging:
+                            if self._logging:
                                 print("H:Failed to set servo position")
                 self.servo_selected = 0
                 app.time_since_last_update = 0
                 self.time_since_last_input = 0
-                if app.logging:
+                if self._logging:
                     print("H:HexDrive initialised for servo test")
                 return True
-        if app.logging:
+        if self._logging:
             print("H:Failed to initialise HexDrive for servo test")
         app.notification = Notification("HexDrive Init Failed")
         return False

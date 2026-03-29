@@ -44,3 +44,7 @@ generated-members = [
     "time.ticks_us",
     "time.sleep_us",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

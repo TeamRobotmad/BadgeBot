@@ -68,13 +68,15 @@ class StepperMode:
 # ---- Stepper Motor Class ---------------------------------------------------
 
 class Stepper:
-    def __init__(self, container, hexdrive_app, step_size=1,
+    def __init__(self, container, hexdrive_app, logging: bool = False, 
+                 step_size=1,
                  steps_per_rev=_STEPPER_DEFAULT_SPR,
                  speed_sps=_STEPPER_DEFAULT_SPEED,
                  max_sps=_STEPPER_MAX_SPEED,
                  max_pos=_STEPPER_MAX_POSITION, timer_id=0):
         self._container = container
         self._hexdrive_app = hexdrive_app
+        self._logging: bool = logging
         self._phase = 0
         self._calibrated = False
         self._timer = Timer(timer_id) if Timer is not None else None
@@ -93,6 +95,8 @@ class Stepper:
         self._step_size = int(step_size)
         self._last_step_time = 0
         self.track_target()
+        if self._logging:
+            print("Stepper initialised")
     
 
     @property
@@ -292,14 +296,30 @@ class StepperTestMgr:
         Reference to the main application instance.
     """
 
-    def __init__(self, app):
+    def __init__(self, app, logging: bool = False):
         self.app = app
+        self._logging: bool = logging
         self.stepper = None
         self.stepper_mode = StepperMode()
         self.time_since_last_input: int = 0
         self.timeout_period: int = 120000                     # ms (2 minutes - without any user input)       
         self.keep_alive_period: int = 500                     # ms (half the value used in hexdrive.py)  
+        if self._logging:
+            print("StepperTestMgr initialised")
 
+
+    # ------------------------------------------------------------------
+
+    @property
+    def logging(self) -> bool:
+        """Whether to print debug logs to the console."""
+        return self._logging
+    
+    @logging.setter
+    def logging(self, value: bool):
+        self._logging = value
+
+            
     # ------------------------------------------------------------------
     # Entry point from menu
     # ------------------------------------------------------------------
@@ -327,7 +347,7 @@ class StepperTestMgr:
         app.auto_repeat_clear()
         self.stepper.enable(True)
         self.time_since_last_input = 0
-        if app.logging:
+        if self._logging:
             print("Entered Stepper Test mode")
         return True
 

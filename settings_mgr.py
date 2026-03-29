@@ -21,6 +21,7 @@ _FRONT_FACE_LABELS = (
     "BtnD", "Slot 4", "BtnE", "Slot 5", "BtnF", "Slot 6",
 )
 _FWD_DIR_LABELS = ("Normal", "Reverse")
+_DRIVE_MODE_LABELS = ("Time", "Distance")
 
 class MySetting:
     def __init__(self, container, default, minimum, maximum):
@@ -107,10 +108,24 @@ class SettingsMgr:
         Reference to the main application instance.
     """
 
-    def __init__(self, app):
+    def __init__(self, app, logging: bool = False):
         self.app = app
+        self._logging: bool = logging
         self.edit_setting: int  = None
         self.edit_setting_value = None
+        if self._logging:
+            print("SettingsMgr initialised")
+
+    # ------------------------------------------------------------------
+
+    @property
+    def logging(self) -> bool:
+        """Whether to print debug logs to the console."""
+        return self._logging
+    
+    @logging.setter
+    def logging(self, value: bool):
+        self._logging = value
 
 
     def  start(self, item: str) -> bool:
@@ -120,8 +135,7 @@ class SettingsMgr:
         app.button_states.clear()
         app.refresh = True
         app.auto_repeat_clear()
-        self.time_since_last_input = 0
-        if app.logging:
+        if self._logging:
             print("Entered Settings editing mode")
         self.edit_setting = item
         self.edit_setting_value = app.settings[item].v
@@ -138,13 +152,13 @@ class SettingsMgr:
         if app.button_states.get(BUTTON_TYPES["UP"]):
             if app.auto_repeat_check(delta, False):
                 self.edit_setting_value = app.settings[self.edit_setting].inc(self.edit_setting_value, app.auto_repeat_level)
-                if app.logging:
+                if self._logging:
                     print(f"Setting: {self.edit_setting} (+) Value: {self.edit_setting_value}")
                 app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["DOWN"]):
             if app.auto_repeat_check(delta, False):
                 self.edit_setting_value = app.settings[self.edit_setting].dec(self.edit_setting_value, app.auto_repeat_level)
-                if app.logging:
+                if self._logging:
                     print(f"Setting: {self.edit_setting} (-) Value: {self.edit_setting_value}")
                 app.refresh = True
         else:
@@ -152,19 +166,19 @@ class SettingsMgr:
             if app.button_states.get(BUTTON_TYPES["RIGHT"]) or app.button_states.get(BUTTON_TYPES["LEFT"]):
                 app.button_states.clear()
                 self.edit_setting_value = app.settings[self.edit_setting].d
-                if app.logging:
+                if self._logging:
                     print(f"Setting: {self.edit_setting} Default: {self.edit_setting_value}")
                 app.refresh = True
                 app.notification = Notification("Default")
             elif app.button_states.get(BUTTON_TYPES["CANCEL"]):
                 app.button_states.clear()
-                if app.logging:
+                if self._logging:
                     print(f"Setting: {self.edit_setting} Cancelled")
                 app.set_menu(MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS])
                 app.return_to_menu()
             elif app.button_states.get(BUTTON_TYPES["CONFIRM"]):
                 app.button_states.clear()
-                if app.logging:
+                if self._logging:
                     print(f"Setting: {self.edit_setting} = {self.edit_setting_value}")
                 app.settings[self.edit_setting].v = self.edit_setting_value
                 app.settings[self.edit_setting].persist()
@@ -196,6 +210,11 @@ class SettingsMgr:
         elif key == 'front_face':
             try:
                 return _FRONT_FACE_LABELS[int(value)]
+            except (IndexError, ValueError, TypeError):
+                pass
+        elif key == 'drive_mode':
+            try:
+                return _DRIVE_MODE_LABELS[int(value)]
             except (IndexError, ValueError, TypeError):
                 pass
         if isinstance(value, float):

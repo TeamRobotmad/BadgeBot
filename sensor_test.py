@@ -42,13 +42,29 @@ class SensorTestMgr:
         Reference to the main application instance.
     """
 
-    def __init__(self, app):
+    def __init__(self, app, logging: bool = False):
         self.app = app
         self._sub_state = _SUB_SELECT_PORT
         self._sensor_mgr = None          # SensorManager instance (lazy-imported)
         self._port_selected: int = 1
         self._sensor_data: dict = {}
+        self._logging: bool = logging
         self._read_timer: int = 0
+        if self._logging:
+            print("SensorTestMgr initialised")
+
+
+    # ------------------------------------------------------------------
+
+    @property
+    def logging(self) -> bool:
+        """Whether to print debug logs to the console."""
+        return self._logging
+    
+    @logging.setter
+    def logging(self, value: bool):
+        self._logging = value
+
 
     # ------------------------------------------------------------------
     # Entry point from menu
@@ -85,7 +101,7 @@ class SensorTestMgr:
         """Lazy-import and create SensorManager if needed."""
         if self._sensor_mgr is None:
             from .sensor_manager import SensorManager
-            self._sensor_mgr = SensorManager(logging=self.app.logging)
+            self._sensor_mgr = SensorManager(logging=self._logging)
         else:
             self._sensor_mgr.close()
 

@@ -42,6 +42,12 @@ DEFAULT_MAX_POWER = 20000
 DEFAULT_USER_DRIVE_MS =  50
 DEFAULT_USER_TURN_MS  =  20
 
+# Drive modes for TIME and DISTANCE (acceleration-based)
+DRIVE_MODE_TIME = 0
+DRIVE_MODE_DISTANCE = 1
+DEFAULT_DRIVE_MODE  = DRIVE_MODE_DISTANCE
+
+
 # Local sub-states (internal to Motor Moves)
 _SUB_HELP          = 0
 _SUB_RECEIVE_INSTR = 1
@@ -83,7 +89,6 @@ class Instruction:
         elif self._press_type == BUTTON_TYPES["RIGHT"]:
             return (power, -power)
 
-# TODO - better link to settings
     def directional_duration(self, mysettings) -> int:
         if self._press_type == BUTTON_TYPES["UP"] or self._press_type == BUTTON_TYPES["DOWN"]:
             return (mysettings['drive_step_ms'].v)
@@ -121,7 +126,8 @@ def init_settings(s, MySetting: type):
     s['max_power']     = MySetting(s, DEFAULT_MAX_POWER, 1000, 65535)
     s['drive_step_ms'] = MySetting(s, DEFAULT_USER_DRIVE_MS, 5, 200)
     s['turn_step_ms']  = MySetting(s, DEFAULT_USER_TURN_MS, 5, 200)
-
+    if 'drive_mode' not in s:
+        s['drive_mode']    = MySetting(s, DEFAULT_DRIVE_MODE, DRIVE_MODE_TIME, DRIVE_MODE_DISTANCE)
 
 # ---- Motor Moves manager ---------------------------------------------------
 
@@ -134,8 +140,9 @@ class MotorMovesMgr:
         Reference to the main application instance.
     """
 
-    def __init__(self, app):
+    def __init__(self, app, logging: bool = False):
         self.app = app
+        self._logging: bool = logging
         self._sub_state = _SUB_HELP
         self._prev_state = _SUB_HELP
         # Motor-moves instance variables (previously on app)
@@ -144,7 +151,26 @@ class MotorMovesMgr:
         self.current_power_duration = ((0, 0, 0, 0), 0)
         self.power_plan_iter = iter([])
         self.long_press_delta = 0
-        self._mc_task = None  # asyncio task for MotorController-based execution
+        self._mc_task = None  # asyncio task for MotorController-based execution    
+        if self._logging:
+            print("MotorMovesMgr initialised")
+
+
+    # ------------------------------------------------------------------
+
+    @property
+    def logging(self) -> bool:
+        """Get or set logging state for this manager."""
+        return self._logging
+    
+    @logging.setter
+    def logging(self, value: bool):
+        self._logging = value
+
+    @property
+    def drive_mode(self):
+        return self.app.settings['drive_mode'].v if 'drive_mode' in self.app.settings else DRIVE_MODE_DISTANCE
+
 
     # ------------------------------------------------------------------
     # Entry point from menu
@@ -153,7 +179,7 @@ class MotorMovesMgr:
     def start(self) -> bool:
         """Enter the Motor Moves flow from the main menu."""
         app = self.app
-        if app.logging:
+        if self._logging:
             print("Entered Motor Moves mode")
         app.set_menu(None)
         app.button_states.clear()
@@ -170,7 +196,7 @@ class MotorMovesMgr:
         """Build the power plan and start running (called after countdown).
         When a MotorController is available, uses it for IMU-aided execution."""
         app = self.app
-        if app.motor_controller is not None:
+        if app.motor_controller is not None and self.drive_mode == DRIVE_MODE_DISTANCE:
             # Use the MotorController for gyro-aided execution
             self._mc_task = asyncio.get_event_loop().create_task(
                 self._run_instructions_async()
@@ -182,7 +208,7 @@ class MotorMovesMgr:
                 if app.hexdrive_app.initialise() and app.hexdrive_app.set_power(True) and app.hexdrive_app.set_freq(MOTOR_PWM_FREQ):
                     pass
                 else:
-                    if app.logging:
+                    if self._logging:
                         print("H:Failed to initialise HexDrive for motor moves")
                     app.notification = Notification("HexDrive Init Failed")
                     self._sub_state = _SUB_DONE
@@ -223,7 +249,7 @@ class MotorMovesMgr:
             self._update_state_done(delta)
 
         if self._sub_state != self._prev_state:
-            if self.app.logging:
+            if self._logging:
                 print(f"M:State: {self._prev_state} -> {self._sub_state}")
             self._prev_state = self._sub_state
 

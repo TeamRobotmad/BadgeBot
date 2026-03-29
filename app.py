@@ -21,8 +21,8 @@ import app
 
 from .utils import draw_logo_animated, parse_version
 
-# If you could use hard=True in setting up a Pin IRQ hander, which you can't as of BadgeOS V1.10, then it is recommended to 
-# allocate the emergency exception buffer to prevent crashes due to OSError: Out of memory when an interrupt occurs and 
+# If you could use hard=True in setting up a Pin IRQ hander, which you can't as of BadgeOS V1.10, then it is recommended to
+# allocate the emergency exception buffer to prevent crashes due to OSError: Out of memory when an interrupt occurs and
 # there is no memory available to handle the exception.
 #import micropython
 #micropython.alloc_emergency_exception_buf(100)
@@ -138,12 +138,14 @@ except ImportError:
     HexpansionMgr = None
     HexpansionType = None
     _hexpansion_init_settings = None
+    print("Warning: hexpansion_mgr module not found")
 
 try:    
     from .settings_mgr import SettingsMgr, MySetting
 except ImportError:
     SettingsMgr = None
     MySetting = None
+    print("Warning: settings_mgr module not found")
 
 try:
     from .motor_moves import MotorMovesMgr
@@ -151,6 +153,7 @@ try:
 except ImportError:
     MotorMovesMgr = None
     _motor_moves_init_settings = None
+    print("Warning: motor_moves module not found")
 
 try:
     from .servo_test import ServoTestMgr
@@ -158,6 +161,7 @@ try:
 except ImportError:
     ServoTestMgr = None
     _servo_test_init_settings = None
+    print("Warning: servo_test module not found")
 
 try:
     from .stepper_test import StepperTestMgr
@@ -165,18 +169,21 @@ try:
 except ImportError:
     StepperTestMgr = None
     _stepper_test_init_settings = None
+    print("Warning: stepper_test module not found")
 
 try:
-    from .line_follow import LineFollowMgr  
-    from .line_follow import init_settings as _line_follow_init_settings    
+    from .line_follow import LineFollowMgr
+    from .line_follow import init_settings as _line_follow_init_settings
 except ImportError:
     LineFollowMgr = None
     _line_follow_init_settings = None
+    print("Warning: line_follow module not found")
 
 try:
     from .autotune_mgr import AutotuneMgr
 except ImportError:
     AutotuneMgr = None
+    print("Warning: autotune_mgr module not found")
 
 try:
     from .sensor_test import SensorTestMgr
@@ -184,6 +191,7 @@ try:
 except ImportError:
     SensorTestMgr = None
     _sensor_test_init_settings = None
+    print("Warning: sensor_test module not found")
 
 try:
     from .autodrive import AutoDriveMgr
@@ -191,7 +199,7 @@ try:
 except ImportError:
     AutoDriveMgr = None
     _autodrive_init_settings = None
-
+    print("Warning: autodrive module not found")
 
 
 class BadgeBotApp(app.App):         # pylint: disable=no-member
@@ -228,7 +236,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.is_scroll: bool = False        # Whether we are in scroll mode - this is displayed by a green border around the screen 
         self.scroll_offset: int = 0
 
-        # Shared countdown
+        # UI countdown
         self.run_countdown_elapsed_ms: int = 0
         self.countdown_next_state: int = None  # which state to go to after countdown
 
@@ -269,25 +277,28 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.HEXDRIVE_HEXPANSION_INDEX = 0  # Index in the HEXPANSION_TYPES list which corresponds to the basic HexDrive type
         self.HEXSENSE_HEXPANSION_INDEX = 5  # Index in the HEXPANSION_TYPES list which corresponds to the basic HexSense type 
         self.hexpansion_update_required: bool = False # flag from async to main loop
+
+        self.hexdrive_port = None
         self.hexdrive_app = None
-        self.hexsense_app = None
-        self.hexsense_config  = None            # Store the HexpansionConfig of the HexSense that is providing the line sensors
         
+        self.hexsense_config  = None            # Store the HexpansionConfig of the HexSense that is providing the line sensors
+        self.hexsense_app = None
+
         self.time_since_last_update: int = 0
 
         # High-level motor controller (created when HexDrive is found)
         self.motor_controller = None
 
         # Functional area managers
-        self._hexpansion_mgr   = HexpansionMgr(self)  if HexpansionMgr is not None else None
-        self._motor_moves_mgr  = MotorMovesMgr(self)  if MotorMovesMgr is not None else None
-        self._servo_test_mgr   = ServoTestMgr(self)   if ServoTestMgr is not None else None
-        self._stepper_test_mgr = StepperTestMgr(self) if StepperTestMgr is not None else None
-        self._settings_mgr     = SettingsMgr(self)    if SettingsMgr is not None else None
-        self._line_follow_mgr  = LineFollowMgr(self)  if LineFollowMgr is not None else None
-        self._autotune_mgr     = AutotuneMgr(self, self._line_follow_mgr) if AutotuneMgr is not None else None
-        self._sensor_test_mgr  = SensorTestMgr(self)  if SensorTestMgr is not None else None
-        self._autodrive_mgr    = AutoDriveMgr(self)   if AutoDriveMgr is not None else None
+        self._hexpansion_mgr   = HexpansionMgr(self, logging=self.logging)  if HexpansionMgr is not None else None
+        self._motor_moves_mgr  = MotorMovesMgr(self, logging=self.logging)  if MotorMovesMgr is not None else None
+        self._servo_test_mgr   = ServoTestMgr(self, logging=self.logging)   if ServoTestMgr is not None else None
+        self._stepper_test_mgr = StepperTestMgr(self, logging=self.logging) if StepperTestMgr is not None else None
+        self._settings_mgr     = SettingsMgr(self, logging=self.logging)    if SettingsMgr is not None else None
+        self._line_follow_mgr  = LineFollowMgr(self, logging=self.logging)  if LineFollowMgr is not None else None
+        self._autotune_mgr     = AutotuneMgr(self, self._line_follow_mgr, logging=self.logging) if AutotuneMgr is not None else None
+        self._sensor_test_mgr  = SensorTestMgr(self, logging=self.logging)  if SensorTestMgr is not None else None
+        self._autodrive_mgr    = AutoDriveMgr(self, logging=self.logging)   if AutoDriveMgr is not None else None
 
         # State -> manager dispatch tables (only include managers that exist)
         self._state_update_dispatch = {}
@@ -363,12 +374,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if 'front_face' in self.settings:
             return self.settings['front_face'].v
         return _FRONT_FACE_DEFAULT  
-
-
-    @property
-    def hexdrive_port(self):
-        """Proxy to HexpansionMgr.hexdrive_port for convenience."""
-        return app.hexdrive_config.port if app.hexdrive_config is not None else None
 
 
     @property
@@ -694,8 +699,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             self.refresh = False
             clear_background(ctx)
             ctx.save()
-            if False: # if a mode where rotated display is desirable:
-                ctx.rotate(self.front_face * 2.0 * pi / _FRONT_FACE_NUM_ORIENTATIONS)  # Rotate the entire display based on the front_face setting, so that "forward" is always at the top of the display regardless of how the badge is oriented    
+            #if in a mode where rotated display is desirable:
+            #    ctx.rotate(self.front_face * 2.0 * pi / _FRONT_FACE_NUM_ORIENTATIONS)  # Rotate the entire display based on the front_face setting, so that "forward" is always at the top of the display regardless of how the badge is oriented    
             ctx.font_size = label_font_size
             if ctx.text_align != ctx.LEFT:
                 # See https://github.com/emfcamp/badge-2024-software/issues/181             
@@ -987,9 +992,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 self.settings[s].persist()
             self.notification = Notification("  Settings Defaulted")
             self.set_menu("main")
-        else:
-            if self._settings_mgr is not None and self._settings_mgr.start(item):
-                self.current_state = STATE_SETTINGS
+        elif self._settings_mgr is not None and self._settings_mgr.start(item):
+            self.current_state = STATE_SETTINGS
 
 
     def _menu_back_handler(self):

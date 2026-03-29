@@ -297,7 +297,7 @@ No dedicated settings currently; the `init_settings` hook exists for future use.
   `sensors/__init__.py`.
 - **State constants**: Defined in `app.py` and imported by sub-modules via
   `from .app import STATE_*`.
-- **Logging**: Use `if app.logging:` guard before `print()` statements.
+- **Logging**: Use `if self._logging:` guard before `print()` statements.
 - **Import style**: Standard library first, then badge-specific, then relative imports.
 - **Comments**: Use `#` line comments; docstrings for public classes/methods.
 - **MicroPython compatibility**: Avoid features not available in MicroPython (e.g. some

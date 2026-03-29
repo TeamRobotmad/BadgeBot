@@ -69,13 +69,13 @@ class PIDAutoTuner:
     """
 
     def __init__(self, relay_amplitude, base_power=0, hysteresis=50,
-                 target_cycles=12, method=METHOD_ZIEGLER_NICHOLS, logging=True):
+                 target_cycles=12, method=METHOD_ZIEGLER_NICHOLS, logging=False):
         self.relay_amplitude = relay_amplitude
         self.base_power = base_power
         self.hysteresis = hysteresis
         self.target_cycles = max(target_cycles, _MIN_CYCLES + _SETTLE_IGNORE + 1)
         self.method = method
-        self.logging = logging
+        self._logging: bool = logging
 
         # State
         self.state = _AT_IDLE
@@ -96,6 +96,21 @@ class PIDAutoTuner:
         self._Ki = 0.0
         self._Kd = 0.0
         self._quality = 0.0
+        if self._logging:
+            print("PIDAutoTuner initialised")
+
+
+    # ------------------------------------------------------------------
+
+    @property
+    def logging(self) -> bool:
+        """Get or set logging enabled/disabled."""
+        return self._logging
+    
+    @logging.setter
+    def logging(self, value: bool):
+        self._logging = value
+
 
     # ------------------------------------------------------------------
     # Public interface
@@ -111,7 +126,7 @@ class PIDAutoTuner:
         self._troughs = []
         self._cur_extreme = 0
         self._elapsed_ms = 0
-        if self.logging:
+        if self._logging:
             print("AUTOTUNE: Started relay feedback auto-tune")
             print(f"AUTOTUNE: relay_amp={self.relay_amplitude}  base_power={self.base_power} hysteresis={self.hysteresis}  target_cycles={self.target_cycles} method={_METHOD_NAMES[self.method]}")
 
@@ -152,7 +167,7 @@ class PIDAutoTuner:
             self._crossing_times.append(self._elapsed_ms)
             self._cur_extreme = error  # reset extreme tracking
             n = len(self._crossing_times)
-            if self.logging:
+            if self._logging:
                 relay_symbol = '+' if self.relay_sign > 0 else '-'
                 print(f"AUTOTUNE: crossing #{n}  t={self._elapsed_ms}ms  error={error} relay={relay_symbol} peaks={len(self._peaks)} troughs={len(self._troughs)}")
 
@@ -243,14 +258,14 @@ class PIDAutoTuner:
 
     def _finish(self):
         """Analyse collected oscillation data and compute PID gains."""
-        if self.logging:
+        if self._logging:
             print("AUTOTUNE: Finishing - analysing oscillation data")
             print(f"AUTOTUNE: {len(self._crossing_times)} crossings, {len(self._peaks)} peaks, {len(self._troughs)} troughs")
 
         # Need at least _MIN_CYCLES half-cycles after settling
         usable_crossings = len(self._crossing_times) - _SETTLE_IGNORE
         if usable_crossings < _MIN_CYCLES:
-            if self.logging:
+            if self._logging:
                 print(f"AUTOTUNE: FAILED - only {usable_crossings} usable crossings (need {_MIN_CYCLES})")
             self.state = _AT_FAILED
             return
@@ -265,13 +280,13 @@ class PIDAutoTuner:
                 periods.append(p)
 
         if not periods:
-            if self.logging:
+            if self._logging:
                 print("AUTOTUNE: FAILED - no valid periods measured")
             self.state = _AT_FAILED
             return
 
         Tu = sum(periods) / len(periods)  # average period in ms
-        if self.logging:
+        if self._logging:
             print("AUTOTUNE: Periods (ms): " + str(periods))
             print("AUTOTUNE: Average period Tu = " + str(Tu) + " ms")
 
@@ -282,7 +297,7 @@ class PIDAutoTuner:
         valid_troughs = self._troughs[p_start:] if len(self._troughs) > p_start else self._troughs
 
         if not valid_peaks or not valid_troughs:
-            if self.logging:
+            if self._logging:
                 print("AUTOTUNE: FAILED - insufficient peak/trough data")
             self.state = _AT_FAILED
             return
@@ -291,13 +306,13 @@ class PIDAutoTuner:
         avg_trough = sum(abs(t) for t in valid_troughs) // len(valid_troughs)
         amplitude = (avg_peak + avg_trough) // 2  # average half-amplitude
 
-        if self.logging:
+        if self._logging:
             print("AUTOTUNE: Peaks: " + str(["%d" % p for p in valid_peaks]))
             print("AUTOTUNE: Troughs: " + str(["%d" % t for t in valid_troughs]))
             print("AUTOTUNE: Average amplitude a = " + str(amplitude))
 
         if amplitude < _MIN_AMPLITUDE:
-            if self.logging:
+            if self._logging:
                 print(f"AUTOTUNE: FAILED - amplitude {amplitude} too small (min {_MIN_AMPLITUDE})")
             self.state = _AT_FAILED
             return
@@ -308,7 +323,7 @@ class PIDAutoTuner:
         self._Ku = (4.0 * self.relay_amplitude) / (pi * amplitude)
         self._Tu = Tu
 
-        if self.logging:
+        if self._logging:
             print("AUTOTUNE: Ultimate gain Ku = " + str(self._Ku))
             print("AUTOTUNE: Ultimate period Tu = " + str(self._Tu) + " ms")
 
@@ -319,7 +334,7 @@ class PIDAutoTuner:
         self._quality = self._calc_quality(periods, valid_peaks, valid_troughs)
 
         self.state = _AT_DONE
-        if self.logging:
+        if self._logging:
             print(f"AUTOTUNE: SUCCESS - Kp={self._Kp}  Ki={self._Ki} Kd={self._Kd}")
             print(f"AUTOTUNE: Quality score = {self._quality:.1f}%")
             print(f"AUTOTUNE: Method = {_METHOD_NAMES[self.method]}")
@@ -369,7 +384,7 @@ class PIDAutoTuner:
                 cv_period = std_p / mean_p
                 # Penalise: cv > 0.3 → score drops significantly
                 period_score = max(0, 100 - cv_period * 200)
-                if self.logging:
+                if self._logging:
                     print("AUTOTUNE: Period CV=" + str(cv_period) + "  period_score=" + str(period_score))
             else:
                 period_score = 0
@@ -385,7 +400,7 @@ class PIDAutoTuner:
                 std_a = variance ** 0.5
                 cv_amp = std_a / mean_a
                 amp_score = max(0, 100 - cv_amp * 200)
-                if self.logging:
+                if self._logging:
                     print("AUTOTUNE: Amplitude CV=" + str(cv_amp) + "  amp_score=" + str(amp_score))
             else:
                 amp_score = 0
@@ -398,7 +413,7 @@ class PIDAutoTuner:
 
         score = (period_score * 0.4 + amp_score * 0.4 + cycle_score * 0.2)
 
-        if self.logging:
+        if self._logging:
             print(f"AUTOTUNE: Quality breakdown: period={period_score:.1f} amplitude={amp_score:.1f} cycles={cycle_score:.1f} total={score:.1f}%")
 
         return score

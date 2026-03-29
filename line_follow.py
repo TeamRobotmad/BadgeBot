@@ -80,6 +80,19 @@ class LineSensors:
         ]
         self._threshold = 0
         
+
+    # ------------------------------------------------------------------
+
+    @property
+    def logging(self) -> bool:
+        """Whether to print debug logs from the LineSensors class."""
+        return self._logging
+    
+    @logging.setter
+    def logging(self, value: bool):
+        """Set the logging state for the LineSensors class."""
+        self._logging = value
+
     @property
     def num_sensors(self):
         return len(self._sensors)
@@ -249,7 +262,7 @@ class LineSensor:
 
 # ---- Settings initialisation -----------------------------------------------
 
-def init_settings(s, MySetting):
+def init_settings(s, MySetting: type):
     """Register line-follower-specific settings in the shared settings dict."""
     s['line_threshold'] = MySetting(s, _LINE_SENSOR_DEFAULT_THRESHOLD, 0, 65535)
     s['pid_kp']         = MySetting(s, _FOLLOWER_PID_KP_DEFAULT, 0, 65536)
@@ -292,9 +305,9 @@ class LineFollowMgr:
         Reference to the main application instance.
     """
 
-    def __init__(self, app):
+    def __init__(self, app, logging: bool = False):
         self.app = app
-        # Line Follower
+        self._logging: bool = logging
         self._sensor_state = [False, False]
         self.line_sensors = None                               # Will be a LineSensors instance when active
         self.sample_time: int   = 0
@@ -310,6 +323,8 @@ class LineFollowMgr:
         self.line_threshold: int = _LINE_SENSOR_DEFAULT_THRESHOLD
         self.integral_limit: int = 0
         self.motor_output = (0,0)
+        if self._logging:
+            print("LineFollowMgr initialised")
 
 
     # ------------------------------------------------------------------
@@ -350,10 +365,10 @@ class LineFollowMgr:
                         self.integral_limit = self.max_pwr // self.ki
                     else:
                         self.integral_limit = 0            
-                    if app.logging:
+                    if self._logging:
                         print("Entered Line Follower mode")
                     return True                    
-            if app.logging:
+            if self._logging:
                 print("HexDrive not available; Line Follower requires HexDrive to run")
             Notification(app, "HexDrive Init Failed")
             return False                
@@ -461,7 +476,7 @@ class LineFollowMgr:
         # Limit output to max power
         output = (max(min(output[0], self.max_pwr), -self.max_pwr), max(min(output[1], self.max_pwr), -self.max_pwr))
 
-        #if self.app.logging:
+        #if self.self._logging:
         #    print(f"PID: err={error} P={p_term} I={i_term} D={d_term} corr={correction} out={output}")
 
         return output
@@ -515,7 +530,7 @@ class LineFollowMgr:
             ctx.rgb(*colour).arc(x, 0, 24, 0, 2 * pi, True).fill()
             ctx.rgb(1, 1, 1).arc(x, 0, 25, 0, 2 * pi, True).stroke()
             ctx.rgb(1, 1, 0).move_to(x - 20, 2 * label_font_size).text(f"{self.line_sensors.raw_value(i):4}")
-        #    if app.logging:
+        #    if self._logging:
         #        print(f"Sensor {i}: {self.line_sensors.value(i)} (raw: {self.line_sensors.raw_value(i)})")
         ctx.restore()
         button_labels(ctx, up_label="+", down_label="-", cancel_label="Cancel")

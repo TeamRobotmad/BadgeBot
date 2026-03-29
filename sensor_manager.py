@@ -17,12 +17,26 @@ from .sensors import ALL_SENSOR_CLASSES
 
 class SensorManager:
     def __init__(self, logging: bool = False):
-        self._logging = logging
+        self._logging: bool = logging
         self._i2c = None
-        self._port = None
+        self._port: int = None
         self._sensors = []      # list of initialised SensorBase instances
-        self._index = 0         # currently selected sensor
+        self._index: int = 0         # currently selected sensor
         self._last_data = {}
+        if self._logging:
+            print("SensorManager initialised")
+
+
+    # ------------------------------------------------------------------
+
+    @property
+    def logging(self) -> bool:
+        return self._logging
+    
+    @logging.setter
+    def logging(self, value: bool):
+        self._logging = value
+
 
     # ------------------------------------------------------------------
     # Lifecycle

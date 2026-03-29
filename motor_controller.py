@@ -91,6 +91,7 @@ class MotorController:
         hexdrive_app,
         settings,
         *,
+        logging=False,
         fwd_dir_setting=None,
         front_face_setting=None,
         gyro_axis=_AUTO_GYRO_AXIS,
@@ -106,18 +107,19 @@ class MotorController:
     ):
         self._hexdrive = hexdrive_app
         self._settings = settings
-        self._fwd_dir = fwd_dir_setting
-        self._front_face = front_face_setting
-        self._gyro_axis = gyro_axis
-        self._gyro_deadband = gyro_deadband
-        self._accel_axis = accel_axis
-        self._accel_deadband = accel_deadband
-        self._accel_lpf_alpha = accel_lpf_alpha
-        self._turn_speed_frac = turn_speed_frac
-        self._drive_speed_frac = drive_speed_frac
-        self._turn_timeout_ms = turn_timeout_ms
-        self._drive_timeout_ms = drive_timeout_ms
-        self._update_ms = update_ms
+        self._logging: bool = logging
+        self._fwd_dir: int = fwd_dir_setting
+        self._front_face: int = front_face_setting
+        self._gyro_axis: int = gyro_axis
+        self._gyro_deadband: float = gyro_deadband
+        self._accel_axis: int = accel_axis
+        self._accel_deadband: float = accel_deadband
+        self._accel_lpf_alpha: float = accel_lpf_alpha
+        self._turn_speed_frac: float = turn_speed_frac
+        self._drive_speed_frac: float = drive_speed_frac
+        self._turn_timeout_ms: int = turn_timeout_ms
+        self._drive_timeout_ms: int = drive_timeout_ms
+        self._update_ms: int = update_ms
 
         # Live state (read-only for callers)
         self.motor_output = (0, 0)           # current PWM sent to motors
@@ -132,30 +134,47 @@ class MotorController:
         self._accel_calibrated = False
         self._ramp_overshoot_m = 0.0         # estimated extra distance during ramp-down
         self._avg_loop_ms = _TICK_MS           # measured average loop period
-        self._busy = False
-
+        self._busy = False    
+        if self._logging:
+            print("MotorController initialised")
 
     # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
 
+
+    # ------------------------------------------------------------------
+
+    @property
+    def logging(self) -> bool:
+        """Whether to print diagnostic messages about motor controller activity."""
+        return self._logging
+    
+    @logging.setter
+    def logging(self, value: bool):
+        self._logging = value
+
     @property
     def max_power(self) -> int:
+        """Maximum motor power (PWM value) from settings."""
         return int(self._settings['max_power'].v)
 
 
     @property
     def acceleration(self) -> int:
+        """Acceleration for ramps, in motor PWM per second."""
         return max(1, int(self._settings['acceleration'].v))
 
 
     @property
     def drive_step_ms(self) -> int:
+        """Estimated time in ms to drive one step (for time-based driving)."""
         return int(self._settings['drive_step_ms'].v) if 'drive_step_ms' in self._settings else 0
     
 
     @property
     def turn_step_ms(self) -> int:
+        """Estimated time in ms to turn one step (for time-based turning)."""
         return int(self._settings['turn_step_ms'].v) if 'turn_step_ms' in self._settings else 0
 
 
@@ -284,7 +303,7 @@ class MotorController:
                     peak_dps = abs(self.gyro_dps)
 
                 # Periodic progress (every ~250 ms)
-                if loop_count % 25 == 0:
+                if loop_count % 25 == 0 and self._logging:
                     remaining = target_deg - self.integrated_deg
                     print("[MC-DIAG]   turn progress: %.1f / %.1f deg  "
                           "gyro=%.1f dps  elapsed=%d ms  remaining=%.1f deg"
@@ -312,15 +331,15 @@ class MotorController:
                 self._read_gyro(d)
                 await asyncio.sleep_ms(self._update_ms)
             coast_deg = self.integrated_deg - post_stop_deg
-
-            print("[MC-DIAG] turn done: integrated=%.2f deg  target=%.1f deg  "
-                  "overshoot=%.2f deg" % (self.integrated_deg, target_deg, overshoot))
-            print("[MC-DIAG]   elapsed=%d ms  loops=%d  avg_loop=%.1f ms"
-                  % (elapsed_ms, loop_count, avg_loop))
-            print("[MC-DIAG]   peak_dps=%.1f  coast_after_stop=%.2f deg"
-                  % (peak_dps, coast_deg))
-            if timed_out:
-                print("[MC-DIAG]   WARNING: turn timed out before reaching target")
+            if self._logging:
+                print("[MC-DIAG] turn done: integrated=%.2f deg  target=%.1f deg  "
+                    "overshoot=%.2f deg" % (self.integrated_deg, target_deg, overshoot))
+                print("[MC-DIAG]   elapsed=%d ms  loops=%d  avg_loop=%.1f ms"
+                    % (elapsed_ms, loop_count, avg_loop))
+                print("[MC-DIAG]   peak_dps=%.1f  coast_after_stop=%.2f deg"
+                    % (peak_dps, coast_deg))
+                if timed_out:
+                    print("[MC-DIAG]   WARNING: turn timed out before reaching target")
         finally:
             self._busy = False
 
@@ -500,18 +519,20 @@ class MotorController:
         if success_count == 0:
             # No valid samples: leave calibration disabled and report failure.
             self._accel_calibrated = False
-            print("[MC-DIAG] calibrate: failed, no valid accelerometer samples")
+            if self._logging:
+                print("[MC-DIAG] calibrate: failed, no valid accelerometer samples")
             return
         self._accel_bias_x = total_x / success_count
         self._accel_bias_y = total_y / success_count
         self._accel_filtered = 0.0
         self._accel_calibrated = True
-        print("[MC-DIAG] calibrate: bias_x=%.4f  bias_y=%.4f" % (self._accel_bias_x, self._accel_bias_y))
-        if samples_x:
-            sx_str = ', '.join(['%.3f' % s for s in samples_x])
-            sy_str = ', '.join(['%.3f' % s for s in samples_y])
-            print("[MC-DIAG]   raw_x samples: [%s]" % sx_str)
-            print("[MC-DIAG]   raw_y samples: [%s]" % sy_str)
+        if self._logging:
+            print("[MC-DIAG] calibrate: bias_x=%.4f  bias_y=%.4f" % (self._accel_bias_x, self._accel_bias_y))
+            if samples_x:
+                sx_str = ', '.join(['%.3f' % s for s in samples_x])
+                sy_str = ', '.join(['%.3f' % s for s in samples_y])
+                print("[MC-DIAG]   raw_x samples: [%s]" % sx_str)
+                print("[MC-DIAG]   raw_y samples: [%s]" % sy_str)
 
 
     def _reset_distance(self):
@@ -658,19 +679,20 @@ class MotorController:
         _diag_tick = 0
 
         # --- DIAGNOSTICS: start ---
-        target_mm = target_m * 1000
-        print("[MC-DIAG] === distance_drive START ===")
-        print("[MC-DIAG]   requested   = %.1f mm" % distance_mm)
-        print("[MC-DIAG]   accel_scale = %d%%" % scale_pct)
-        print("[MC-DIAG]   target_m    = %.4f m  (%.1f mm)" % (target_m, target_mm))
-        print("[MC-DIAG]   decel_start = %.1f mm  decel_range = %.1f mm" % (decel_start_m * 1000, decel_range_m * 1000))
-        print("[MC-DIAG]   bias_x=%.4f  bias_y=%.4f" % (self._accel_bias_x, self._accel_bias_y))
-        print("[MC-DIAG]   lpf_alpha=%s  deadband=%s" % (self._accel_lpf_alpha, self._accel_deadband))
-        print("[MC-DIAG]   motor_target=%s  timeout=%d ms" % (str(target), timeout))
-        theta_deg = 0.0
-        if self._front_face is not None:
-            theta_deg = -(int(self._front_face.v) * 30)
-        print("[MC-DIAG]   front_face_angle=%d deg" % theta_deg)
+        if self._logging:
+            target_mm = target_m * 1000
+            print("[MC-DIAG] === distance_drive START ===")
+            print("[MC-DIAG]   requested   = %.1f mm" % distance_mm)
+            print("[MC-DIAG]   accel_scale = %d%%" % scale_pct)
+            print("[MC-DIAG]   target_m    = %.4f m  (%.1f mm)" % (target_m, target_mm))
+            print("[MC-DIAG]   decel_start = %.1f mm  decel_range = %.1f mm" % (decel_start_m * 1000, decel_range_m * 1000))
+            print("[MC-DIAG]   bias_x=%.4f  bias_y=%.4f" % (self._accel_bias_x, self._accel_bias_y))
+            print("[MC-DIAG]   lpf_alpha=%s  deadband=%s" % (self._accel_lpf_alpha, self._accel_deadband))
+            print("[MC-DIAG]   motor_target=%s  timeout=%d ms" % (str(target), timeout))
+            theta_deg = 0.0
+            if self._front_face is not None:
+                theta_deg = -(int(self._front_face.v) * 30)
+            print("[MC-DIAG]   front_face_angle=%d deg" % theta_deg)
 
         try:
             self._power_on()
@@ -709,16 +731,19 @@ class MotorController:
                     if self.distance_m > decel_start_m and decel_range_m > 0:
                         remaining = max(0, target_m - self.distance_m)
                         spd_pct = int(max(min_frac, min(1.0, remaining / decel_range_m)) * 100)
-                    print("[MC-DIAG]  t=%5dms a=%+.4f m/s2 v=%+.5f m/s d=%.2f/%.1f mm spd=%d%% mot=%s" % (
-                        elapsed, self.accel_mps2, self.velocity_mps, d_mm, target_mm, spd_pct, str(self.motor_output)))
+                    if self._logging:
+                        print("[MC-DIAG]  t=%5dms a=%+.4f m/s2 v=%+.5f m/s d=%.2f/%.1f mm spd=%d%% mot=%s" % (
+                            elapsed, self.accel_mps2, self.velocity_mps, d_mm, target_mm, spd_pct, str(self.motor_output)))
 
                 await asyncio.sleep_ms(self._update_ms)
             else:
                 d_mm = self.distance_m * 1000
-                print("[MC-DIAG]  TIMEOUT after %d ms  dist=%.2f mm" % (elapsed, d_mm))
+                if self._logging:
+                    print("[MC-DIAG]  TIMEOUT after %d ms  dist=%.2f mm" % (elapsed, d_mm))
 
             d_mm = self.distance_m * 1000
-            print("[MC-DIAG]  STOP at dist=%.2f mm (elapsed=%d ms)" % (d_mm, elapsed))
+            if self._logging:
+                print("[MC-DIAG]  STOP at dist=%.2f mm (elapsed=%d ms)" % (d_mm, elapsed))
 
             # Ramp down remaining motor output while still reading accel
             ramp_start_dist = self.distance_m
@@ -726,15 +751,16 @@ class MotorController:
             ramp_dist = self.distance_m - ramp_start_dist
 
             # --- DIAGNOSTICS: end ---
-            final_mm = self.distance_m * 1000
-            ramp_mm = ramp_dist * 1000
-            over_mm = (self.distance_m - target_m) * 1000
-            print("[MC-DIAG] === distance_drive END ===")
-            print("[MC-DIAG]   final_distance = %.2f mm  (target was %.1f mm, scaled target %.1f mm)" % (final_mm, distance_mm, target_mm))
-            print("[MC-DIAG]   ramp_down_dist = %.2f mm" % ramp_mm)
-            print("[MC-DIAG]   final_velocity = %.5f m/s" % self.velocity_mps)
-            print("[MC-DIAG]   elapsed        = %d ms" % elapsed)
-            print("[MC-DIAG]   overshoot      = %+.2f mm" % over_mm)
+            if self._logging:
+                final_mm = self.distance_m * 1000
+                ramp_mm = ramp_dist * 1000
+                over_mm = (self.distance_m - target_m) * 1000
+                print("[MC-DIAG] === distance_drive END ===")
+                print("[MC-DIAG]   final_distance = %.2f mm  (target was %.1f mm, scaled target %.1f mm)" % (final_mm, distance_mm, target_mm))
+                print("[MC-DIAG]   ramp_down_dist = %.2f mm" % ramp_mm)
+                print("[MC-DIAG]   final_velocity = %.5f m/s" % self.velocity_mps)
+                print("[MC-DIAG]   elapsed        = %d ms" % elapsed)
+                print("[MC-DIAG]   overshoot      = %+.2f mm" % over_mm)
         finally:
             self._busy = False
 

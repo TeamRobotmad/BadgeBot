@@ -28,6 +28,14 @@ from .app import (STATE_AUTOTUNE, STATE_COUNTDOWN, MOTOR_PWM_FREQ)
 
 AUTOTUNER_UPDATE_PERIOD = 10  # ms between updates while tuning
 
+# ---- Settings initialisation -----------------------------------------------
+
+def init_settings(s, MySetting: type):       # pylint: disable=unused-argument
+    """Register autotune-manager-specific settings in the shared settings dict.
+    Currently no dedicated settings, but the hook exists for future use."""
+    # no autotune-manager-specific settings at this time
+
+
 class AutotuneMgr:
     """Manages the PID Auto Tune UI and state machine.
 
@@ -37,10 +45,25 @@ class AutotuneMgr:
         Reference to the main application instance.
     """
 
-    def __init__(self, app, follower):
+    def __init__(self, app, follower, logging: bool = False):
         self.app = app
         self.follower = follower
         self.autotuner = None
+        self._logging: bool = logging
+        if self._logging: 
+            print("AutotuneMgr initialised")
+
+    # ------------------------------------------------------------------
+
+    @property
+    def logging(self) -> bool:
+        """Whether to print debug logs from the autotune manager."""
+        return self._logging
+
+    @logging.setter
+    def logging(self, value: bool):
+        self._logging = value
+
 
     # ------------------------------------------------------------------
     # Entry point from menu
@@ -65,10 +88,10 @@ class AutotuneMgr:
                 self.autotuner = None
                 app.update_period = AUTOTUNER_UPDATE_PERIOD
                 app.refresh = True
-                if app.logging:
+                if self._logging:
                     print("AUTOTUNE: Entered PID Auto Tune mode")
                 return True
-        if app.logging:
+        if self._logging:
             print("H:Failed to initialise HexDrive for autotune")
         app.notification = Notification("HexDrive Init Failed")
         return False
@@ -92,10 +115,10 @@ class AutotuneMgr:
             hysteresis=50,  # out of 1000
             target_cycles=12,
             method=METHOD_ZIEGLER_NICHOLS,
-            logging=app.logging
+            logging=self._logging
         )
         self.autotuner.start()
-        if app.logging:
+        if self._logging:
             print(f"AUTOTUNE: Starting with relay_amp={relay_amp} base_power={base_power}")
         app.refresh = True
 
@@ -116,7 +139,8 @@ class AutotuneMgr:
             self.follower.line_sensors.disable()
             self.autotuner = None
             app.return_to_menu()
-            print("AUTOTUNE: Cancelled by user")
+            if self._logging:
+                print("AUTOTUNE: Cancelled by user")
             return True
         if app.button_states.get(BUTTON_TYPES["CONFIRM"]):
             app.button_states.clear()
@@ -171,7 +195,8 @@ class AutotuneMgr:
                 app.settings['pid_kp'].persist()
                 app.settings['pid_ki'].persist()
                 app.settings['pid_kd'].persist()
-                print(f"AUTOTUNE: Gains saved to settings: Kp={gains[0]:.4f} Ki={gains[1]:.6f} Kd={gains[2]:.4f}")
+                if self._logging:
+                    print(f"AUTOTUNE: Gains saved to settings: Kp={gains[0]:.4f} Ki={gains[1]:.6f} Kd={gains[2]:.4f}")
             app.notification = Notification(" Tuning    Complete")
 
 
