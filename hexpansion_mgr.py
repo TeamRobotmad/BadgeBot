@@ -73,20 +73,20 @@ class HexpansionType:
         app_mpy_version: the version string to report for the .mpy copied to the hexpansion EEPROM for this type (if any)
         app_name: the name of the App class to look for when checking if a detected hexpansion's app is running (if any)
     """
-    def __init__(self, pid, name, vid=0xCAFE, motors=0, steppers=0, servos=0,
-                 sensors=0, sub_type="Unknown", app_mpy_name=None,
-                 app_mpy_version=None, app_name=None):
-        self.vid = vid
-        self.pid = pid
-        self.name = name
-        self.sub_type = sub_type
-        self.motors = motors
-        self.servos = servos
-        self.steppers = steppers
-        self.sensors = sensors
-        self.app_mpy_name = app_mpy_name
-        self.app_mpy_version = app_mpy_version
-        self.app_name = app_name
+    def __init__(self, pid: int, name: str, vid: int =0xCAFE, motors: int =0, steppers: int =0, servos: int =0,
+                 sensors: int =0, sub_type: str ="Unknown", app_mpy_name: str =None,
+                 app_mpy_version: str =None, app_name: str =None):
+        self.vid: int = vid
+        self.pid: int = pid
+        self.name: str = name
+        self.sub_type: str = sub_type
+        self.motors: int = motors
+        self.servos: int = servos
+        self.steppers: int = steppers
+        self.sensors: int = sensors
+        self.app_mpy_name: str | None = app_mpy_name
+        self.app_mpy_version: str | None = app_mpy_version
+        self.app_name: str | None = app_name
 
 
 # ---- Hexpansion management -------------------------------------------------
@@ -492,6 +492,7 @@ class HexpansionMgr:
                 app.notification = Notification("No App", port=self.upgrade_port)
                 self._sub_state = _SUB_CHECK
                 app.show_message(["No App", "for this", "Hexpansion"], [(1,1,0),(1,1,1),(1,1,1)])
+                print(f"H:Hexpansion type {app.HEXPANSION_TYPES[self.hexpansion_init_type].name} does not have an app to copy to EEPROM - SHOULD WE EVER GET HERE?")
             elif self.update_app_in_eeprom(self.upgrade_port, _EEPROM_ADDR):
                 app.notification = Notification("Upgraded", port=self.upgrade_port)
                 eventbus.emit(HexpansionInsertionEvent(self.upgrade_port))
@@ -507,9 +508,13 @@ class HexpansionMgr:
         elif self.detected_port is not None:
             if self.prepare_eeprom(self.detected_port, _EEPROM_ADDR):
                 app.notification = Notification("Initialised", port=self.detected_port)
-                self.upgrade_port = self.detected_port
                 self.hexpansion_slot_type[self.detected_port - 1] = self.hexpansion_init_type
-                self._sub_state = _SUB_UPGRADE
+                if app.HEXPANSION_TYPES[self.hexpansion_init_type].app_mpy_name is not None:
+                    self.upgrade_port = self.detected_port
+                    self._sub_state = _SUB_UPGRADE
+                else:
+                    self._sub_state = _SUB_CHECK
+                    app.show_message(["No App", "for this", "Hexpansion"], [(1,1,0),(1,1,1),(1,1,1)])                    
             else:
                 app.notification = Notification("Failed", port=self.detected_port)
                 self._sub_state = _SUB_CHECK
