@@ -266,7 +266,7 @@ class Stepper:
         self._update_timer((2 // self._step_size) * abs(self._steps_per_sec))
 
 
-    def _update_timer(self, freq):
+    def _update_timer(self, freq: int):
         if self._timer is None:
             return
         if self._timer_is_running and freq != self._freq:
@@ -304,7 +304,7 @@ class Stepper:
             print(f"stop failed:{e}")
 
 
-    def enable(self, e=True):
+    def enable(self, e: bool = True):
         '''Enable or disable the stepper motor coils & HexDrive power.'''
         self._enabled = e
         try:
@@ -319,8 +319,8 @@ class Stepper:
         except Exception as ex:      # pylint: disable=broad-except
             print(f"enable failed {ex}")
 
-
-    def is_enabled(self):
+    @property
+    def enable(self) -> bool:
         '''Return True if the stepper is currently enabled (i.e. not in a power-saving state).'''
         return self._enabled
 
@@ -418,6 +418,7 @@ class StepperTestMgr:
                     if self.stepper_mode != StepperMode.POSITION:
                         self.stepper_mode.mode = StepperMode.POSITION
                         self.stepper.speed = _STEPPER_DEFAULT_SPEED
+                        self.stepper.enable(True)
                         self.stepper.track_target()
                     pos = self.stepper.pos
                     pos = inc_value(pos, app.auto_repeat_level + 1)
@@ -435,6 +436,7 @@ class StepperTestMgr:
                     if self.stepper_mode != StepperMode.POSITION:
                         self.stepper_mode.mode = StepperMode.POSITION
                         self.stepper.speed = _STEPPER_DEFAULT_SPEED
+                        self.stepper.enable(True)
                         self.stepper.track_target()
                     pos = self.stepper.pos
                     pos = dec_value(pos, app.auto_repeat_level + 1)
@@ -445,7 +447,6 @@ class StepperTestMgr:
             if app.button_states.get(BUTTON_TYPES["CANCEL"]):
                 app.button_states.clear()
                 self.stepper.enable(False)
-                
                 app.return_to_menu()
                 return True
             elif app.button_states.get(BUTTON_TYPES["CONFIRM"]):    #"Mode" button
@@ -454,13 +455,16 @@ class StepperTestMgr:
                 if self.stepper_mode == StepperMode.POSITION:
                     self.stepper.speed = _STEPPER_DEFAULT_SPEED
                     self.stepper.target = self.stepper.pos
+                    self.stepper.enable(True)
                     self.stepper.track_target()
                 elif self.stepper_mode == StepperMode.SPEED:
                     self.stepper.speed = 0
+                    self.stepper.enable(True)
                     self.stepper.free_run(1)
                 else:
                     # "Off" mode - stop the stepper and disable coils to save power
                     self.stepper.stop()
+                    self.stepper.enable(False)
                     self.stepper.speed = 0
                 app.refresh = True
                 app.notification = Notification(f"  Stepper:\n {self.stepper_mode}")
