@@ -74,7 +74,7 @@ class ServoTestMgr:
     """
 
     def __init__(self, app, logging: bool = False):
-        self.app = app
+        self._app = app
         self._logging: bool = logging
         self.servo               = [None]*4                         # Servo Positions
         self.servo_centre        = [_SERVO_DEFAULT_CENTRE]*4        # Trim Servo Centre
@@ -103,25 +103,25 @@ class ServoTestMgr:
     @property
     def step(self):
         """Get the current servo step size."""
-        return int(self.app.settings['servo_step'].v) if 'servo_step' in self.app.settings else _SERVO_DEFAULT_STEP
+        return int(self._app.settings['servo_step'].v) if 'servo_step' in self._app.settings else _SERVO_DEFAULT_STEP
     
 
     @property
     def range(self):
         """Get the current servo range."""
-        return int(self.app.settings['servo_range'].v) if 'servo_range' in self.app.settings else _SERVO_DEFAULT_RANGE
+        return int(self._app.settings['servo_range'].v) if 'servo_range' in self._app.settings else _SERVO_DEFAULT_RANGE
     
 
     @property
     def period(self):
         """Get the current servo period."""
-        return int(self.app.settings['servo_period'].v) if 'servo_period' in self.app.settings else _SERVO_DEFAULT_PERIOD
+        return int(self._app.settings['servo_period'].v) if 'servo_period' in self._app.settings else _SERVO_DEFAULT_PERIOD
     
 
     @property
     def available_servo_count(self) -> int:
         """Determine the number of servos available based on the app's settings."""
-        return min(4, max(0, self.app.num_servos))
+        return min(4, max(0, self._app.num_servos))
 
 
     # ------------------------------------------------------------------
@@ -130,7 +130,7 @@ class ServoTestMgr:
 
     def start(self) -> bool:
         """Enter servo test from the main menu."""
-        app = self.app
+        app = self._app
         if self.reset_servo():
             app.set_menu(None)
             app.button_states.clear()
@@ -149,7 +149,7 @@ class ServoTestMgr:
 
     def update(self, delta: int) -> bool:
         """Handle Servo Test UI.  Returns True if this module handled the state."""
-        app = self.app
+        app = self._app
 
         if app.button_states.get(BUTTON_TYPES["RIGHT"]):
             if app.auto_repeat_check(delta, (self.servo_mode[self.servo_selected] != ServoMode.SCANNING)):
@@ -287,7 +287,7 @@ class ServoTestMgr:
 
     def reset_servo(self) -> bool:
         """Reset servo tester state."""
-        app = self.app
+        app = self._app
         if app.hexdrive_app is not None:
             if app.hexdrive_app.initialise() and app.hexdrive_app.set_power(True) and app.hexdrive_app.set_freq(1000 // self.period):
                 for i in range(self.available_servo_count):
@@ -319,7 +319,7 @@ class ServoTestMgr:
 
     def draw(self, ctx) -> bool:
         """Render Servo Tester UI.  Returns True if handled."""
-        app = self.app
+        app = self._app
 
         servo_count = self.available_servo_count
         servo_text = ["S"] * (1 + servo_count)

@@ -6,7 +6,7 @@ from math import cos, pi
 import ota
 import settings
 from app_components.notification import Notification
-from app_components.tokens import label_font_size, twentyfour_pt, clear_background
+from app_components.tokens import button_labels, label_font_size, twentyfour_pt, clear_background
 from app_components import Menu
 from events.input import BUTTON_TYPES, Button, Buttons, ButtonUpEvent
 from frontboards.twentyfour import BUTTONS
@@ -134,72 +134,80 @@ _FWD_DIR_LABELS = ("Normal", "Reverse")
 try:
     from .hexpansion_mgr import HexpansionMgr, HexpansionType
     from .hexpansion_mgr import init_settings as _hexpansion_init_settings
-except ImportError:
+except ImportError as e:
     HexpansionMgr = None
     HexpansionType = None
     _hexpansion_init_settings = None
-    print("Warning: hexpansion_mgr module not found")
+    print(f"Warning: hexpansion_mgr module not found ({e})")
 
 try:    
     from .settings_mgr import SettingsMgr, MySetting
-except ImportError:
+except ImportError as e:
     SettingsMgr = None
     MySetting = None
-    print("Warning: settings_mgr module not found")
+    print(f"Warning: settings_mgr module not found ({e})")
 
 try:
     from .motor_moves import MotorMovesMgr
     from .motor_moves import init_settings as _motor_moves_init_settings
-except ImportError:
+except ImportError as e:
     MotorMovesMgr = None
     _motor_moves_init_settings = None
-    print("Warning: motor_moves module not found")
+    print(f"Warning: motor_moves module not found ({e})")
 
 try:
     from .servo_test import ServoTestMgr
     from .servo_test import init_settings as _servo_test_init_settings
-except ImportError:
+except ImportError as e:
     ServoTestMgr = None
     _servo_test_init_settings = None
-    print("Warning: servo_test module not found")
+    print(f"Warning: servo_test module not found ({e})")
 
 try:
     from .stepper_test import StepperTestMgr
     from .stepper_test import init_settings as _stepper_test_init_settings
-except ImportError:
+except ImportError as e:
     StepperTestMgr = None
     _stepper_test_init_settings = None
-    print("Warning: stepper_test module not found")
+    print(f"Warning: stepper_test module not found ({e})")
 
 try:
     from .line_follow import LineFollowMgr
-    from .line_follow import init_settings as _line_follow_init_settings
-except ImportError:
+   #from .line_follow import init_settings as _line_follow_init_settings
+except ImportError as e:
     LineFollowMgr = None
+    #_line_follow_init_settings = None
+    print(f"Warning: line_follow module not found ({e})")
+
+try:
+    #from .line_follow import LineFollowMgr
+    from .line_follow import init_settings as _line_follow_init_settings
+except ImportError as e:
+    #LineFollowMgr = None
     _line_follow_init_settings = None
-    print("Warning: line_follow module not found")
+    print(f"Warning: line_follow_init_settings not found ({e})")
 
 try:
     from .autotune_mgr import AutotuneMgr
-except ImportError:
+except ImportError as e:
     AutotuneMgr = None
-    print("Warning: autotune_mgr module not found")
+    print(f"Warning: autotune_mgr module not found ({e})")
 
 try:
     from .sensor_test import SensorTestMgr
     from .sensor_test import init_settings as _sensor_test_init_settings
-except ImportError:
+except ImportError as e:
     SensorTestMgr = None
     _sensor_test_init_settings = None
-    print("Warning: sensor_test module not found")
+    print(f"Warning: sensor_test module not found ({e})")
 
 try:
     from .autodrive import AutoDriveMgr
     from .autodrive import init_settings as _autodrive_init_settings
-except ImportError:
+except ImportError as e:
     AutoDriveMgr = None
     _autodrive_init_settings = None
-    print("Warning: autodrive module not found")
+    print(f"Warning: autodrive module not found ({e})")
 
 
 class BadgeBotApp(app.App):         # pylint: disable=no-member
@@ -397,21 +405,25 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
     async def _gain_focus(self, event: RequestForegroundPushEvent):
         if event.app is self:
+            if self.logging:
+                print(f"BadgeBot gained focus in state {self.current_state}")
             if self.current_state in _LED_CONTROL_STATES:
                 eventbus.emit(PatternDisable())
             if self.scroll_mode_enabled:
-                eventbus.on_async(ButtonUpEvent, self.handle_button_up, self)
+                eventbus.on_async(ButtonUpEvent, self._handle_button_up, self)
 
 
     async def _lose_focus(self, event: RequestForegroundPopEvent):
         if event.app is self:
+            if self.logging:
+                print(f"BadgeBot lost focus from state {self.current_state}")
             eventbus.emit(PatternEnable())
             self.pattern_status = True
             if self.scroll_mode_enabled:
-                eventbus.remove(ButtonUpEvent, self.handle_button_up, self)            
+                eventbus.remove(ButtonUpEvent, self._handle_button_up, self)            
 
 
-    async def handle_button_up(self, event: ButtonUpEvent):
+    async def _handle_button_up(self, event: ButtonUpEvent):
         if self.scroll_mode_enabled and event.button == BUTTONS["C"]:
             if self.scroll_ignore_next_c_button:
                 self.scroll_ignore_next_c_button = False
@@ -578,7 +590,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     def _update_main_application(self, delta: int):
         if self.current_state == STATE_MENU:
             if self.current_menu is None:
-                self.set_menu("main")
+                self.set_menu()
                 self.refresh = True
             else:
                 self.menu.update(delta)    
@@ -621,16 +633,19 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
             if self.message_type == "reboop":
                 self.button_states.clear()
-                # Reboot has been acknowledged by the user - perform reboot
+                # Reboot has been acknowledged by the user - unfortunately we can't actually reboot the badge from Python.
                 return # leave the message on screen.
             elif self.message_type == "error":
                 # Error has been acknowledged by the user
                 self.button_states.clear()
                 # Recheck Hexpansions - in case the issue is resolved
                 self.current_state = STATE_HEXPANSION
-            elif self.message_type == "warning" or self.current_state == STATE_LOGO:
+            else: # elif self.message_type == "warning" or self.current_state == STATE_LOGO:
                 # Warning has been acknowledged by the user - allow access to the menu
                 self.button_states.clear()
+                # refresh the menu in case available options have changed
+                self.set_menu()
+                self.refresh = True                
                 self.current_state = STATE_MENU
             self.message = []
             self.message_colours = []
@@ -688,10 +703,10 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if enable:
             self.scroll_mode_enabled = True
             self.scroll_ignore_next_c_button = True # we want to ignore the "C" button event that triggered this, otherwise it would immediately toggle scroll mode on 
-            eventbus.on_async(ButtonUpEvent, self.handle_button_up, self)
+            eventbus.on_async(ButtonUpEvent, self._handle_button_up, self)
         else:
             self.scroll_mode_enabled = False
-            eventbus.remove(ButtonUpEvent, self.handle_button_up, self)
+            eventbus.remove(ButtonUpEvent, self._handle_button_up, self)
 
 
     def scroll(self, enable: bool):
@@ -733,6 +748,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 if self.message_colours == []:
                     self.message_colours = [(1,0,0)]*len(self.message)
                 self.draw_message(ctx, self.message, self.message_colours, label_font_size)
+                if self.message_type is None or self.message_type == "warning":
+                    button_labels(ctx, confirm_label="OK", cancel_label="Exit")
             elif self.current_state == STATE_COUNTDOWN:
                 self.draw_message(ctx, [str(self.countdown_value)], [(1,1,0)], twentyfour_pt)
             else:
@@ -876,7 +893,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
            If menu_name is None, it will clear the current menu and return to the previous state 
            (e.g. from a submenu back to the main menu)."""
         if self.logging:
-            print(f"H:Set Menu {menu_name}")
+            print(f"B:Set Menu {menu_name}")
         if self.menu is not None:
             try:
                 self.menu._cleanup()        # pylint: disable=protected-access
@@ -911,7 +928,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                     select_handler=self._main_menu_select_handler,
                     back_handler=self._menu_back_handler,
                 )            
-        elif menu_name == "Settings":
+        elif menu_name == MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS] and self._settings_mgr is not None: # "Settings"
             # construct the settings menu
             _settings_menu_items = ["SAVE ALL", "DEFAULT ALL"]
             for _, setting in enumerate(self.settings):
@@ -1007,21 +1024,21 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
     def _settings_menu_select_handler(self, item: str, idx: int):
         if self.logging:
-            print(f"H:Setting {item} @ {idx}")
+            print(f"B:Setting {item} @ {idx}")
         if idx == 0: #Save
             if self.logging:
-                print("H:Settings Save All")
+                print("B:Settings Save All")
             settings.save()
             self.notification = Notification("  Settings  Saved")
-            self.set_menu("main")
+            self.set_menu()
         elif idx == 1: #Default
             if self.logging:
-                print("H:Settings Default All")
+                print("B:Settings Default All")
             for s in self.settings:
                 self.settings[s].v = self.settings[s].d
                 self.settings[s].persist()
             self.notification = Notification("  Settings Defaulted")
-            self.set_menu("main")
+            self.set_menu()
         elif self._settings_mgr is not None and self._settings_mgr.start(item):
             self.current_state = STATE_SETTINGS
 
@@ -1029,8 +1046,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     def _menu_back_handler(self):
         if self.current_menu == "main":
             self.minimise()
-        # There are only two menus so this is the only other option    
-        self.set_menu("main")
+        # for submenus, just return to the main menu    
+        self.set_menu()
 
 
 __app_export__ = BadgeBotApp

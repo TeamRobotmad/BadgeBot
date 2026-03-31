@@ -109,7 +109,7 @@ class SettingsMgr:
     """
 
     def __init__(self, app, logging: bool = False):
-        self.app = app
+        self._app = app
         self._logging: bool = logging
         self.edit_setting: int  = None
         self.edit_setting_value = None
@@ -130,7 +130,7 @@ class SettingsMgr:
 
     def  start(self, item: str) -> bool:
         """Enter Settings editing mode from the main menu."""
-        app = self.app
+        app = self._app
         app.set_menu(None)
         app.button_states.clear()
         app.refresh = True
@@ -147,7 +147,7 @@ class SettingsMgr:
 
     def update(self, delta):
         """Handle Settings editing UI.  Returns True if this module handled the state."""
-        app = self.app
+        app = self._app
 
         if app.button_states.get(BUTTON_TYPES["UP"]):
             if app.auto_repeat_check(delta, False):
@@ -193,7 +193,7 @@ class SettingsMgr:
 
     def draw(self, ctx):
         """Render Settings editing UI.  Returns True if handled."""
-        app = self.app
+        app = self._app
         disp_val = self._format_setting_value(self.edit_setting, self.edit_setting_value)
         app.draw_message(ctx, ["Edit Setting", f"{self.edit_setting}:", f"{disp_val}"], [(1, 1, 1), (0, 0, 1), (0, 1, 0)], label_font_size)
         button_labels(ctx, up_label="+", down_label="-", confirm_label="Set", cancel_label="Cancel", right_label="Default")

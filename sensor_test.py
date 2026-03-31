@@ -43,7 +43,7 @@ class SensorTestMgr:
     """
 
     def __init__(self, app, logging: bool = False):
-        self.app = app
+        self._app = app
         self._sub_state = _SUB_SELECT_PORT
         self._sensor_mgr = None          # SensorManager instance (lazy-imported)
         self._port_selected: int = 1
@@ -75,7 +75,7 @@ class SensorTestMgr:
 
     def start(self) -> bool:
         """Enter the Sensor Test flow from the main menu."""
-        app = self.app
+        app = self._app
         app.set_menu(None)
         app.button_states.clear()
         self._sensor_data = {}
@@ -141,7 +141,7 @@ class SensorTestMgr:
             self._update_reading(delta)
 
     def _update_select_port(self, delta: int):   # pylint: disable=unused-argument
-        app = self.app
+        app = self._app
         if app.button_states.get(BUTTON_TYPES["RIGHT"]):
             app.button_states.clear()
             self._port_selected = (self._port_selected % 6) + 1
@@ -167,7 +167,7 @@ class SensorTestMgr:
             app.return_to_menu()
 
     def _update_reading(self, delta: int):
-        app = self.app
+        app = self._app
         self._read_timer += delta
         if self._read_timer >= _SENSOR_READ_INTERVAL_MS:
             self._read_timer = 0
@@ -198,7 +198,7 @@ class SensorTestMgr:
 
     def draw(self, ctx):
         """Render sensor test UI."""
-        app = self.app
+        app = self._app
         if self._sub_state == _SUB_SELECT_PORT:
             app.draw_message(ctx,
                 ["Sensor Test", f"Port: {self._port_selected}"],

@@ -22,7 +22,6 @@ from events.input import BUTTON_TYPES
 from app_components.notification import Notification
 from app_components.tokens import label_font_size, button_labels
 from machine import Pin
-from motor_moves import DEFAULT_MAX_POWER
 try:
     from machine import disable_irq, enable_irq
 except ImportError:
@@ -33,6 +32,7 @@ except ImportError:
         pass
 from system.hexpansion.config import HexpansionConfig
 from .app import MOTOR_PWM_FREQ
+from .motor_moves import DEFAULT_MAX_POWER
 
 # Line Follower constants
 _NUM_LINE_SENSORS = 2
@@ -306,7 +306,7 @@ class LineFollowMgr:
     """
 
     def __init__(self, app, logging: bool = False):
-        self.app = app
+        self._app = app
         self._logging: bool = logging
         self._sensor_state = [False, False]
         self.line_sensors = None                               # Will be a LineSensors instance when active
@@ -333,7 +333,7 @@ class LineFollowMgr:
 
     def start(self) -> bool:
         """Enter line follower from the main menu."""
-        app = self.app
+        app = self._app
 
         if self.line_sensors is None:
             self.line_sensors = create_line_sensors(app.hexsense_config, app.num_line_sensors)
@@ -380,7 +380,7 @@ class LineFollowMgr:
 
     def update(self, delta) -> bool:
         """Handle Line Follower UI.  Returns True if handled."""
-        app = self.app
+        app = self._app
     
         self.sample_time += delta
         if app.button_states.get(BUTTON_TYPES["CANCEL"]):
@@ -420,7 +420,7 @@ class LineFollowMgr:
     def background_update(self, delta) -> tuple[int, int] | None:  # pylint: disable=unused-argument
         """Line follower motor control.
         Returns motor output tuple, or None if not active."""
-        #app = self.app
+        #app = self._app
         #output = (0, 0)
         #s = self.line_sensors.values()
         #if self.follower_mode == _FOLLOWER_MODE_DIFFERENTIAL:
@@ -516,7 +516,7 @@ class LineFollowMgr:
 
     def draw(self, ctx) -> bool:
         """Render Line Follower UI.  Returns True if handled."""
-        app = self.app
+        app = self._app
  
         ctx.save()
         ctx.rgb(1, 1, 0).move_to(0, -1 * label_font_size).text(f"TH:{self.line_threshold}")

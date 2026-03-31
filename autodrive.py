@@ -71,7 +71,7 @@ class AutoDriveMgr:
     """
 
     def __init__(self, app, logging: bool = False):
-        self.app = app
+        self._app = app
         self._logging: bool = logging
         self._mc = app.motor_controller   # may be None
         self._mc_task = None              # async task for MC turn/drive
@@ -116,7 +116,7 @@ class AutoDriveMgr:
     @property
     def drive_mode(self) -> int:
         """Helper to read the current drive mode setting."""
-        return self.app.settings['drive_mode'].v
+        return self._app.settings['drive_mode'].v
 
 
     # ------------------------------------------------------------------
@@ -125,7 +125,7 @@ class AutoDriveMgr:
 
     def start(self) -> bool:
         """Enter the Auto Drive flow from the main menu."""
-        app = self.app
+        app = self._app
         sensor_test = app.sensor_test_mgr
 
         # Ensure we have a sensor before enabling auto-drive / motors
@@ -184,10 +184,10 @@ class AutoDriveMgr:
         if not self._active:
             return
         # CANCEL always exits cleanly
-        if self.app.button_states.get(BUTTON_TYPES["CANCEL"]):
-            self.app.button_states.clear()
+        if self._app.button_states.get(BUTTON_TYPES["CANCEL"]):
+            self._app.button_states.clear()
             self.stop()
-            self.app.return_to_menu()
+            self._app.return_to_menu()
             return
 
         # Sub-state logic runs first so that distance cleared on a state
@@ -231,7 +231,7 @@ class AutoDriveMgr:
         lines   = ["Auto Drive", sub_label, f"Dist:{d_str} Lux:{lx_str}",
                    f"Gyro:{g_str} {deg_str}", self.status]
         colours = [(1,1,1), (0,1,1), (1,1,0), (0,0.9,0.4), (0.8,0.8,0.8)]
-        self.app.draw_message(ctx, lines, colours, label_font_size)
+        self._app.draw_message(ctx, lines, colours, label_font_size)
 
         # Polar bar chart of scan (angle -> distance)
         if self.scan_data:
@@ -271,9 +271,9 @@ class AutoDriveMgr:
         self._active = False
         self.motor_output = (0, 0)
         self.target_output = (0, 0)
-        if self.app.hexdrive_app is not None:
-            self.app.hexdrive_app.set_motors((0, 0))
-            self.app.hexdrive_app.set_power(False)
+        if self._app.hexdrive_app is not None:
+            self._app.hexdrive_app.set_motors((0, 0))
+            self._app.hexdrive_app.set_power(False)
         self.status = ""
 
     # ------------------------------------------------------------------
@@ -296,7 +296,7 @@ class AutoDriveMgr:
 
     def _read_sensor(self):
         """Read the current sensor and store numeric distance and lux."""
-        sm = self.app.sensor_test_mgr.sensor_mgr
+        sm = self._app.sensor_test_mgr.sensor_mgr
         if sm is None or not sm.is_open:
             return
         try:
@@ -324,10 +324,10 @@ class AutoDriveMgr:
         return current
 
     def _apply_output_ramp(self, delta: int):
-        accel = max(1, int(self.app.settings['acceleration'].v))
+        accel = max(1, int(self._app.settings['acceleration'].v))
         ticks = max(1, delta // _TICK_MS)
         step = accel * ticks
-        max_power = int(self.app.settings['max_power'].v)
+        max_power = int(self._app.settings['max_power'].v)
 
         target_l = max(-max_power, min(max_power, int(self.target_output[0])))
         target_r = max(-max_power, min(max_power, int(self.target_output[1])))
@@ -346,7 +346,7 @@ class AutoDriveMgr:
         self.target_deg = 0.0
         self.distance = None
         self.forward_hold_ms = _AUTO_MIN_FWD_MS
-        speed = max(self.app.settings['auto_speed'].v, _AUTO_CRUISE_MIN_PWM)
+        speed = max(self._app.settings['auto_speed'].v, _AUTO_CRUISE_MIN_PWM)
         self.target_output = (speed, speed)
         self.status = "Fwd"
 
@@ -360,14 +360,14 @@ class AutoDriveMgr:
             self.forward_hold_ms = max(0, self.forward_hold_ms - delta)
 
         obstacle_detected = (self.distance is not None and
-                             self.distance < self.app.settings['auto_obstacle'].v)
+                             self.distance < self._app.settings['auto_obstacle'].v)
         if obstacle_detected and self.forward_hold_ms == 0:
             if self.distance is not None and self.distance < _AUTO_BACKUP_MM:
                 self._enter_reverse()
             else:
                 self._enter_scan()
         else:
-            speed = max(self.app.settings['auto_speed'].v, _AUTO_CRUISE_MIN_PWM)
+            speed = max(self._app.settings['auto_speed'].v, _AUTO_CRUISE_MIN_PWM)
             self.target_output = (speed, speed)
             d = f"{self.distance}mm" if self.distance is not None else "---"
             self.status = f"Fwd {d}"
@@ -389,7 +389,7 @@ class AutoDriveMgr:
             if self._logging:
                 print("A:MC backward_mm(%d)" % backup_mm)
         else:
-            speed = max(self.app.settings['auto_speed'].v, _AUTO_CRUISE_MIN_PWM)
+            speed = max(self._app.settings['auto_speed'].v, _AUTO_CRUISE_MIN_PWM)
             back_speed = max(1, int(speed * _AUTO_BACKUP_SPEED_FRAC))
             self.target_output = (-back_speed, -back_speed)
             self.status = "Reverse " + str(self.distance) + "mm"
@@ -408,7 +408,7 @@ class AutoDriveMgr:
                 self.status = "Reverse %.0fmm (MC)" % (dist_m * 1000)
             return
         # Legacy time-based fallback
-        speed = max(self.app.settings['auto_speed'].v, _AUTO_CRUISE_MIN_PWM)
+        speed = max(self._app.settings['auto_speed'].v, _AUTO_CRUISE_MIN_PWM)
         back_speed = max(1, int(speed * _AUTO_BACKUP_SPEED_FRAC))
         self.target_output = (-back_speed, -back_speed)
         self.reverse_timer += delta
@@ -424,7 +424,7 @@ class AutoDriveMgr:
         self.scan_timer = 0
         self.imu_deg = 0.0
         self.sub_state = _AUTO_SUB_SCAN
-        speed = max(self.app.settings['auto_speed'].v, _AUTO_CRUISE_MIN_PWM)
+        speed = max(self._app.settings['auto_speed'].v, _AUTO_CRUISE_MIN_PWM)
         if _AUTO_SCAN_FORWARD_ONLY:
             self.target_output = (speed, 0)
         else:
@@ -444,7 +444,7 @@ class AutoDriveMgr:
         sensor tick.  At completion the exact measured angle of the clearest reading is
         used directly as the turn target - no slot arithmetic needed.
         """
-        speed = max(self.app.settings['auto_speed'].v, _AUTO_CRUISE_MIN_PWM)
+        speed = max(self._app.settings['auto_speed'].v, _AUTO_CRUISE_MIN_PWM)
 
         if _AUTO_SCAN_FORWARD_ONLY:
             self.target_output = (speed, 0)
@@ -538,7 +538,7 @@ class AutoDriveMgr:
                 self.status = "Turn %.0f/%.0fdeg (MC)" % (turned, self.target_deg)
             return
         # Legacy time/gyro-based turn
-        speed = max(self.app.settings['auto_speed'].v, _AUTO_CRUISE_MIN_PWM)
+        speed = max(self._app.settings['auto_speed'].v, _AUTO_CRUISE_MIN_PWM)
         if _AUTO_SCAN_FORWARD_ONLY:
             self.target_output = (speed, 0) if self.turn_dir > 0 else (0, speed)
         else:
@@ -572,7 +572,7 @@ class AutoDriveMgr:
         scan slot, confirming it is actually pointed in the right direction.
         A timeout fallback drives on anyway if the reading never converges.
         """
-        speed = max(self.app.settings['auto_speed'].v, _AUTO_CRUISE_MIN_PWM)
+        speed = max(self._app.settings['auto_speed'].v, _AUTO_CRUISE_MIN_PWM)
         back_speed = max(1, int(speed * _AUTO_TURN_BACK_SPEED_FRAC))
         back_dir = -self.turn_dir  # opposite of the initial time-based turn
 

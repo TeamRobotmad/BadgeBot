@@ -46,7 +46,7 @@ class AutotuneMgr:
     """
 
     def __init__(self, app, follower, logging: bool = False):
-        self.app = app
+        self._app = app
         self.follower = follower
         self.autotuner = None
         self._logging: bool = logging
@@ -78,7 +78,7 @@ class AutotuneMgr:
 
     def start(self) -> bool:
         """Enter PID Auto Tune mode from the main menu."""
-        app = self.app
+        app = self._app
         if self.follower.line_sensors is None:
             self.follower.line_sensors = create_line_sensors(app.hexsense_config, app.num_line_sensors)
 
@@ -113,7 +113,7 @@ class AutotuneMgr:
 
         Called when the countdown finishes (after the user pressed CONFIRM).
         """
-        app = self.app
+        app = self._app
         relay_amp = app.settings['max_power'].v // 4
         base_power = -app.settings['max_power'].v // 2
         self.autotuner = PIDAutoTuner(
@@ -135,7 +135,7 @@ class AutotuneMgr:
 
     def update(self, delta) -> bool:        # pylint: disable=unused-argument
         """Handle Autotune UI.  Returns True if handled."""
-        app = self.app
+        app = self._app
         self.follower.sample_time += delta
 
         if app.button_states.get(BUTTON_TYPES["CANCEL"]):
@@ -191,7 +191,7 @@ class AutotuneMgr:
 
 
     def autotune_complete(self):
-        app = self.app
+        app = self._app
         app.refresh = True
         if self.autotuner.is_complete:
             gains = self.autotuner.get_gains()
@@ -213,7 +213,7 @@ class AutotuneMgr:
 
     def draw(self, ctx) -> bool:
         """Render PID Auto Tune UI.  Returns True if handled."""
-        app = self.app
+        app = self._app
 
         ctx.save()
         if self.autotuner is None:

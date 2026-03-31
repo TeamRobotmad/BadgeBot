@@ -141,7 +141,7 @@ class MotorMovesMgr:
     """
 
     def __init__(self, app, logging: bool = False):
-        self.app = app
+        self._app = app
         self._logging: bool = logging
         self._sub_state = _SUB_HELP
         self._prev_state = _SUB_HELP
@@ -169,7 +169,7 @@ class MotorMovesMgr:
 
     @property
     def drive_mode(self):
-        return self.app.settings['drive_mode'].v if 'drive_mode' in self.app.settings else DRIVE_MODE_DISTANCE
+        return self._app.settings['drive_mode'].v if 'drive_mode' in self._app.settings else DRIVE_MODE_DISTANCE
 
 
     # ------------------------------------------------------------------
@@ -178,7 +178,7 @@ class MotorMovesMgr:
 
     def start(self) -> bool:
         """Enter the Motor Moves flow from the main menu."""
-        app = self.app
+        app = self._app
         if self._logging:
             print("Entered Motor Moves mode")
         app.set_menu(None)
@@ -195,7 +195,7 @@ class MotorMovesMgr:
     def begin_moves(self):
         """Build the power plan and start running (called after countdown).
         When a MotorController is available, uses it for IMU-aided execution."""
-        app = self.app
+        app = self._app
         if app.motor_controller is not None and self.drive_mode == DRIVE_MODE_DISTANCE:
             # Use the MotorController for gyro-aided execution
             self._mc_task = asyncio.get_event_loop().create_task(
@@ -223,12 +223,12 @@ class MotorMovesMgr:
         Runs as an asyncio task spawned from begin_moves; the background_update
         loop monitors the task and transitions to _SUB_DONE when it completes."""
         try:
-            await self.app.motor_controller.run_instructions(self.instructions)
+            await self._app.motor_controller.run_instructions(self.instructions)
         except asyncio.CancelledError:
-            self.app.motor_controller.stop()
+            self._app.motor_controller.stop()
         except Exception as e:      # pylint: disable=broad-exception-caught
             print(f"MotorController run error: {e}")
-            self.app.motor_controller.stop()
+            self._app.motor_controller.stop()
 
 
     # ------------------------------------------------------------------
@@ -267,7 +267,7 @@ class MotorMovesMgr:
             # we just check whether it has finished.
             if self._mc_task.done():
                 self._sub_state = _SUB_DONE
-                self.app.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
+                self._app.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
                 self._mc_task = None
             return None  # MotorController manages motors directly
         else:
@@ -275,7 +275,7 @@ class MotorMovesMgr:
             output = self._get_current_power_level(delta)
             if output is None and self._sub_state == _SUB_RUN:
                 self._sub_state = _SUB_DONE
-                self.app.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
+                self._app.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
             return output
 
 
@@ -284,7 +284,7 @@ class MotorMovesMgr:
     # ------------------------------------------------------------------
 
     def _update_state_help(self, delta: int) -> None:
-        app = self.app
+        app = self._app
         if app.button_states.get(BUTTON_TYPES["CANCEL"]):
             app.button_states.clear()
             app.return_to_menu()
@@ -301,7 +301,7 @@ class MotorMovesMgr:
 
 
     def _update_state_receive_instr(self, delta: int) -> None:       
-        app = self.app
+        app = self._app
 
         if app.button_states.get(BUTTON_TYPES["CONFIRM"]):
             app.long_press_delta += delta
@@ -348,7 +348,7 @@ class MotorMovesMgr:
 
 
     def _update_state_run(self, delta: int) -> None:        # pylint: disable=unused-argument
-        app = self.app
+        app = self._app
         app.clear_leds()
         # Run is primarily managed in the background update - but we allow CANCEL here as well to stop immediately
         if app.button_states.get(BUTTON_TYPES["CANCEL"]):
@@ -359,7 +359,7 @@ class MotorMovesMgr:
 
 
     def _update_state_done(self, delta: int) -> None:        # pylint: disable=unused-argument
-        app = self.app
+        app = self._app
         if app.button_states.get(BUTTON_TYPES["CANCEL"]):
             app.button_states.clear()
             if app.hexdrive_app is not None:
@@ -380,7 +380,7 @@ class MotorMovesMgr:
     # ------------------------------------------------------------------
 
     def _handle_instruction_press(self, press_type):
-        app = self.app
+        app = self._app
         if app.last_press == press_type:
             self.current_instruction.inc()
         else:
@@ -391,7 +391,7 @@ class MotorMovesMgr:
 
     def finalize_instruction(self):
         """Finalize the current instruction (if any) and add it to the list."""
-        app = self.app
+        app = self._app
         if self.current_instruction is not None:
             self.current_instruction.make_power_plan(app.settings)
             self.instructions.append(self.current_instruction)
@@ -402,7 +402,7 @@ class MotorMovesMgr:
 
     def reset_robot(self):
         """Reset sequence state and return to HELP."""
-        app = self.app
+        app = self._app
         if self._mc_task is not None:
             self._mc_task.cancel()
             self._mc_task = None
@@ -423,7 +423,7 @@ class MotorMovesMgr:
     def set_direction_leds(self, direction: Button):
         """Utility function to set the LEDs to indicate a direction (up, down, left, right) based on the button input.
         Delegates to the app's front_face-aware LED method so LEDs rotate with the configured forward direction."""
-        self.app.set_direction_leds(direction)
+        self._app.set_direction_leds(direction)
 
 
     def _get_current_power_level(self, delta: int) -> tuple[int, int] | None:
@@ -450,7 +450,7 @@ class MotorMovesMgr:
 
     def draw(self, ctx) -> bool:
         """Render Motor Moves UI states.  Returns True if handled."""
-        app = self.app
+        app = self._app
         if self._sub_state == _SUB_HELP:
             app.draw_message(ctx, ["BadgeBot", "To program:", "Press C", "When finished:", "Long press C"], [(1, 1, 0), (1, 1, 1), (1, 1, 1), (1, 1, 1), (1, 1, 1)], label_font_size)
         elif self._sub_state == _SUB_RECEIVE_INSTR:
@@ -466,7 +466,7 @@ class MotorMovesMgr:
 
 
     def _draw_receive_instr(self, ctx):
-        app = self.app
+        app = self._app
         for i_num, instr in enumerate(["START"] + self.instructions + [self.current_instruction, "END"]):
             colour = (1, 1, 1)
             if instr is not None:

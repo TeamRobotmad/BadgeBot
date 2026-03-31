@@ -111,11 +111,11 @@ Main app class. Key methods:
 | `background_update(delta)` | Keep-alive and periodic tasks |
 | `_apply_fwd_dir(output)` | Negates all motor outputs when `fwd_dir=1`; called at every `set_motors` callsite so the setting applies to both programmed moves and auto drive |
 | `_set_direction_leds(direction)` | Lights the two LEDs corresponding to the given direction, rotated by `front_face` |
-| `scan_ports()` | Scan all 6 hexpansion ports for HexDrives |
+| `_scan_ports()` | Scan all 6 hexpansion ports for HexDrives |
 | `check_port_for_hexdrive(port)` | Check if a specific port has a HexDrive |
-| `update_app_in_eeprom(port, addr)` | Write HexDrive firmware to EEPROM |
-| `prepare_eeprom(port, addr)` | Initialize blank EEPROM as HexDrive |
-| `erase_eeprom(port, addr)` | Erase EEPROM back to 0xFF |
+| `_update_app_in_eeprom(port, addr)` | Write HexDrive firmware to EEPROM |
+| `_prepare_eeprom(port, addr)` | Initialize blank EEPROM as HexDrive |
+| `_erase_eeprom(port, addr)` | Erase EEPROM back to 0xFF |
 | `find_hexdrive_app(port)` | Find the running HexDriveApp instance for a port |
 | `set_menu(menu_name)` | Switch between "main" and "settings" menus |
 | `reset_robot()` | Clear instructions and reset motor state |
