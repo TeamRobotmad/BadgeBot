@@ -20,15 +20,13 @@ from tildagonos import tildagonos
 import app
 
 from .utils import draw_logo_animated, parse_version
+from. hexdrive import VERSION as HEXDRIVE_APP_VERSION
 
 # If you could use hard=True in setting up a Pin IRQ hander, which you can't as of BadgeOS V1.10, then it is recommended to
 # allocate the emergency exception buffer to prevent crashes due to OSError: Out of memory when an interrupt occurs and
 # there is no memory available to handle the exception.
 #import micropython
 #micropython.alloc_emergency_exception_buf(100)
-
-
-CURRENT_HEXDRIVE_APP_VERSION = 7 # HEXDRIVE.PY Integer Version Number - checked against the EEPROM app.py version to determine if it needs updating
 
 
 APP_VERSION = "1.5" # BadgeBot App Version Number
@@ -287,12 +285,12 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
 
         # Hexpansion related
-        self.HEXPANSION_TYPES = [HexpansionType(0xCBCB, "HexDrive", motors=2, servos=4, steppers=1, app_mpy_name="hexdrive.mpy", app_mpy_version=CURRENT_HEXDRIVE_APP_VERSION, app_name="HexDriveApp"), 
-                                 HexpansionType(0xCBCA, "HexDrive", motors=2,           sub_type="2 Motor", app_mpy_name="hexdrive.mpy", app_mpy_version=CURRENT_HEXDRIVE_APP_VERSION, app_name="HexDriveApp"), 
-                                 HexpansionType(0xCBCC, "HexDrive", servos=4,           sub_type="4 Servo", app_mpy_name="hexdrive.mpy", app_mpy_version=CURRENT_HEXDRIVE_APP_VERSION, app_name="HexDriveApp"), 
-                                 HexpansionType(0xCBCD, "HexDrive", motors=1, servos=2, sub_type="1 Mot 2 Srvo", app_mpy_name="hexdrive.mpy", app_mpy_version=CURRENT_HEXDRIVE_APP_VERSION, app_name="HexDriveApp"),
-                                 HexpansionType(0xCBCE, "HexDrive", steppers=1,         sub_type="Stepper", app_mpy_name="hexdrive.mpy", app_mpy_version=CURRENT_HEXDRIVE_APP_VERSION, app_name="HexDriveApp"), 
-                                 HexpansionType(0xCBCF, "HexSense", sensors=2,          sub_type="2 Line Sensors")] # , app_mpy_name="hexsense.mpy", app_mpy_version=CURRENT_HEXSENSE_APP_VERSION, app_name="HexSenseApp")]  
+        self.HEXPANSION_TYPES = [HexpansionType(0xCBCB, "HexDrive", motors=2, servos=4, steppers=1, app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp"), 
+                                 HexpansionType(0xCBCA, "HexDrive", motors=2,           sub_type="2 Motor", app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp"), 
+                                 HexpansionType(0xCBCC, "HexDrive", servos=4,           sub_type="4 Servo", app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp"), 
+                                 HexpansionType(0xCBCD, "HexDrive", motors=1, servos=2, sub_type="1 Mot 2 Srvo", app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp"),
+                                 HexpansionType(0xCBCE, "HexDrive", steppers=1,         sub_type="Stepper", app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp"), 
+                                 HexpansionType(0xCBCF, "HexSense", sensors=2,          sub_type="2 Line Sensors")] # , app_mpy_name="hexsense.mpy", app_mpy_version=HEXSENSE_APP_VERSION, app_name="HexSenseApp")]  
         self.HEXDRIVE_HEXPANSION_INDEX = 0  # Index in the HEXPANSION_TYPES list which corresponds to the basic HexDrive type
         self.HEXSENSE_HEXPANSION_INDEX = 5  # Index in the HEXPANSION_TYPES list which corresponds to the basic HexSense type 
         self.hexpansion_update_required: bool = False # flag from async to main loop
@@ -302,8 +300,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         
         self.hexsense_config  = None            # Store the HexpansionConfig of the HexSense that is providing the line sensors
         self.hexsense_app = None
-
-        self.time_since_last_update: int = 0
 
         # High-level motor controller (created when HexDrive is found)
         self.motor_controller = None

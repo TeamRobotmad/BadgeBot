@@ -103,6 +103,7 @@ class Stepper:
     def max_pos(self) -> int:
         return self._max_pos
 
+
     @max_pos.setter
     def max_pos(self, mp: int):
         """ Set the maximum position for the stepper (in full steps)."""
@@ -113,6 +114,7 @@ class Stepper:
     def step_size(self) -> int:
         return self._step_size
     
+
     @step_size.setter
     def step_size(self, sz: int):
         """ Set the step size (microstepping level) for the stepper.  Valid values are 1 (full step) or 2 (half step)."""
@@ -126,6 +128,7 @@ class Stepper:
     @property
     def speed(self) -> int:
         return self._steps_per_sec
+
 
     @speed.setter
     def speed(self, sps: int):
@@ -145,6 +148,7 @@ class Stepper:
     def speed_rps(self) -> float:
         return self._steps_per_sec / self._steps_per_rev
     
+
     @speed_rps.setter
     def speed_rps(self, rps: float):
         self.speed = int(rps * self._steps_per_rev)
@@ -153,6 +157,7 @@ class Stepper:
     @property
     def target(self) -> int:
         return self._target_pos // 2
+
 
     @target.setter
     def target(self, t: int):
@@ -165,10 +170,10 @@ class Stepper:
         self._update()
 
 
-
     @property
     def target_deg(self) -> float:
         return self._target_pos * 180.0 / self._steps_per_rev
+
 
     @target_deg.setter
     def target_deg(self, deg: float):
@@ -178,6 +183,7 @@ class Stepper:
     @property
     def target_rad(self) -> float:
         return self._target_pos * pi / self._steps_per_rev
+
 
     @target_rad.setter
     def target_rad(self, rad: float):
@@ -189,6 +195,7 @@ class Stepper:
         """ Get the current position of the stepper in full steps.  Note that the internal position is tracked in half-steps to allow for microstepping, so the returned value is the internal position divided by 2."""
         return (self._pos // 2)
 
+
     @pos.setter
     def pos(self, p: int):
         self._pos = 2 * int(p)
@@ -198,6 +205,7 @@ class Stepper:
     @property
     def pos_deg(self) -> float:
         return self._pos * 180.0 / self._steps_per_rev
+
 
     @property
     def pos_rad(self) -> float:
@@ -301,8 +309,6 @@ class Stepper:
                 self._timer_mode = self._free_run_mode
             except Exception as e:  # pylint: disable=broad-except
                 print(f"update_timer failed:{e}")
-        elif freq == 0:
-            print("Timer: 0Hz")
 
 
     def stop(self):
@@ -318,10 +324,11 @@ class Stepper:
     def enable(self) -> bool:
         '''Return True if the stepper is currently enabled (i.e. not in a power-saving state).'''
         return self._enabled
-    
+
+
     @enable.setter
     def enable(self, e: bool = True):
-        '''Enable or disable the stepper motor coils & HexDrive power.'''
+        '''Enable or disable the stepper motor coils.'''
         self._enabled = e
         try:
             if e:
@@ -331,7 +338,6 @@ class Stepper:
             else:
                 self._update_timer(0)
                 self._hexdrive_app.motor_release()
-            self._hexdrive_app.set_power(e)
         except Exception as ex:      # pylint: disable=broad-except
             print(f"enable failed {ex}")
 
@@ -356,7 +362,8 @@ class StepperTestMgr:
         self.stepper_mode = StepperMode()
         self.time_since_last_input: int = 0
         self.timeout_period: int = 120000                     # ms (2 minutes - without any user input)       
-        self.keep_alive_period: int = 500                     # ms (half the value used in hexdrive.py)  
+        self.keep_alive_period: int = 500                     # ms (half the value used in hexdrive.py)
+        self._time_since_last_update: int = 0
         if self._logging:
             print("StepperTestMgr initialised")
 
@@ -381,6 +388,7 @@ class StepperTestMgr:
         """Enter stepper test from the main menu."""
         app = self._app
         if self.stepper is None:
+            # Find the first available timer for the stepper - we need a timer to do the stepping in the background while we wait for user input.
             for i in range(4):
                 try:
                     self.stepper = Stepper(app,
@@ -394,15 +402,19 @@ class StepperTestMgr:
         if self.stepper is None:
             app.notification = Notification("No Free Timers")
             return False
-        app.set_menu(None)
-        app.button_states.clear()
-        app.refresh = True
-        app.auto_repeat_clear()
-        self.stepper.enable = True
-        self.time_since_last_input = 0
-        if self._logging:
-            print("Entered Stepper Test mode")
-        return True
+        if app.hexdrive_app is not None:
+            if app.hexdrive_app.initialise() and app.hexdrive_app.set_power(True):   
+                app.set_menu(None)
+                app.button_states.clear()
+                app.refresh = True
+                app.auto_repeat_clear()
+                self.stepper.enable = True
+                self.time_since_last_input = 0
+            
+                if self._logging:
+                    print("Entered Stepper Test mode")
+                return True
+        return False
 
 
     @property
@@ -415,45 +427,38 @@ class StepperTestMgr:
     # Per-tick update
     # ------------------------------------------------------------------
 
+    def _mode_position(self):
+        if self.stepper_mode != StepperMode.POSITION:
+            self.stepper_mode.mode = StepperMode.POSITION
+            self.stepper.speed = _STEPPER_DEFAULT_SPEED
+            self.stepper.enable = True
+            self.stepper.track_target()
+
+
     def update(self, delta) -> bool:
         """Handle Stepper UI updates.  Returns True if this module handled the state."""
         app = self._app
-
         if app.button_states.get(BUTTON_TYPES["RIGHT"]):
             if app.auto_repeat_check(delta, True):
                 if self.stepper_mode == StepperMode.SPEED:
-                    speed = self.stepper.speed
-                    speed = inc_value(speed, app.auto_repeat_level + 1)
+                    speed = inc_value(self.stepper.speed, app.auto_repeat_level + 1)
                     if _STEPPER_MAX_SPEED < speed:
                         speed = _STEPPER_MAX_SPEED
                     self.stepper.speed = speed
-                else:
-                    if self.stepper_mode != StepperMode.POSITION:
-                        self.stepper_mode.mode = StepperMode.POSITION
-                        self.stepper.speed = _STEPPER_DEFAULT_SPEED
-                        self.stepper.enable = True
-                        self.stepper.track_target()
-                    pos = self.stepper.pos
-                    pos = inc_value(pos, app.auto_repeat_level + 1)
-                    self.stepper.target = pos
+                else:   # Off or already in Position mode - increase target position
+                    self._mode_position()
+                    self.stepper.target = inc_value(self.stepper.pos, app.auto_repeat_level + 1)
                 app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["LEFT"]):
             if app.auto_repeat_check(delta, True):
                 if self.stepper_mode == StepperMode.SPEED:
-                    speed = self.stepper.speed
-                    speed = dec_value(speed, app.auto_repeat_level + 1)
+                    speed = dec_value(self.stepper.speed, app.auto_repeat_level + 1)
                     if -_STEPPER_MAX_SPEED > speed:
                         speed = -_STEPPER_MAX_SPEED
                     self.stepper.speed = speed
-                else:
-                    if self.stepper_mode != StepperMode.POSITION:
-                        self.stepper_mode.mode = StepperMode.POSITION
-                        self.stepper.speed = _STEPPER_DEFAULT_SPEED
-                        self.stepper.enable = True
-                        self.stepper.track_target()
-                    pos = self.stepper.pos
-                    pos = dec_value(pos, app.auto_repeat_level + 1)
-                    self.stepper.target = pos
+                else:   # Off or already in Position mode - decrease target position
+                    self._mode_position()
+                    self.stepper.target = dec_value(self.stepper.pos, app.auto_repeat_level + 1)
                 app.refresh = True
         else:
             app.auto_repeat_clear()
@@ -498,10 +503,12 @@ class StepperTestMgr:
                 print("Stepper:Timeout")
             elif self.stepper_mode == StepperMode.SPEED:
                 app.refresh = True
-        app.time_since_last_update += delta
-        if app.time_since_last_update > self.keep_alive_period:
-            self.stepper.step()
-            app.time_since_last_update = 0
+        if self.stepper_mode != StepperMode.OFF:
+            # Keep Alive for HexDrive if we are stationary.
+            self._time_since_last_update += delta
+            if self._time_since_last_update > self.keep_alive_period:
+                self.stepper.step()
+                self._time_since_last_update = 0
         return True
 
 

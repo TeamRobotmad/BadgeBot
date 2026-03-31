@@ -21,7 +21,7 @@ accelerometer distance estimation).  The app runs directly on an ESP32-S3 badge
 - License: LGPL-3.0-only
 - App version: `APP_VERSION` in `app.py` (major.minor format, e.g. "1.3") – this is the
   definitive version.  `tildagon.toml` `version` must always match `APP_VERSION`.
-- HexDrive firmware version: `HEXDRIVE_APP_VERSION` in `hexdrive.py` – a separate integer
+- HexDrive firmware version: `VERSION` in `hexdrive.py` – a separate integer
   versioning the HexDrive public interface, independent of the app version.
 
 ---
@@ -376,7 +376,7 @@ they are absent.
 
 `APP_VERSION` in `app.py` is the definitive version (major.minor format, e.g. "1.3").
 The release process must update `tildagon.toml` `version` to match `APP_VERSION`.
-`HEXDRIVE_APP_VERSION` in `hexdrive.py` is a separate integer versioning the HexDrive
+`VERSION` in `hexdrive.py` is a separate integer versioning the HexDrive
 firmware public interface and is incremented independently when the HexDrive API changes.
 
 ---

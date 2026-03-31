@@ -9,7 +9,7 @@ The app lives at `sim/apps/BadgeBot/` inside the `badge-2024-software` repositor
 - **Author**: Team Robotmad
 - **License**: LGPL-3.0-only
 - **App version**: defined as `_APP_VERSION` in `app.py` (currently `"1.5"`)
-- **HexDrive firmware version**: `CURRENT_APP_VERSION` / `APP_VERSION` in `hexdrive.py` (integer, currently `6`)
+- **HexDrive firmware version**: `VERSION` in `hexdrive.py` (integer, currently `6`)
 - **Repository**: <https://github.com/TeamRobotmad/BadgeBot>
 
 ---
@@ -336,14 +336,14 @@ The app depends on these Tildagon/BadgeOS APIs:
 cd sim/apps/BadgeBot
 pytest tests/
 ```
-Smoke tests verify imports, `__app_export__` consistency, and that `CURRENT_APP_VERSION` in `app.py` matches `APP_VERSION` in `hexdrive.py`.
+Smoke tests verify imports, `__app_export__` consistency, and that `HEXDRIVE_APP_VERSION` in `app.py` matches `VERSION` in `hexdrive.py`.
 
 ### HexDrive Version Bump (MANDATORY when hexdrive.py changes)
 
 Whenever `hexdrive.py` is modified, you **must** perform all three steps:
 
-1. **Bump `APP_VERSION`** in `hexdrive.py` (integer at the top of the file).
-2. **Bump `CURRENT_APP_VERSION`** in `app.py` (and `linefollower.py` if present) to the **same** integer. This is how the app detects that the EEPROM firmware is out-of-date and prompts the user to reprogram.
+1. **Bump `VERSION`** in `hexdrive.py` (integer at the top of the file).
+2. **Bump `HEXDRIVE_APP_VERSION`** in `app.py` (and `linefollower.py` if present) to the **same** integer. This is how the app detects that the EEPROM firmware is out-of-date and prompts the user to reprogram.
 3. **Rebuild the `.mpy`** by running from the BadgeBot directory:
    ```bash
    mpy-cross -v hexdrive.py

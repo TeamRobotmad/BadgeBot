@@ -85,6 +85,7 @@ class ServoTestMgr:
         self.time_since_last_input: int = 0
         self.timeout_period: int = 300000                     # ms (5 minutes - without any user input)       
         self.keep_alive_period: int = 500                     # ms (half the value used in hexdrive.py)  
+        self._time_since_last_update: int = 0
         if self._logging:
             print("ServoTestMgr initialised")
             
@@ -253,9 +254,9 @@ class ServoTestMgr:
                 app.return_to_menu()
                 app.notification = Notification("  Servo:\n Timeout")
 
-        app.time_since_last_update += delta
-        if app.time_since_last_update > self.keep_alive_period:
-            app.time_since_last_update = 0
+        self._time_since_last_update += delta
+        if self._time_since_last_update > self.keep_alive_period:
+            self._time_since_last_update = 0
             app.refresh = True
 
         for i in range(self.available_servo_count):

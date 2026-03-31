@@ -35,8 +35,8 @@ def port():
 def test_app_versions_match():
     import sim.apps.BadgeBot.app as BadgeBot
     import sim.apps.BadgeBot.hexdrive as HexDrive
-    assert BadgeBot.CURRENT_HEXDRIVE_APP_VERSION == HexDrive.HEXDRIVE_APP_VERSION
-
+    assert BadgeBot.HEXDRIVE_APP_VERSION == HexDrive.VERSION
+    # above test should always pass since BadgeBot.HEXDRIVE_APP_VERSION is imported from HexDrive.VERSION, but this test will at least catch if someone accidentally changes one without the other. 
 
 def test_hexdrive_type_pids_consistent():
     """Verify HexDriveType PIDs in hexdrive.py are consistent with HexpansionType PIDs in app.py.

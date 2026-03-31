@@ -12,7 +12,7 @@ from system.scheduler.events import RequestStopAppEvent
 import app
 
 # HexDrive.py App Version - used to check if upgrade is required
-HEXDRIVE_APP_VERSION = 7
+VERSION = 7
 
 # HexDrive Hexpansion constants
 # Hardware defintions:
@@ -84,7 +84,7 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
         self._motor_output  = [0] * 2
         self._stepper = False
         if config is None:
-            print("H:No Config!")
+            print("H:No Config")
             return
         # LS Pins
         self._power_detect  = self.config.ls_pin[_DETECT_PIN]
@@ -95,7 +95,7 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
         # What version of BadgeOS are we running on?
         try:
             ver = self._parse_version(ota.get_version())
-            print(f"H:S/W {ver}")
+            #print(f"H:S/W {ver}")
             # e.g. v1.9.0-beta.1
             if ver >= [1, 9, 0]:
                 # we need v1.9.0+ to be able to read the EEPROM with 16-bit addressing, so if we are running on an older version then we cannot continue
@@ -107,13 +107,14 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
             print(f"H:Ver check failed {e}")
         self.initialise()
 
+
     def initialise(self) -> bool:
         """Initialise the app - return True if successful, False if failed."""
         self._pwm_setup = False
         if self.config is None:
             return False
         # report app starting and which port it is running on
-        print(f"H:HexDrive V{HEXDRIVE_APP_VERSION} by RobotMad on port {self.config.port}")
+        print(f"H:HexDrive V{VERSION} by RobotMad on port {self.config.port}")
         # Initialise HS Pins
         for _, hs_pin in enumerate(self.config.pin):
             # Set HexDrive Hexpansion HS pins to low level outputs
@@ -146,7 +147,6 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
             hs_pin.init(mode=Pin.OUT)
             hs_pin.value(0)                  
         return True
-
 
 
     async def _handle_stop_app(self, event):
@@ -189,7 +189,7 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
 
     def get_version(self) -> int:
         """ Get the version of the app - this is used to determine if an upgrade is required. """
-        return HEXDRIVE_APP_VERSION
+        return VERSION
 
 
     def get_status(self) -> bool:
@@ -197,14 +197,9 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
         return (self._pwm_setup or self._stepper)
 
 
-    def set_logging(self, state):
+    def set_logging(self, state: bool):
         """ Set the logging state - True to enable logging, False to disable logging. """
         self._logging = state
-
-
-    def get_logging(self) -> bool:
-        """ Get the current logging state - True if logging is enabled, False if logging is disabled. """
-        return self._logging
 
 
     def set_power(self, state: bool) -> bool:
@@ -278,7 +273,6 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
             f = 0
         return f
     
-
 
     def set_servoposition(self, channel: int | None = None, position: int | None = None) -> bool:
         """ Set the position for a specific servo output, or all servo outputs if channel is None. Returns True if successful, False if failed.
@@ -365,7 +359,7 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
             You can use this to trim the centre position of the servo. """
         if not self._pwm_setup:
             return False
-        if channel is not None and (channel < 0 or channel >= 4):
+        if channel is not None and (channel < 0 or channel >= self._hexdrive_type.servos):
             return False
         if centre < (_SERVO_CENTRE - _SERVO_MAX_TRIM ) or centre > (_SERVO_CENTRE + _SERVO_MAX_TRIM): 
             return False
@@ -382,7 +376,7 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
             The outputs are signed values in a tuple from -65535 to 65535 which are scaled to the PWM duty cycle range of 0-65535.
             A positive value will drive the motor in one direction, a negative value will drive it in the opposite direction,
             and a value of 0 will stop the motor. """
-        if not self._pwm_setup:
+        if not self._pwm_setup or len(outputs) != self._hexdrive_type.motors:
             return False
         for motor, output in enumerate(outputs):
             if abs(output) > 65535:
@@ -433,43 +427,53 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
 
 
     # Get the current PWM duty cycle for a specific output (0-65535)
-    def get_pwm(self, channel: int = 0) -> int:
-        """ Get the current PWM duty cycle for a specific output. Returns the duty cycle as a value from 0 to 65535, or 0 if not available. """
-        if not self._pwm_setup:
-            return 0
-        if channel >= len(self.PWMOutput):
-            return 0
-        try:
-            pwm = self.PWMOutput[channel].duty_u16()
-        except Exception:       # pylint: disable=broad-except
-            pwm = 0
-        return pwm
+    #def get_pwm(self, channel: int = 0) -> int:
+    #    """ Get the current PWM duty cycle for a specific output. Returns the duty cycle as a value from 0 to 65535, or 0 if not available. """
+    #    if not self._pwm_setup:
+    #        return 0
+    #    if channel >= len(self.PWMOutput):
+    #        return 0
+    #    try:
+    #        pwm = self.PWMOutput[channel].duty_u16()
+    #    except Exception:       # pylint: disable=broad-except
+    #        pwm = 0
+    #    return pwm
+
 
 ### Stepper Motor Support
+
+# --------------------------------------------------
+# Public methods for controlling stepper motors.
+# ---------------------------------------------------
+
     def motor_step(self, phase: int) -> int | None:
         """ Step the motor to a specific phase in the stepping sequence. Returns None if failed (e.g. invalid phase or not configured for stepper),
             otherwise returns the phase that was set. The phase is a value from 0 to _STEPPER_NUM_PHASES-1 which corresponds to the 
             stepping sequence defined in _STEPPER_SEQUENCE."""
-        if phase >= _STEPPER_NUM_PHASES:
+        if phase >= _STEPPER_NUM_PHASES or self._hexdrive_type.steppers == 0:
             return None
         if not self._stepper:
             # not currently configured for stepper motor - configure
             self._pwm_deinit() 
             self._stepper = True
         for channel, value in enumerate(_STEPPER_SEQUENCE[phase]):
-            self.config.pin[channel].value(value)            
-        self._outputs_energised = True  
+            self.config.pin[channel].value(value)
+        self._outputs_energised = True
         self._time_since_last_update = 0
         return phase
 
 
     def motor_release(self):
         """ Release the motor by setting all outputs to low. This will stop the motor and allow it to be turned by hand. """
-        for channel in range(4):
+        for channel in range(4 if self._stepper else (self._hexdrive_type.motors * 2)):
             self.config.pin[channel].value(0)
         self._outputs_energised = False
         self._time_since_last_update = 0
 
+
+# --------------------------------------------------
+# Private methods for internal use only.
+# --------------------------------------------------
 
     def _pwm_init(self) -> bool:
         self._pwm_setup = False
