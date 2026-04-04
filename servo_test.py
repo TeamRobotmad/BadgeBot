@@ -82,9 +82,9 @@ class ServoTestMgr:
         self.servo_rate          = [_SERVO_DEFAULT_RATE]*4          # Servo Rate of Change
         self.servo_mode          = [ServoMode() for _ in range(4)]  # Servo Mode
         self.servo_selected: int = 0        
-        self.time_since_last_input: int = 0
         self.timeout_period: int = 300000                     # ms (5 minutes - without any user input)       
         self.keep_alive_period: int = 500                     # ms (half the value used in hexdrive.py)  
+        self._time_since_last_input: int = 0
         self._time_since_last_update: int = 0
         if self._logging:
             print("ServoTestMgr initialised")
@@ -137,7 +137,7 @@ class ServoTestMgr:
             app.button_states.clear()
             app.refresh = True
             app.auto_repeat_clear()
-            self.time_since_last_input = 0
+            self._time_since_last_input = 0
             if self._logging:
                 print("Entered Servo Test mode")
             return True
@@ -211,7 +211,7 @@ class ServoTestMgr:
                     if self.servo[self.servo_selected] is None:
                         self.servo[self.servo_selected] = 0
                     self.servo_mode[self.servo_selected].mode = ServoMode.POSITION
-                    self.servo[self.servo_selected] -= self.step    
+                    self.servo[self.servo_selected] -= self.step
                 if self.servo[self.servo_selected] is not None:
                     if -self.servo_range[self.servo_selected] > (self.servo[self.servo_selected] + (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)):
                         self.servo[self.servo_selected] = -self.servo_range[self.servo_selected] - (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)
@@ -240,14 +240,16 @@ class ServoTestMgr:
                     if app.hexdrive_app is not None:
                         app.hexdrive_app.set_servoposition(self.servo_selected, None)
                 else:
-                    app.refresh = True
+                    if self.servo[self.servo_selected] is None:
+                        self.servo[self.servo_selected] = 0                    
+                app.refresh = True
                 app.notification = Notification(f"  Servo {self.servo_selected}:\n {self.servo_mode[self.servo_selected]}")
 
         if app.refresh:
-            self.time_since_last_input = 0
+            self._time_since_last_input = 0
         else:
-            self.time_since_last_input += delta
-            if self.time_since_last_input > self.timeout_period:
+            self._time_since_last_input += delta
+            if self._time_since_last_input > self.timeout_period:
                 if app.hexdrive_app is not None:
                     app.hexdrive_app.set_power(False)
                     app.hexdrive_app.set_servoposition()
@@ -290,8 +292,9 @@ class ServoTestMgr:
         """Reset servo tester state."""
         app = self._app
         if app.hexdrive_app is not None:
-            if app.hexdrive_app.initialise() and app.hexdrive_app.set_power(True) and app.hexdrive_app.set_freq(1000 // self.period):
+            if app.hexdrive_app.initialise() and app.hexdrive_app.set_power(True):
                 for i in range(self.available_servo_count):
+                    app.hexdrive_app.set_freq(1000 // self.period, channel=i)
                     app.hexdrive_app.set_servocentre(self.servo_centre[i], i)
                     self.servo_range[i] = self.range
                     if self.servo[i] is not None:
@@ -303,8 +306,8 @@ class ServoTestMgr:
                             if self._logging:
                                 print("H:Failed to set servo position")
                 self.servo_selected = 0
-                app.time_since_last_update = 0
-                self.time_since_last_input = 0
+                self._time_since_last_update = 0
+                self._time_since_last_input = 0
                 if self._logging:
                     print("H:HexDrive initialised for servo test")
                 return True
@@ -326,7 +329,7 @@ class ServoTestMgr:
         servo_text = ["S"] * (1 + servo_count)
         servo_text_colours = [(0.4, 0.0, 0.0)] * (1 + servo_count)
         servo_text[0] = "Servo Test"
-        servo_text_colours[0] = (1, 1, 1)
+        servo_text_colours[0] = (1, 1, 0)
         for i in range(servo_count):
             if self.servo[i] is None or self.servo_mode[i] == ServoMode.OFF:
                 body_colour = (0.2, 0.2, 0.2)
