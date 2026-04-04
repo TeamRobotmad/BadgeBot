@@ -519,7 +519,7 @@ class LineFollowMgr:
  
         ctx.save()
         ctx.rgb(1, 1, 0).move_to(0, -1 * label_font_size).text(f"TH:{self.line_threshold}")
-        ctx.rgb(1, 1, 1).move_to(-70, -1 * label_font_size).text(f"{self.sensor_rate} Hz")
+        ctx.rgb(0, 1, 1).move_to(-70, -1 * label_font_size).text(f"{self.sensor_rate} Hz")
         spacing = 80
         offset = (spacing // 2) * (app.num_line_sensors // 2)
         for i in range(app.num_line_sensors):
