@@ -262,9 +262,8 @@ After the countdown finishes, `_update_state_countdown()` calls `begin_moves()` 
 | `pid_kd` | 0 | 0 | 65535 | Derivative gain |
 
 ### Hexpansion Management (registered in `hexpansion_mgr.py`)
-| Key | Default | Min | Max | Description |
-|-----|---------|-----|-----|-------------|
-| `erase_slot` | 0 | 0 | 6 | Slot to offer EEPROM erase (0 = disabled) |
+No dedicated settings currently; the `init_settings` hook exists for future use.
+
 
 ### General (registered in `app.py`)
 | Key | Default | Min | Max | Description |

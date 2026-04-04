@@ -62,7 +62,6 @@ The main menu includes a sub-menu of Settings which can be adjusted.
 |------------------|-------------------------------------------|----------------|--------|--------|
 | brightness       | LED brightness                            | 1.0            | 0.1    | 1.0    |
 | logging          | Enable or disable logging                 | False          | False  | True   |
-| erase_slot       | Slot to offer erase function              | 0 (i.e. none)  | 0      | 6      |
 | step_max_pos     | Maximum stepper position                  | 3100           | 0      | 65535  |
 
 The PID gains are best set by using the "PID Auto Tune" menu option.  Place the robot on a line and press C to start the tuning process.  The auto-tuner uses relay feedback (Åström-Hägglund method) to determine the ultimate gain and period of oscillation, then calculates PID gains using Ziegler-Nichols tuning rules.  The tuning process includes a quality score (0-100%) indicating how consistent the oscillation data was.  Results are automatically saved to settings.

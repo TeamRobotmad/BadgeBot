@@ -77,7 +77,6 @@ _AUTO_REPEAT_LEVEL_MAX = 3  # Maximum level of auto-repeat digit increases
 DEFAULT_BACKGROUND_UPDATE_PERIOD = 1000    # mS when not moving
 
 # App states
-STATE_HEXPANSION = -1     # Hexpansion Management (sub-states managed by HexpansionMgr)
 STATE_MENU = 0
 STATE_MESSAGE = 1         # Message display
 STATE_LOGO =  2           # Logo display
@@ -90,6 +89,7 @@ STATE_FOLLOWER = 8        # Line Follower
 STATE_AUTOTUNE = 9        # PID Auto Tune
 STATE_SENSOR = 10         # Sensor Test
 STATE_AUTODRIVE = 11      # Autonomous Drive
+STATE_HEXPANSION = 12     # Hexpansion Management (sub-states managed by HexpansionMgr)
 
 # App states where user can minimise app (Menu, Message, Logo)
 MINIMISE_VALID_STATES = [STATE_MENU, STATE_MESSAGE, STATE_LOGO]
@@ -102,7 +102,7 @@ _LOGGING = False
 _IS_SIMULATOR = sys.platform != "esp32"  # True when running in the simulator, not on real badge hardware
 
 # Main Menu Items
-MAIN_MENU_ITEMS = ["Line Follower","Motor Moves", "Stepper Test", "Servo Test", "PID Auto Tune", "Sensor Test", "Auto Drive", "Settings", "About","Exit"]
+MAIN_MENU_ITEMS = ["Line Follower","Motor Moves", "Stepper Test", "Servo Test", "PID Auto Tune", "Sensor Test", "Auto Drive", "Hexpansions", "Settings", "About","Exit"]
 MENU_ITEM_LINE_FOLLOWER = 0
 MENU_ITEM_MOTOR_MOVES = 1
 MENU_ITEM_STEPPER_TEST = 2
@@ -110,9 +110,10 @@ MENU_ITEM_SERVO_TEST = 3
 MENU_ITEM_PID_AUTOTUNE = 4
 MENU_ITEM_SENSOR_TEST = 5
 MENU_ITEM_AUTO_DRIVE = 6
-MENU_ITEM_SETTINGS = 7
-MENU_ITEM_ABOUT = 8
-MENU_ITEM_EXIT = 9
+MENU_ITEM_HEXPANSION = 7
+MENU_ITEM_SETTINGS = 8  
+MENU_ITEM_ABOUT = 9
+MENU_ITEM_EXIT = 10
 
 
 # Front face direction labels (0=BtnA corner between slots 6 & 1, each step = 30° CW)
@@ -256,7 +257,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             self.settings['fwd_dir']       = MySetting(self.settings, _FWD_DIR_DEFAULT, 0, 1)
             self.settings['front_face']    = MySetting(self.settings, _FRONT_FACE_DEFAULT, 0, _FRONT_FACE_NUM_ORIENTATIONS-1)
         
-            # Module-specific settings - only initialise modules which are NOT dependent on Hexpansion hardware here, as we want to be able to access settings in the HexpansionMgr before we have detected what hardware is present.  For Hexpansion-dependent modules, we will initialise their settings after we have scanned for hardware and know which modules we will be using.
+            # Module-specific settings - only initialise modules which are NOT dependent on specific Hexpansion hardware here, as we want to be able to access settings in the HexpansionMgr before we have detected what hardware is present.  For Hexpansion-dependent modules, we will initialise their settings after we have scanned for hardware and know which modules we will be using.
             if _hexpansion_init_settings is not None:
                 _hexpansion_init_settings(self.settings, MySetting)
 
@@ -385,7 +386,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
     @property
     def front_face(self):
-        """Convenience property to access front_face setting."""
+        """Convenience property to access front_face setting representing the forward direction for movement."""
         if 'front_face' in self.settings:
             return self.settings['front_face'].v
         return _FRONT_FACE_DEFAULT  
@@ -450,23 +451,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             output = bg_fn(delta)
             if output is not None and self.hexdrive_app is not None:
                 self.hexdrive_app.set_motors(self.apply_fwd_dir(output))
-            #else:
-            #    if self.logging:
-            #        print(f"No motor output from background function for state {self.current_state}")    
-        #else:
-        #    if self.logging:
-        #        print(f"Error: No background function found for state {self.current_state}")
-
-# Manual Override                       
-#        else:
-#            if app.override == BUTTON_TYPES["UP"]:
-#                output = (app.settings['max_power'].v, app.settings['max_power'].v)
-#            elif app.override == BUTTON_TYPES["DOWN"]:
-#                output = (-app.settings['max_power'].v, -app.settings['max_power'].v)
-#            elif app.override == BUTTON_TYPES["LEFT"]:
-#                output = (-app.settings['max_power'].v, app.settings['max_power'].v)
-#            elif app.override == BUTTON_TYPES["RIGHT"]:
-#                output = (app.settings['max_power'].v, -app.settings['max_power'].v)
 
 
     @property
@@ -497,7 +481,12 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     @property
     def enable_autodrive(self):
         return self.num_motors > 1 and self._autodrive_mgr is not None
-    
+
+
+    @property
+    def enable_hexpansion_mgr(self):
+        return self._hexpansion_mgr is not None
+
 
     def initialise_settings(self):
         """Initialise settings with default values and register them in the app's settings dictionary."""
@@ -631,13 +620,13 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 self.button_states.clear()
                 # Reboot has been acknowledged by the user - unfortunately we can't actually reboot the badge from Python.
                 return # leave the message on screen.
-            elif self.message_type == "error":
-                # Error has been acknowledged by the user
+            elif self.message_type == "error" or self.message_type == "hexpansion":
+                # Error message has been acknowledged by the user
                 self.button_states.clear()
                 # Recheck Hexpansions - in case the issue is resolved
                 self.current_state = STATE_HEXPANSION
-            else: # elif self.message_type == "warning" or self.current_state == STATE_LOGO:
-                # Warning has been acknowledged by the user - allow access to the menu
+            else:
+                # Message has been acknowledged by the user - allow access to the menu
                 self.button_states.clear()
                 # refresh the menu in case available options have changed
                 self.set_menu()
@@ -744,7 +733,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 if self.message_colours == []:
                     self.message_colours = [(1,0,0)]*len(self.message)
                 self.draw_message(ctx, self.message, self.message_colours, label_font_size)
-                if self.message_type is None or self.message_type == "warning":
+                if self.message_type is None or self.message_type == "warning" or self.message_type == "hexpansion":
                     button_labels(ctx, confirm_label="OK", cancel_label="Exit")
             elif self.current_state == STATE_COUNTDOWN:
                 self.draw_message(ctx, [str(self.countdown_value)], [(1,1,0)], twentyfour_pt)
@@ -916,6 +905,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_SENSOR_TEST])
             if not self.enable_autodrive and MAIN_MENU_ITEMS[MENU_ITEM_AUTO_DRIVE] in menu_items:    
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_AUTO_DRIVE])
+            if not self.enable_hexpansion_mgr and MAIN_MENU_ITEMS[MENU_ITEM_HEXPANSION] in menu_items:
+                menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_HEXPANSION])
             if self._settings_mgr is None and MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS] in menu_items:
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS])
             self.menu = Menu(
@@ -1002,6 +993,11 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 self._autodrive_mgr.logging = self.logging # update logging setting in autodrive manager based on current app setting, in case it was changed
                 if self._autodrive_mgr.start():
                     self.current_state = STATE_AUTODRIVE
+        elif item == MAIN_MENU_ITEMS[MENU_ITEM_HEXPANSION]: # Hexpansion Management
+            if self._hexpansion_mgr is not None:
+                self._hexpansion_mgr.logging = self.logging # update logging setting in hexpansion manager based on current app setting, in case it was changed
+                if self._hexpansion_mgr.start():
+                    self.current_state = STATE_HEXPANSION                    
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS]:   # Settings
             self.set_menu(MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS])
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_ABOUT]:      # About

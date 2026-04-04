@@ -245,7 +245,6 @@ Settings are stored as `MySetting` objects in `self._settings` dict. Each has a 
 | `servo_period` | 20 | Servo PWM period (ms) |
 | `brightness` | 1.0 | LED brightness |
 | `logging` | False | Console logging |
-| `erase_slot` | 0 | Slot to offer erase (0 = none) |
 | `step_max_pos` | 3100 | Stepper max position (half-steps) |
 | `fwd_dir` | 0 | Motor direction: `0`=Normal (HexDrive faces away from robot front), `1`=Reversed (HexDrive faces toward robot front). Applied by `_apply_fwd_dir()` at every `set_motors` call — affects programmed moves **and** auto drive. Display labels: `Normal` / `Reverse`. |
 | `front_face` | 0 | Which physical face of the badge is the robot's front, for LED indicators only (does **not** affect motors). 12 positions clockwise: `0`=BtnA (corner between slot 6 & 1, default top), `1`=Slot 1, `2`=BtnB … `10`=BtnF, `11`=Slot 6. Corners A–F match the badge's physical buttons. |
