@@ -360,9 +360,9 @@ class StepperTestMgr:
         self._logging: bool = logging
         self.stepper = None
         self.stepper_mode = StepperMode()
-        self.time_since_last_input: int = 0
         self.timeout_period: int = 120000                     # ms (2 minutes - without any user input)       
         self.keep_alive_period: int = 500                     # ms (half the value used in hexdrive.py)
+        self._time_since_last_input: int = 0
         self._time_since_last_update: int = 0
         if self._logging:
             print("StepperTestMgr initialised")
@@ -409,7 +409,7 @@ class StepperTestMgr:
                 app.refresh = True
                 app.auto_repeat_clear()
                 self.stepper.enable = True
-                self.time_since_last_input = 0
+                self._time_since_last_input = 0
             
                 if self._logging:
                     print("Entered Stepper Test mode")
@@ -491,10 +491,10 @@ class StepperTestMgr:
                 app.notification = Notification(f"  Stepper:\n {self.stepper_mode}")
                 print(f"Stepper:{self.stepper_mode}")
         if app.refresh:
-            self.time_since_last_input = 0
+            self._time_since_last_input = 0
         else:
-            self.time_since_last_input += delta
-            if self.time_since_last_input > self.timeout_period:
+            self._time_since_last_input += delta
+            if self._time_since_last_input > self.timeout_period:
                 self.stepper.stop()
                 self.stepper.speed = 0
                 self.stepper.enable = False
@@ -523,7 +523,7 @@ class StepperTestMgr:
         stepper_text = ["S"] * (1 + app.num_steppers)
         stepper_text_colours = [(0.4, 0.0, 0.0)] * (1 + app.num_steppers)
         stepper_text[0] = "Stepper Test"
-        stepper_text_colours[0] = (1, 1, 1)
+        stepper_text_colours[0] = (1, 1, 0)
         if self.stepper is not None:
             i = 0
             if self.stepper_mode == StepperMode.OFF:
