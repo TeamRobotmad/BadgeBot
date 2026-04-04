@@ -452,13 +452,13 @@ class MotorMovesMgr:
         """Render Motor Moves UI states.  Returns True if handled."""
         app = self._app
         if self._sub_state == _SUB_HELP:
-            app.draw_message(ctx, ["BadgeBot", "To program:", "Press C", "When finished:", "Long press C"], [(1, 1, 0), (1, 1, 1), (1, 1, 1), (1, 1, 1), (1, 1, 1)], label_font_size)
+            app.draw_message(ctx, ["BadgeBot", "To program:", "Press C", "When finished:", "Long press C"], [(1, 1, 0), (1, 1, 0), (0, 1, 0), (1, 1, 0), (0, 1, 0)], label_font_size)
         elif self._sub_state == _SUB_RECEIVE_INSTR:
             self._draw_receive_instr(ctx)
         elif self._sub_state == _SUB_RUN:
             current_power, _ = self.current_power_duration
             power_str = str(tuple([int(x / (app.settings['max_power'].v // 100)) for x in current_power]))
-            app.draw_message(ctx, ["Running...", power_str], [(1, 1, 1), (1, 1, 0)], label_font_size)
+            app.draw_message(ctx, ["Running...", power_str], [(1, 1, 0), (1, 1, 0)], label_font_size)
         elif self._sub_state == _SUB_DONE:
             app.draw_message(ctx, ["Program", "complete!"], [(0, 1, 0), (0, 1, 0)], label_font_size)
             button_labels(ctx, confirm_label="Replay", cancel_label="Restart")
