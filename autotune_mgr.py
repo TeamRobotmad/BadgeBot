@@ -218,18 +218,18 @@ class AutotuneMgr:
         ctx.save()
         if self.autotuner is None:
             app.draw_message(ctx,
-                ["PID Auto Tune", "Place on line", "Press C to start"],
-                [(1, 1, 1), (1, 1, 0), (0, 1, 0)], label_font_size)
+                ["PID Auto Tune:", "Place on line", "Press C to start"],
+                [(1, 1, 0), (1, 1, 0), (0, 1, 0)], label_font_size)
             button_labels(ctx, confirm_label="Start", cancel_label="Exit")
         elif self.autotuner.is_running:
             diag = self.autotuner.get_diagnostics()
             status = self.autotuner.get_status_text()
             app.draw_message(ctx,
-                ["PID Auto Tune", status,
+                ["PID Auto Tune:", status,
                  f"Cross: {diag['crossings']}/{diag['target']}",
                  f"T={diag['elapsed']//1000}s",
                  f"Rate: {self.follower.sensor_rate} sps"],
-                [(1, 1, 1), (1, 1, 0), (0, 1, 1), (0.7, 0.7, 0.7), (1, 0, 1)], label_font_size)
+                [(1, 1, 0), (1, 1, 0), (0, 1, 1), (0.7, 0.7, 0.7), (1, 0, 1)], label_font_size)
             button_labels(ctx, cancel_label="Stop")
         elif self.autotuner.is_complete:
             diag = self.autotuner.get_diagnostics()
@@ -241,7 +241,7 @@ class AutotuneMgr:
                  f"Kp={diag['Kp']:.2f}",
                  f"Ki={diag['Ki']:.4f}",
                  f"Kd={diag['Kd']:.2f}"],
-                [(0, 1, 0), q_colour, (1, 1, 1), (1, 1, 1), (1, 1, 1)], label_font_size)
+                [(0, 1, 0), q_colour, (1, 1, 0), (1, 1, 0), (1, 1, 0)], label_font_size)
             button_labels(ctx, confirm_label="Retry", cancel_label="Accept")
         else:
             app.draw_message(ctx,
