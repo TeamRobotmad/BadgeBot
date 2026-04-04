@@ -202,7 +202,7 @@ class SensorTestMgr:
         if self._sub_state == _SUB_SELECT_PORT:
             app.draw_message(ctx,
                 ["Sensor Test", f"Port: {self._port_selected}"],
-                [(1, 1, 1), (0, 1, 1)],
+                [(1, 1, 0), (0, 1, 1)],
                 label_font_size)
             button_labels(ctx, left_label="<Port", right_label="Port>",
                           confirm_label="Scan", cancel_label="Back")
