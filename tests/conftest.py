@@ -223,6 +223,7 @@ def badgebot_app_with_hexpansion(hexdrive_pid, hexdrive_port):
 
     try:
         from sim.apps.BadgeBot import BadgeBotApp
+        from sim.apps.BadgeBot.app import STATE_MENU
         app = BadgeBotApp()
 
         # Drive the state machine: the hexpansion_mgr starts in _SUB_INIT,
@@ -230,7 +231,7 @@ def badgebot_app_with_hexpansion(hexdrive_pid, hexdrive_port):
         # hexdrive port check → version check → settings init → menu.
         for _ in range(20):
             app.update(100)
-            if app.current_state == 0:  # STATE_MENU
+            if app.current_state == STATE_MENU:
                 break
 
         yield app
