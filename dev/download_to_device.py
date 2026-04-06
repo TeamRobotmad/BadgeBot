@@ -4,6 +4,9 @@ This script improves on the old batch file by:
 - compiling only modules whose source has changed;
 - uploading only artifacts whose content has changed;
 - reporting each action with clear status and detailed subprocess errors.
+
+By default only warnings, errors, and the final summary are printed.
+Pass ``--verbose`` to see every compile/upload action and subprocess command.
 """
 
 from __future__ import annotations
@@ -67,8 +70,25 @@ class CommandFailed(RuntimeError):
     pass
 
 
+# Levels always shown regardless of verbosity.
+_ALWAYS_SHOWN = frozenset({"ERR", "WARN", "SUMMARY"})
+
+# Set to True by main() when --verbose is passed.
+_verbose: bool = False
+
+
 def _log(level: str, message: str) -> None:
-    print(f"[{level}] {message}")
+    if _verbose or level.strip() in _ALWAYS_SHOWN:
+        print(f"[{level}] {message}")
+
+
+def _format_size(size_bytes: int) -> str:
+    """Return a human-readable representation of *size_bytes*."""
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    if size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    return f"{size_bytes / (1024 * 1024):.1f} MB"
 
 
 def _sha256(path: Path) -> str:
@@ -305,9 +325,10 @@ def _upload_changed_artifacts(
     mpremote_args: list[str],
     app_dir: str,
     device_files: set[str] | None,
-) -> tuple[int, int]:
+) -> tuple[int, int, int]:
     uploaded = 0
     skipped = 0
+    total_bytes = 0
 
     for spec in MODULES:
         if not spec.artifact.exists() and not dry_run:
@@ -335,9 +356,11 @@ def _upload_changed_artifacts(
 
         state["uploaded"][artifact_key] = artifact_hash
         uploaded += 1
+        if not dry_run and spec.artifact.exists():
+            total_bytes += spec.artifact.stat().st_size
         _log("OK ", f"uploaded {spec.artifact}")
 
-    return uploaded, skipped
+    return uploaded, skipped, total_bytes
 
 
 def _upload_changed_static_files(
@@ -348,10 +371,11 @@ def _upload_changed_static_files(
     mpremote_args: list[str],
     app_dir: str,
     device_files: set[str] | None,
-) -> tuple[int, int]:
+) -> tuple[int, int, int]:
     """Copy static (non-compiled) files to the device unchanged."""
     uploaded = 0
     skipped = 0
+    total_bytes = 0
 
     for path in STATIC_FILES:
         if not path.exists() and not dry_run:
@@ -379,9 +403,11 @@ def _upload_changed_static_files(
 
         state["uploaded"][file_key] = file_hash
         uploaded += 1
+        if not dry_run and path.exists():
+            total_bytes += path.stat().st_size
         _log("OK ", f"uploaded {path.name}")
 
-    return uploaded, skipped
+    return uploaded, skipped, total_bytes
 
 
 def _parse_args() -> argparse.Namespace:
@@ -412,6 +438,15 @@ def _parse_args() -> argparse.Namespace:
         help="Show actions but do not run mpy-cross or mpremote.",
     )
     parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help=(
+            "Show detailed progress: every compile/upload action, skipped files, "
+            "and subprocess commands. By default only warnings, errors, and the "
+            "final summary are printed."
+        ),
+    )
+    parser.add_argument(
         "--mpremote-arg",
         action="append",
         default=[],
@@ -432,7 +467,9 @@ def _parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    global _verbose  # noqa: PLW0603
     options = _parse_args()
+    _verbose = options.verbose
     repo_root = _ensure_repo_root()
     _log("INF", f"working directory: {repo_root}")
 
@@ -464,7 +501,7 @@ def main() -> int:
                 mpremote_args=options.mpremote_arg,
             )
         )
-        uploaded, upload_skipped = _upload_changed_artifacts(
+        uploaded, upload_skipped, artifact_bytes = _upload_changed_artifacts(
             state,
             force=options.force_upload,
             dry_run=options.dry_run,
@@ -472,7 +509,7 @@ def main() -> int:
             app_dir=options.app_dir,
             device_files=device_files,
         )
-        static_uploaded, static_skipped = _upload_changed_static_files(
+        static_uploaded, static_skipped, static_bytes = _upload_changed_static_files(
             state,
             force=options.force_upload,
             dry_run=options.dry_run,
@@ -484,15 +521,20 @@ def main() -> int:
         if not options.dry_run:
             _save_state(STATE_PATH, state)
 
-        _log(
-            "SUMMARY",
-            (
-                f"compiled: {compiled}, compile-skipped: {compile_skipped}, "
-                f"modules-uploaded: {uploaded}, modules-skipped: {upload_skipped}, "
-                f"static-uploaded: {static_uploaded}, static-skipped: {static_skipped}, "
-                f"dry-run: {options.dry_run}"
-            ),
-        )
+        total_uploaded = uploaded + static_uploaded
+        total_bytes = artifact_bytes + static_bytes
+        summary_parts = [
+            f"compiled: {compiled}",
+            f"compile-skipped: {compile_skipped}",
+            f"modules-uploaded: {uploaded}",
+            f"modules-skipped: {upload_skipped}",
+            f"static-uploaded: {static_uploaded}",
+            f"static-skipped: {static_skipped}",
+        ]
+        if total_uploaded and not options.dry_run:
+            summary_parts.append(f"uploaded: {_format_size(total_bytes)}")
+        summary_parts.append(f"dry-run: {options.dry_run}")
+        _log("SUMMARY", ", ".join(summary_parts))
         return 0
 
     except CommandFailed as exc:
