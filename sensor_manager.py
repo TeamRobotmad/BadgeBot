@@ -4,7 +4,7 @@ manages the currently displayed sensor in the BadgeBot sensor-test mode.
 
 Usage (lazy import pattern to conserve badge RAM):
     from .sensor_manager import SensorManager
-    mgr = SensorManager(logging=True)
+    mgr = SensorManager(app, logging=True)
     if mgr.open(port=2):
         data = mgr.read_current()   # {label: value_str, ...}
         mgr.next_sensor()
@@ -13,6 +13,10 @@ Usage (lazy import pattern to conserve badge RAM):
 
 import machine
 from .sensors import ALL_SENSOR_CLASSES
+from system.hexpansion.config import HexpansionConfig
+
+#HexSense LED pin
+_LED_PIN = 1
 
 
 class SensorManager:
@@ -23,7 +27,7 @@ class SensorManager:
         self._sensors = []      # list of initialised SensorBase instances
         self._index: int = 0         # currently selected sensor
         self._last_data = {}
-        if self._logging:
+        if self.logging:
             print("SensorManager initialised")
 
 
@@ -51,18 +55,18 @@ class SensorManager:
         try:
             self._i2c = machine.I2C(port)
         except Exception as e:      # pylint: disable=broad-exception-caught
-            if self._logging:
+            if self.logging:
                 print(f"SM:Cannot open I2C port {port}: {e}")
             return False
 
         try:
             found_addrs = set(self._i2c.scan())
         except Exception as e:      # pylint: disable=broad-exception-caught
-            if self._logging:
+            if self.logging:
                 print(f"SM:I2C scan failed on port {port}: {e}")
             return False
 
-        if self._logging:
+        if self.logging:
             print(f"SM:Port {port} scan: {[hex(a) for a in found_addrs]}")
 
         for cls in ALL_SENSOR_CLASSES:
@@ -70,14 +74,22 @@ class SensorManager:
                 sensor = cls()
                 if sensor.begin(self._i2c):
                     self._sensors.append(sensor)
-                    if self._logging:
+                    if self.logging:
                         print(f"SM:  + {cls.NAME} @ 0x{cls.I2C_ADDR:02X}")
                 else:
-                    if self._logging:
+                    if self.logging:
                         print(f"SM:  - {cls.NAME} begin() failed")
 
         self._index = 0
         self._last_data = {}
+
+        # Enable LED if there is at least one sensor
+        if len(self._sensors) > 0:
+            if self.logging:
+                print(f"SM:LED On port {port}")
+            config = HexpansionConfig(port)    
+            config.ls_pin[_LED_PIN].init(mode=machine.Pin.OUT)
+            config.ls_pin[_LED_PIN].value(1)
         return len(self._sensors) > 0
 
     def close(self):
@@ -87,6 +99,12 @@ class SensorManager:
                 s.reset()
             except Exception:       # pylint: disable=broad-exception-caught
                 pass
+        if self.logging and self._port is not None:
+            print(f"SM:LED Off port {self._port}")
+            config = HexpansionConfig(self._port)    
+            if config is not None:
+                config.ls_pin[_LED_PIN].value(0)
+                config.ls_pin[_LED_PIN].init(mode=machine.Pin.IN)
         self._sensors = []
         self._index = 0
         self._last_data = {}

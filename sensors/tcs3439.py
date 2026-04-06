@@ -26,19 +26,22 @@ from .sensor_base import SensorBase
 # Command register (auto-increment block read)
 _CMD_AUTO   = 0xA0
 
-_ENABLE     = 0xA0 | 0x00
-_ATIME      = 0xA0 | 0x01
-_WTIME      = 0xA0 | 0x03
-_CONTROL    = 0xA0 | 0x0F
-_ID_REG     = 0xA0 | 0x12
-_STATUS     = 0xA0 | 0x13
-_RDATAL     = 0xA0 | 0x14  # 8 bytes: R 16LE, G 16LE, B 16LE, W 16LE
+_ENABLE     = 0x80
+_ATIME      = 0x81
+_WTIME      = 0x83
+_CONTROL    = 0x90
+_REVID_REG  = 0x91
+_ID_REG     = 0x92
+_STATUS     = 0x93
+_RDATAL     = 0x94  # 8 bytes: R 16LE, G 16LE, B 16LE, W 16LE or might be other e.g. XYZI depending on part/revision; confirm with your part
 
-_ID_EXPECT  = 0x90   # TCS3439 / TCS34903 family identifier; verify with your part
+_ID_EXPECT  = 0xDC   # TCS3430 family identifier; verify with your part
+_REVID_EXPECT = 0x41   # TCS3430 revision; verify with your part
 
 # ENABLE bits
 _PON  = 0x01
 _AEN  = 0x02
+_WEN  = 0x08
 
 # STATUS bits
 _AVALID = 0x01
@@ -66,6 +69,11 @@ class TCS3439(SensorBase):
             # Warn but proceed — early silicon may report a different ID
             print(f"S:TCS3439 ID 0x{chip_id:02X} (expected 0x{_ID_EXPECT:02X}) - proceeding")
 
+        chip_id = self._cmd_read(_REVID_REG, 1)[0]
+        if chip_id != _REVID_EXPECT:
+            # Warn but proceed — early silicon may report a different ID
+            print(f"S:TCS3439 REV 0x{chip_id:02X} (expected 0x{_REVID_EXPECT:02X}) - proceeding")
+
         # Power on
         self._cmd_write(_ENABLE, _PON)
         time.sleep_ms(3)
@@ -79,14 +87,14 @@ class TCS3439(SensorBase):
 
     def _measure(self) -> dict:
         # Wait for valid data; integration time ≈ 58 ms, allow 3x margin
-        deadline = time.ticks_add(time.ticks_ms(), 200)
-        while True:
-            st = self._cmd_read(_STATUS, 1)[0]
-            if st & _AVALID:
-                break
-            if time.ticks_diff(deadline, time.ticks_ms()) <= 0:
-                return {"Error": "timeout"}
-            time.sleep_ms(5)
+        #deadline = time.ticks_add(time.ticks_ms(), 200)
+        #while True:
+        #    st = self._cmd_read(_STATUS, 1)[0]
+        #    if st & _AVALID:
+        #        break
+        #    if time.ticks_diff(deadline, time.ticks_ms()) <= 0:
+        #        return {"Error": "timeout"}
+        #    time.sleep_ms(5)
 
         # Read 8 bytes: R, G, B, W each 16-bit LE
         raw = self._cmd_read(_RDATAL, 8)

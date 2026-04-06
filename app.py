@@ -28,7 +28,7 @@ from. hexdrive import VERSION as HEXDRIVE_APP_VERSION
 #import micropython
 #micropython.alloc_emergency_exception_buf(100)
 
-
+_SETTINGS_NAME_PREFIX = "badgebot."  # Prefix for settings keys in EEPROM
 APP_VERSION = "1.5" # BadgeBot App Version Number
 
 # If you change the URL then you will need to regenerate the QR code
@@ -119,12 +119,7 @@ MENU_ITEM_EXIT = 10
 # Front face direction labels (0=BtnA corner between slots 6 & 1, each step = 30° CW)
 _FRONT_FACE_DEFAULT = 0
 _FRONT_FACE_NUM_ORIENTATIONS = 12   
-_FRONT_FACE_LABELS = (
-    "BtnA", "Slot 1", "BtnB", "Slot 2", "BtnC", "Slot 3",
-    "BtnD", "Slot 4", "BtnE", "Slot 5", "BtnF", "Slot 6",
-)
 _FWD_DIR_DEFAULT = 0
-_FWD_DIR_LABELS = ("Normal", "Reverse")
 
 
 # Import sub-modules after constants are defined so they can safely
@@ -505,12 +500,17 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             _sensor_test_init_settings(self.settings, MySetting)
         if self.enable_autodrive and _autodrive_init_settings is not None:
             _autodrive_init_settings(self.settings, MySetting)
-
+        self.update_settings()  # Load settings from EEPROM after initialisation
+        
 
     def update_settings(self):
         """Update settings from EEPROM."""
+        if self.logging:
+            print("Updating settings from EEPROM")
         for s in self.settings:
-            self.settings[s].v = settings.get(f"badgebot.{s}", self.settings[s].d)
+            self.settings[s].v = settings.get(f"{_SETTINGS_NAME_PREFIX}{s}", self.settings[s].d)
+            if self.logging:
+                print(f"Setting {s} = {self.settings[s].v}")
 
 
     def _pattern_management(self):        

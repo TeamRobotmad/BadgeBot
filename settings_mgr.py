@@ -187,6 +187,7 @@ class SettingsMgr:
                 app.return_to_menu()
         return True
 
+
     # ------------------------------------------------------------------
     # Draw
     # ------------------------------------------------------------------
@@ -198,6 +199,9 @@ class SettingsMgr:
         app.draw_message(ctx, ["Edit Setting", f"{self.edit_setting}:", f"{disp_val}"], [(1, 1, 0), (0, 0, 1), (0, 1, 0)], label_font_size)
         button_labels(ctx, up_label="+", down_label="-", confirm_label="Set", cancel_label="Cancel", right_label="Default")
         return True
+
+
+    # ------------------------------------------------------------------
 
     @staticmethod
     def _format_setting_value(key, value):
