@@ -58,10 +58,8 @@ accelerometer distance estimation).  The app runs directly on an ESP32-S3 badge
 | `sensor_base.py` | `SensorBase` abstract base class defining the driver interface (`begin`, `read`, `reset`) |
 | `vl53l0x.py` | VL53L0X Time-of-Flight distance sensor (I2C `0x29`, up to ~1200 mm) |
 | `vl6180x.py` | VL6180X ToF proximity + ALS lux sensor (I2C `0x29`, 0–100 mm) |
-| `bme280.py` | BME280 temperature / pressure / humidity sensor (I2C `0x76`) |
-| `apds9960.py` | APDS9960 gesture / proximity / colour (RGBC) sensor (I2C `0x39`) |
 | `tcs3472.py` | TCS3472 colour RGBC + CCT + lux sensor (I2C `0x29`) |
-| `tcs3439.py` | TCS3439 colour RGBW + lux sensor (I2C `0x39`) |
+| `tcs3430.py` | TCS3430 colour CIE XYZ + lux sensor (I2C `0x39`) |
 
 ### Configuration
 
@@ -342,7 +340,7 @@ note that servo test does not participate in the background dispatch table.  Sim
 
 Multiple sensor drivers share the same I2C address:
 - `0x29`: VL53L0X, VL6180X, TCS3472
-- `0x39`: APDS9960, TCS3439
+- `0x39`: TCS3430
 
 Only one sensor at each address can be present on a given I2C bus.  The
 `SensorManager` initialises sensors in `ALL_SENSOR_CLASSES` order (VL53L0X first

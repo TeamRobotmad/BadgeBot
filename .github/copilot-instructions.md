@@ -194,10 +194,8 @@ Provides helpers: `_write_reg()`, `_read_reg()`, `_read_u8()`, `_read_u16_le()`,
 |---|---|---|---|
 | `vl53l0x.py` | VL53L0X ToF | 0x29 | distance (mm) |
 | `vl6180x.py` | VL6180X ToF + ALS | 0x29 | range (mm), lux |
-| `bme280.py` | BME280 Env | 0x76 | temp (°C), pressure (hPa), humidity (%RH) |
-| `apds9960.py` | APDS-9960 Gesture/Colour | 0x39 | proximity, RGBC |
 | `tcs3472.py` | TCS3472 Colour | 0x29 | RGBC, CCT, lux |
-| `tcs3439.py` | TCS3439 Colour | 0x39 | RGBW, lux |
+| `tcs3430.py` | TCS3430 Colour | 0x39 | XYZI |
 
 ### SensorManager (sensor_manager.py)
 - `open(port)` — Open I²C, scan, auto-instantiate matching sensor drivers

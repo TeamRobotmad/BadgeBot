@@ -28,9 +28,7 @@ RUNTIME_MODULES = {
 SENSOR_MODULES = {
     "sensors/__init__",
     "sensors/sensor_base",
-    "sensors/apds9960",
-    "sensors/bme280",
-    "sensors/tcs3439",
+    "sensors/tcs3430",
     "sensors/tcs3472",
     "sensors/vl53l0x",
     "sensors/vl6180x",
