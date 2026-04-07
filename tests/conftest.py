@@ -24,6 +24,14 @@ callers supply a ``(vid, pid)`` pair and a port number, and it takes care
 of the rest.  Specific HexDrive sub-types are configured through
 ``hexdrive_pid`` / ``hexdrive_port`` fixtures that tests can override via
 ``pytest.mark.parametrize`` or by defining local fixtures.
+
+.. note::
+
+   We do **not** import ``sim.run`` at module level.  ``sim/run.py``
+   replaces ``sys.meta_path`` entirely, which would break pytest's
+   ``faulthandler`` plugin during the early configuration phase.  All
+   simulator-dependent imports are deferred to :func:`_ensure_sim_initialized`,
+   which is called lazily from fixtures at test-execution time.
 """
 
 import sys
@@ -32,11 +40,28 @@ from unittest.mock import patch
 
 import pytest
 
-# ---- path setup (same as test_smoke.py) ------------------------------------
+# ---- path setup (harmless; just extends sys.path) --------------------------
 sys.path.append("../../../")
 
-import sim.run                              # noqa: E402  – sets up simulator shims
-from system.hexpansion.config import HexpansionConfig   # noqa: E402
+# ---------------------------------------------------------------------------
+#  Lazy simulator initialisation
+# ---------------------------------------------------------------------------
+
+_sim_initialized = False
+
+
+def _ensure_sim_initialized():
+    """Import ``sim.run`` exactly once to set up simulator shims.
+
+    This must **not** be called at module level – only from inside fixtures
+    or test functions – because ``sim/run.py`` replaces ``sys.meta_path``
+    and would prevent pytest from finding ``faulthandler`` during its own
+    ``pytest_configure`` phase.
+    """
+    global _sim_initialized
+    if not _sim_initialized:
+        import sim.run  # noqa: F401 – side effect: configures sys.path & fakes
+        _sim_initialized = True
 
 
 # ---------------------------------------------------------------------------
@@ -69,6 +94,8 @@ class _FakeHexDriveApp:
     """
 
     def __init__(self, port: int, version: int):
+        _ensure_sim_initialized()
+        from system.hexpansion.config import HexpansionConfig
         self.config = HexpansionConfig(port)
         self._version = version
 
@@ -125,6 +152,8 @@ def install_fake_hexpansion(vid: int, pid: int, port: int,
         A list of started ``unittest.mock.patch`` objects (to be stopped by
         the caller) and the fake app instance that was injected.
     """
+    _ensure_sim_initialized()
+
     if app_class is None:
         app_class = HexDriveApp
     if app_version is None:
@@ -201,6 +230,7 @@ def badgebot_app():
     No hexpansion is detected, so ``initialise_settings()`` is never called
     by the hexpansion manager and only the minimal base settings exist.
     """
+    _ensure_sim_initialized()
     from sim.apps.BadgeBot import BadgeBotApp
     return BadgeBotApp()
 
@@ -218,6 +248,8 @@ def badgebot_app_with_hexpansion(hexdrive_pid, hexdrive_port):
 
     Yields the app instance; tears down patches on exit.
     """
+    _ensure_sim_initialized()
+
     vid = 0xCAFE  # standard VID for all hexpansion types
     patches, fake_app = install_fake_hexpansion(vid, hexdrive_pid, hexdrive_port)
 

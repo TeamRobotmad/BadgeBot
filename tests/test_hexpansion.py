@@ -6,8 +6,6 @@ gated by the detected hardware capabilities.
 """
 import pytest
 
-import sim.apps.BadgeBot.app as BadgeBotModule
-
 
 # =====================================================================
 #  Baseline: NO hexpansion
@@ -71,7 +69,8 @@ class TestTwoMotorHexDrive:
         assert app.num_steppers == 0
 
     def test_reaches_menu(self, badgebot_app_with_hexpansion):
-        assert badgebot_app_with_hexpansion.current_state == BadgeBotModule.STATE_MENU
+        from sim.apps.BadgeBot.app import STATE_MENU
+        assert badgebot_app_with_hexpansion.current_state == STATE_MENU
 
     def test_motor_settings_registered(self, badgebot_app_with_hexpansion):
         s = badgebot_app_with_hexpansion.settings
