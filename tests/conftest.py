@@ -266,6 +266,14 @@ def badgebot_app_with_hexpansion(hexdrive_pid, hexdrive_port):
             if app.current_state == STATE_MENU:
                 break
 
+        if app.current_state != STATE_MENU:
+            hexpansion_mgr = getattr(app, "hexpansion_mgr", None)
+            sub_state = getattr(hexpansion_mgr, "sub_state", None)
+            pytest.fail(
+                "badgebot_app_with_hexpansion did not reach STATE_MENU after "
+                f"20 update() calls; final state={app.current_state}, "
+                f"hexpansion sub_state={sub_state}"
+            )
         yield app
     finally:
         cleanup_fake_hexpansion(patches, fake_app)
