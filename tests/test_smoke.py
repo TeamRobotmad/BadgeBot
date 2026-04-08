@@ -28,10 +28,6 @@ def test_hexdrive_app_init(port):
     config = HexpansionConfig(port)
     HexDriveApp(config)
 
-@pytest.fixture
-def port():
-    return 1
-
 def test_app_versions_match():
     import sim.apps.BadgeBot.app as BadgeBot
     import sim.apps.BadgeBot.hexdrive as HexDrive
@@ -94,11 +90,22 @@ def test_new_states_exist():
 
 
 def test_new_settings_registered():
-    """Verify front_face, fwd_dir, and auto drive settings are registered."""
+    """Verify front_face and fwd_dir base settings are always registered."""
     from sim.apps.BadgeBot import BadgeBotApp
     app_instance = BadgeBotApp()
-    for key in ('fwd_dir', 'front_face', 'auto_speed', 'auto_obstacle'):
+    for key in ('fwd_dir', 'front_face'):
         assert key in app_instance.settings, f"Missing setting: {key}"
+
+
+def test_autodrive_settings_need_hexpansion():
+    """auto_speed/auto_obstacle are hardware-dependent; not present without a HexDrive."""
+    from sim.apps.BadgeBot import BadgeBotApp
+    app_instance = BadgeBotApp()
+    # Without a HexDrive, auto-drive settings are NOT registered
+    for key in ('auto_speed', 'auto_obstacle'):
+        assert key not in app_instance.settings, (
+            f"Setting '{key}' should not be registered without a HexDrive"
+        )
 
 
 def test_front_face_labels_complete():
