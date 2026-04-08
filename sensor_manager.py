@@ -27,6 +27,7 @@ class SensorManager:
         self._sensors = []      # list of initialised SensorBase instances
         self._index: int = 0         # currently selected sensor
         self._last_data = {}
+        self._read_interval_ms = 10
         if self.logging:
             print("SensorManager initialised")
 
@@ -41,6 +42,10 @@ class SensorManager:
     def logging(self, value: bool):
         self._logging = value
 
+    @property
+    def read_interval(self) -> int:
+        return self._read_interval_ms
+    
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -131,6 +136,7 @@ class SensorManager:
             if sensor.NAME == name:
                 self._index = idx
                 self._last_data = {}
+                self._read_interval_ms = getattr(sensor, 'READ_INTERVAL_MS', 250)
                 return True
         return False
 

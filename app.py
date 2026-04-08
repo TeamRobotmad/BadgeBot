@@ -1,6 +1,7 @@
 """ Main Application File for BadgeBot."""
 import asyncio
 import sys
+from system.hexpansion.config import HexpansionConfig
 import time
 from math import cos, pi
 import ota
@@ -16,6 +17,7 @@ from system.scheduler.events import (RequestForegroundPopEvent,
                                      RequestForegroundPushEvent,
                                      RequestStopAppEvent)
 from tildagonos import tildagonos
+from machine import Pin
 
 import app
 
@@ -30,6 +32,7 @@ from. hexdrive import VERSION as HEXDRIVE_APP_VERSION
 
 _SETTINGS_NAME_PREFIX = "badgebot."  # Prefix for settings keys in EEPROM
 APP_VERSION = "1.5" # BadgeBot App Version Number
+_DIAG_PORT = 2  # Hexpansion port to use for diagnostic timing measurements
 
 # If you change the URL then you will need to regenerate the QR code
 # using the generate_qr_code.py script, and update the _QR_CODE constant below with the new code generated for your URL
@@ -74,7 +77,7 @@ _AUTO_REPEAT_MS = 200       # Time between auto-repeats, in ms
 _AUTO_REPEAT_COUNT_THRES = 10 # Number of auto-repeats before increasing level
 _AUTO_REPEAT_SPEED_LEVEL_MAX = 4  # Maximum level of auto-repeat speed increases
 _AUTO_REPEAT_LEVEL_MAX = 3  # Maximum level of auto-repeat digit increases
-DEFAULT_BACKGROUND_UPDATE_PERIOD = 1000    # mS when not moving
+DEFAULT_BACKGROUND_UPDATE_PERIOD = 100    # mS when not moving
 
 # App states
 STATE_MENU = 0
@@ -125,83 +128,34 @@ _FWD_DIR_DEFAULT = 0
 # Import sub-modules after constants are defined so they can safely
 # `from .app import STATE_*` without circular-import timing issues.
 # Each module registers its own settings via init_settings()
-try:
-    from .hexpansion_mgr import HexpansionMgr, HexpansionType
-    from .hexpansion_mgr import init_settings as _hexpansion_init_settings
-except ImportError as e:
-    HexpansionMgr = None
-    HexpansionType = None
-    _hexpansion_init_settings = None
-    print(f"Warning: hexpansion_mgr module not found ({e})")
+# This is just a very robust way of doing from .module import XYZ which does
+# not crash if anything in the module fails to import, and allows us to import
+# individual classes from the modules without importing the whole module.
+def _try_import(module_name, *attr_names):
+    """Try importing named attributes from a sibling submodule.
+    Returns a tuple of the requested attributes (or None for each on failure)."""
+    nones = (None,) * len(attr_names)
+    pkg_name = __name__.rsplit('.', 1)[0]
+    full_name = pkg_name + '.' + module_name
+    try:
+        __import__(full_name)
+        mod = sys.modules[full_name]
+        return tuple(getattr(mod, n) for n in attr_names)
+    except ImportError as e:
+        print(f"Warning: {module_name} module not found ({e})")
+    except Exception as e:                          # pylint: disable=broad-except
+        print(f"Error importing {module_name} module ({e})")
+    return nones
 
-try:    
-    from .settings_mgr import SettingsMgr, MySetting
-except ImportError as e:
-    SettingsMgr = None
-    MySetting = None
-    print(f"Warning: settings_mgr module not found ({e})")
-
-try:
-    from .motor_moves import MotorMovesMgr
-    from .motor_moves import init_settings as _motor_moves_init_settings
-except ImportError as e:
-    MotorMovesMgr = None
-    _motor_moves_init_settings = None
-    print(f"Warning: motor_moves module not found ({e})")
-
-try:
-    from .servo_test import ServoTestMgr
-    from .servo_test import init_settings as _servo_test_init_settings
-except ImportError as e:
-    ServoTestMgr = None
-    _servo_test_init_settings = None
-    print(f"Warning: servo_test module not found ({e})")
-
-try:
-    from .stepper_test import StepperTestMgr
-    from .stepper_test import init_settings as _stepper_test_init_settings
-except ImportError as e:
-    StepperTestMgr = None
-    _stepper_test_init_settings = None
-    print(f"Warning: stepper_test module not found ({e})")
-
-try:
-    from .line_follow import LineFollowMgr
-   #from .line_follow import init_settings as _line_follow_init_settings
-except ImportError as e:
-    LineFollowMgr = None
-    #_line_follow_init_settings = None
-    print(f"Warning: line_follow module not found ({e})")
-
-try:
-    #from .line_follow import LineFollowMgr
-    from .line_follow import init_settings as _line_follow_init_settings
-except ImportError as e:
-    #LineFollowMgr = None
-    _line_follow_init_settings = None
-    print(f"Warning: line_follow_init_settings not found ({e})")
-
-try:
-    from .autotune_mgr import AutotuneMgr
-except ImportError as e:
-    AutotuneMgr = None
-    print(f"Warning: autotune_mgr module not found ({e})")
-
-try:
-    from .sensor_test import SensorTestMgr
-    from .sensor_test import init_settings as _sensor_test_init_settings
-except ImportError as e:
-    SensorTestMgr = None
-    _sensor_test_init_settings = None
-    print(f"Warning: sensor_test module not found ({e})")
-
-try:
-    from .autodrive import AutoDriveMgr
-    from .autodrive import init_settings as _autodrive_init_settings
-except ImportError as e:
-    AutoDriveMgr = None
-    _autodrive_init_settings = None
-    print(f"Warning: autodrive module not found ({e})")
+HexpansionMgr, HexpansionType, _hexpansion_init_settings = _try_import('hexpansion_mgr', 'HexpansionMgr', 'HexpansionType', 'init_settings')
+SettingsMgr, MySetting                                    = _try_import('settings_mgr',   'SettingsMgr', 'MySetting')
+MotorMovesMgr, _motor_moves_init_settings                 = _try_import('motor_moves',    'MotorMovesMgr', 'init_settings')
+ServoTestMgr, _servo_test_init_settings                   = _try_import('servo_test',     'ServoTestMgr', 'init_settings')
+StepperTestMgr, _stepper_test_init_settings               = _try_import('stepper_test',   'StepperTestMgr', 'init_settings')
+LineFollowMgr, _line_follow_init_settings                 = _try_import('line_follow',    'LineFollowMgr', 'init_settings')
+(AutotuneMgr,)                                            = _try_import('autotune_mgr',   'AutotuneMgr')
+SensorTestMgr, _sensor_test_init_settings                 = _try_import('sensor_test',    'SensorTestMgr', 'init_settings')
+AutoDriveMgr, _autodrive_init_settings                    = _try_import('autodrive',      'AutoDriveMgr', 'init_settings')
 
 
 class BadgeBotApp(app.App):         # pylint: disable=no-member
@@ -218,7 +172,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.auto_repeat_level: int = 0
 
         # UI Feature Controls
-        self.refresh: bool = True
+        self.refresh: bool = True            # True so that we draw initial screen on first loop, then set to True whenever we want to trigger a screen update
         self.rpm: int = 5                    # logo rotation speed in RPM
         self.animation_counter: int = 0
         self.pattern_status: bool = True     # True = Pattern Enabled, False = Pattern Disabled
@@ -281,14 +235,25 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
 
         # Hexpansion related
-        self.HEXPANSION_TYPES = [HexpansionType(0xCBCB, "HexDrive", motors=2, servos=4, steppers=1, app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp"), 
-                                 HexpansionType(0xCBCA, "HexDrive", motors=2,           sub_type="2 Motor", app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp"), 
-                                 HexpansionType(0xCBCC, "HexDrive", servos=4,           sub_type="4 Servo", app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp"), 
-                                 HexpansionType(0xCBCD, "HexDrive", motors=1, servos=2, sub_type="1 Mot 2 Srvo", app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp"),
-                                 HexpansionType(0xCBCE, "HexDrive", steppers=1,         sub_type="Stepper", app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp"), 
-                                 HexpansionType(0xCBCF, "HexSense", sensors=2,          sub_type="2 Line Sensors")] # , app_mpy_name="hexsense.mpy", app_mpy_version=HEXSENSE_APP_VERSION, app_name="HexSenseApp")]  
-        self.HEXDRIVE_HEXPANSION_INDEX = 0  # Index in the HEXPANSION_TYPES list which corresponds to the basic HexDrive type
-        self.HEXSENSE_HEXPANSION_INDEX = 5  # Index in the HEXPANSION_TYPES list which corresponds to the basic HexSense type 
+        self.HEXPANSION_TYPES = # HexDrive V1 variants
+                                [HexpansionType(0xCBCB, "HexDrive",  motors=2, servos=4,                     app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp"), 
+                                 HexpansionType(0xCBCA, "HexDrive",  motors=2,           sub_type="2 Motor", app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp"), 
+                                 HexpansionType(0xCBCC, "HexDrive",            servos=4, sub_type="4 Servo", app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp"), 
+                                 # Prototype Hexpansion types
+                                 HexpansionType(0x0100, "Prototype", vid=0xCBCB, sensors=2,          sub_type="2 Line Sensors"), # , app_mpy_name="hexsense.mpy", app_mpy_version=HEXSENSE_APP_VERSION, app_name="HexSense                                 
+                                 # HexDrive V2 variants (I2C sensors are detected by scanning the I2C bus so they don't need to be included here, but we still need entries for the motor/servo variants)
+                                 HexpansionType(0x0200, "HexDrive",  vid=0xCBCB, motors=2, servos=2,                     app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp"), 
+                                 HexpansionType(0x0201, "HexDrive",  vid=0xCBCB, motors=2,           sub_type="2 Motor", app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp"), 
+                                 HexpansionType(0x0202, "HexDrive",  vid=0xCBCB,           servos=2, sub_type="2 Servo", app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp"), 
+
+                                 # Virtual types to represent unrecognised hexpansions and blank EEPROMs
+                                 HexpansionType(0x0000, "Unknown",   sub_type=""),       # Virtual type to represent unrecognised hexpansions
+                                 HexpansionType(0xFFFF, "Blank",     sub_type="")]       # Virtual type to represent blank EEPROMs 
+
+        self.HEXDRIVE_HEXPANSION_INDEX = 0      # Index in the HEXPANSION_TYPES list which corresponds to the basic HexDrive type
+        self.HEXSENSE_HEXPANSION_INDEX = 3      # Index in the HEXPANSION_TYPES list which corresponds to the basic HexSense type 
+        self.UNRECOGNISED_HEXPANSION_INDEX = 7  # Index in the HEXPANSION_TYPES list which corresponds to unrecognised hexpansion types
+        self.BLANK_HEXPANSION_INDEX = 8         # Index in the HEXPANSION_TYPES list which corresponds to blank EEPROMs
         self.hexpansion_update_required: bool = False # flag from async to main loop
 
         self.hexdrive_port = None
@@ -296,6 +261,12 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         
         self.hexsense_config  = None            # Store the HexpansionConfig of the HexSense that is providing the line sensors
         self.hexsense_app = None
+
+        # Use HS pins on a spare Hexpansion to make diagnostic timing measurements
+        if _DIAG_PORT is not None and not _IS_SIMULATOR:
+            self._diag_config = HexpansionConfig(_DIAG_PORT)  # Create a config instance to access the LED pin for diagnostics
+            for i in range(4):
+                self._diag_config.pin[i].init(mode=Pin.OUT)
 
         # High-level motor controller (created when HexDrive is found)
         self.motor_controller = None
@@ -428,11 +399,16 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         """Background task loop for handling time-based updates. This runs independently of the main update/draw loop 
            and is suitable for tasks that need to run at a consistent interval regardless of the current state or drawing performance."""
         last_time = time.ticks_ms()
+
         while True:
             cur_time = time.ticks_ms()
             delta_ticks = time.ticks_diff(cur_time, last_time)
+            if self._diag_config is not None:
+                self._diag_config.pin[0].value(1)                # real time timing diagnostics        
             self.background_update(delta_ticks)
-            await asyncio.sleep_ms(self.update_period)
+            if self._diag_config is not None:
+                self._diag_config.pin[0].value(0)                # real time timing diagnostics    
+            await asyncio.sleep_ms(max (1, self.update_period - (time.ticks_ms() - cur_time)))  # sleep for the remainder of the update period, accounting for time taken by background_update
             last_time = cur_time
 
 
@@ -529,9 +505,22 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
     def update(self, delta: int):
         """Main update function called from the main loop. Handles state transitions, user input, and delegates to functional area managers."""
+        if self._diag_config is not None:
+            self._diag_config.pin[1].value(1)                # real time timing diagnostics        
+
         if self.notification:
             self.notification.update(delta)
+            if self.notification._is_closed():
+                self.notification = None
 
+        # Unfortunately, even though we can track if there is an active  notification that we have triggered, 
+        # we don't have a way to track if there are any other notifications active that we
+        # didn't trigger, so we need to perform extra display refresh cycles in case.
+        # As the draw function is VERY slow, and hence it stalls background updates
+        # we only do extra refresh cycles if the update period is long.
+        if self.update_period >= DEFAULT_BACKGROUND_UPDATE_PERIOD:
+            self.refresh = True
+        
         # manage LED PatternEnable/Disable for all states
         #self._pattern_management()
 
@@ -570,6 +559,9 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 except OSError as e:
                     if self.logging:
                         print(f"Error writing to LEDs: {e}")
+        if self._diag_config is not None:
+            self._diag_config.pin[1].value(0)            # real time timing diagnostics    
+
 
 
     def _update_main_application(self, delta: int):
@@ -578,7 +570,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 self.set_menu()
                 self.refresh = True
             else:
-                self.menu.update(delta)    
+                self.menu.update(delta)
                 if self.menu.is_animating != "none":
                     if self.logging:
                         print("Menu is animating")
@@ -630,7 +622,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 self.button_states.clear()
                 # refresh the menu in case available options have changed
                 self.set_menu()
-                self.refresh = True                
+                self.refresh = True
                 self.current_state = STATE_MENU
             self.message = []
             self.message_colours = []
@@ -639,7 +631,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             # "CANCEL" button is handled in common for all MINIMISE_VALID_STATES so no custom code here
             # Show the warning screen for 10 seconds
             self.animation_counter += delta
-            self.refresh = True
             if self.message_type == "warning" and self.animation_counter > 10000:
                 # For Warnings, after 10 seconds show the logo
                 self.animation_counter = 0
@@ -647,6 +638,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 self.message = []
                 self.message_colours = []
                 self.message_type = None
+                self.refresh = True
             elif self.current_state == STATE_LOGO:
                 # LED management - to match rotating logo:
                 for i in range(1,13):
@@ -655,6 +647,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                     wave = self.settings['brightness'].v * pow((1.0 + cos(((i) *  pi / 1.5) - (self.rpm * self.animation_counter * pi / 7500)))/2.0, 3)    
                     # 4 sides each projecting a pattern of 3 LEDs (12 LEDs in total)
                     tildagonos.leds[i] = tuple(int(wave * j) for j in colour)                                                     
+                self.refresh = True
             else:
                 for i in range(1,13):
                     tildagonos.leds[i] = (255,0,0) if self.message_type == "error" else (0,255,0)
@@ -706,10 +699,19 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
     def draw(self, ctx):
         """Main draw function called from the main loop. Handles drawing the current state, including any notifications."""
-        if self.refresh or self.notification is not None:
+        if self._diag_config is not None:
+            self._diag_config.pin[2].value(1)                # real time timing diagnostics                
+
+        if self.current_state == STATE_MENU and self.menu is not None:
+            # These need to be drawn every frame as they contain animations
+            clear_background(ctx)
+            self.menu.draw(ctx)
+        elif self.refresh or self.notification:
+            #if self.logging:
+            #    print(f"Refreshing display {'for Notification' if self.notification else 'for state change'}")
             self.refresh = False
             clear_background(ctx)
-            ctx.save()
+            #ctx.save()
             #if in a mode where rotated display is desirable:
             #    ctx.rotate(self.front_face * 2.0 * pi / _FRONT_FACE_NUM_ORIENTATIONS)  # Rotate the entire display based on the front_face setting, so that "forward" is always at the top of the display regardless of how the badge is oriented    
             ctx.font_size = label_font_size
@@ -725,8 +727,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 ctx.rgb(0,0.2,0).rectangle(     -120,-120, 115+H_START,240).fill()
                 ctx.rgb(0,0  ,0).rectangle(H_START-5,-120,10-2*H_START,240).fill()
                 ctx.rgb(0,0.2,0).rectangle(5-H_START,-120, 115+H_START,240).fill()
-            else:
-                ctx.rgb(0,0,0).rectangle(-120,-120,240,240).fill()
+            #else:
+            #    ctx.rgb(0,0,0).rectangle(-120,-120,240,240).fill()
 
             # Common states for messages and errors, which can be triggered by any functional area manager and are displayed in a consistent way
             if self.current_state == STATE_MESSAGE:
@@ -743,17 +745,17 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                     draw_fn = self._state_draw_dispatch.get(self.current_state)
                     if draw_fn is not None:
                         draw_fn(ctx)
-            ctx.restore()
-
-        # These need to be drawn every frame as they contain animations
-        if self.current_state == STATE_MENU and self.menu is not None:
-            clear_background(ctx)
-            self.menu.draw(ctx)
+            #ctx.restore()
 
         # Notifications are drawn on top of everything else, so that they are visible regardless of the current state. 
         # They also contain animations, so need to be drawn every frame when active.
+        # As they 'withdraw' they reveal whatever is underneath them so this must be redrawn every frame while they are active to avoid leaving visual glitches on the screen.
         if self.notification:
             self.notification.draw(ctx)
+        
+        if self._diag_config is not None:
+            self._diag_config.pin[2].value(0)               # real time timing diagnostics    
+           
 
 
     @staticmethod
@@ -828,12 +830,14 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
     def show_message(self, msg_content, msg_colours, msg_type = None):
         """Utility function to set the current state to the message display, and populate the message content and colours. The message_type can be used to indicate whether this is an 'error' (red) or 'warning' (green) message, which can affect both the display and the behaviour when the user acknowledges the message."""
+        if self.logging:
+            print(f"Showing message: '{msg_content}' with type {msg_type}")
         self.animation_counter = 0
         self.message = msg_content
         self.message_colours = msg_colours
         self.message_type = msg_type
         self.current_state = STATE_MESSAGE
-        self.refresh = True           
+        self.refresh = True
 
 
     # multi level auto repeat

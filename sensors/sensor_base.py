@@ -17,6 +17,7 @@ class SensorBase:
     # Sub-classes must override these
     I2C_ADDR = 0x00
     NAME = "Unknown"
+    READ_INTERVAL_MS = 250
 
     def __init__(self):
         self._i2c = None
@@ -36,7 +37,7 @@ class SensorBase:
         self._ready = False
         try:
             self._ready = self._init()
-        except Exception as e:
+        except Exception as e:          # pylint: disable=broad-exception-caught
             print(f"S:{self.NAME} begin error: {e}")
             self._ready = False
         return self._ready
@@ -50,7 +51,7 @@ class SensorBase:
             return {"Error": "not ready"}
         try:
             return self._measure()
-        except Exception as e:
+        except Exception as e:          # pylint: disable=broad-exception-caught
             print(f"S:{self.NAME} read error: {e}")
             return {"Error": str(e)}
 
@@ -58,7 +59,7 @@ class SensorBase:
         """Put the sensor into a low-power / safe state."""
         try:
             self._shutdown()
-        except Exception as e:
+        except Exception as e:          # pylint: disable=broad-exception-caught
             print(f"S:{self.NAME} reset error: {e}")
         self._ready = False
 
@@ -80,7 +81,7 @@ class SensorBase:
 
     def _shutdown(self):
         """Optional: power-down registers, etc."""
-        pass
+        return
 
     # ------------------------------------------------------------------
     # Utility helpers available to all drivers

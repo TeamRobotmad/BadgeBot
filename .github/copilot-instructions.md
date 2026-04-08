@@ -182,6 +182,7 @@ Enum-like classes for stepper (OFF/POSITION/SPEED) and servo (OFF/TRIM/POSITION/
 Abstract base class. Subclasses must implement:
 - `I2C_ADDR: int` — 7-bit I²C address
 - `NAME: str` — display name
+- `READ_INTERVAL_MS: int` — how often to read the sensor (ms)
 - `_init() -> bool` — hardware init
 - `_measure() -> dict` — take measurement, return `{label: value_str}`
 - `_shutdown()` — optional power-down

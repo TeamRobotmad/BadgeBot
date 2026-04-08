@@ -142,6 +142,7 @@ class AutoDriveMgr:
             for probe_port in ports_to_try:
                 if sensor_test.open_sensor_port(probe_port):
                     sensor_test.port_selected = probe_port
+                    app.update_period = sensor_test.sensor_mgr.read_interval
                     sensor_open = True
                     break
             if not sensor_open:
