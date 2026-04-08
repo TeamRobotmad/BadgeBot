@@ -7,6 +7,7 @@
 import ota
 from machine import PWM, Pin
 from system.eventbus import eventbus
+from system.hexpansion.config import HexpansionConfig
 from system.scheduler.events import RequestStopAppEvent
 
 import app
@@ -75,9 +76,9 @@ _HEXDRIVE_TYPES = (
 
 class HexDriveApp(app.App):         # pylint: disable=no-member
     """ HexDrive Hexpansion App for BadgeBot."""
-    def __init__(self, config: app.Config | None = None):
+    def __init__(self, config: HexpansionConfig | None = None):
         super().__init__()
-        self.config: app.Config | None = config
+        self.config: HexpansionConfig | None = config
         self._hexdrive_type: HexDriveType | None = None
         self._logging: bool = True
         self._keep_alive_period: int = _DEFAULT_KEEP_ALIVE_PERIOD

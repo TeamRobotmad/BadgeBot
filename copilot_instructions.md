@@ -367,6 +367,8 @@ they are absent.
 4. **Format**: `isort` for import ordering
 5. **QR Code**: Regenerate with `python dev/generate_qr_code.py --url <URL> --write-app`
 6. **Deploy to badge**: `python dev/download_to_device.py`
+   - By default only warnings, errors, and a final summary (including total bytes
+     uploaded) are printed. Pass `--verbose` to see every compile/upload action.
    - Use `--app-dir :apps/<name>` to deploy to a specific directory on the badge
      (default: `:apps/LineFollower`).  For example, to deploy as the main BadgeBot app:
      `python dev/download_to_device.py --app-dir :apps/TeamRobotmad_BadgeBot`
