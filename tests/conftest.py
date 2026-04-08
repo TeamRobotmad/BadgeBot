@@ -21,7 +21,9 @@ Usage in tests::
 
 The core helper :func:`install_fake_hexpansion` is deliberately generic –
 callers supply a ``(vid, pid)`` pair and a port number, and it takes care
-of the rest.  Specific HexDrive sub-types are configured through
+of the rest.  It is a context manager that guarantees cleanup (stopping
+patches and removing the fake app from ``scheduler.apps``) even if the
+test raises.  Specific HexDrive sub-types are configured through
 ``hexdrive_pid`` / ``hexdrive_port`` fixtures that tests can override via
 ``pytest.mark.parametrize`` or by defining local fixtures.
 
@@ -34,6 +36,7 @@ of the rest.  Specific HexDrive sub-types are configured through
    which is called lazily from fixtures at test-execution time.
 """
 
+import contextlib
 import sys
 
 from unittest.mock import patch
@@ -126,11 +129,14 @@ class _FakeHexDriveApp:
 HexDriveApp = type("HexDriveApp", (_FakeHexDriveApp,), {})
 
 
+@contextlib.contextmanager
 def install_fake_hexpansion(vid: int, pid: int, port: int,
                             app_class=None, app_version: int | None = None):
-    """Return a context-manager stack that patches ``read_header`` and
-    ``scheduler.apps`` so that a fake hexpansion of the given type appears
-    on *port*.
+    """Context manager that patches ``read_header`` and ``scheduler.apps``
+    so that a fake hexpansion of the given type appears on *port*.
+
+    Cleanup (stopping patches and removing the fake app from
+    ``scheduler.apps``) is guaranteed even if the test raises.
 
     Parameters
     ----------
@@ -146,11 +152,10 @@ def install_fake_hexpansion(vid: int, pid: int, port: int,
         Value returned by ``get_version()``.  If *None* it is imported from
         ``hexdrive.VERSION`` at call time.
 
-    Returns
-    -------
-    tuple[list[patch], fake_app]
-        A list of started ``unittest.mock.patch`` objects (to be stopped by
-        the caller) and the fake app instance that was injected.
+    Yields
+    ------
+    fake_app
+        The fake app instance injected into ``scheduler.apps``.
     """
     _ensure_sim_initialized()
 
@@ -182,15 +187,11 @@ def install_fake_hexpansion(vid: int, pid: int, port: int,
         scheduler._original_apps = list(scheduler.apps)
     scheduler.apps.append(fake_app)
 
-    return patches, fake_app
-
-
-def cleanup_fake_hexpansion(patches, fake_app=None):
-    """Stop patches and remove the fake app from ``scheduler.apps``."""
-    for p in patches:
-        p.stop()
-    if fake_app is not None:
-        from system.scheduler import scheduler
+    try:
+        yield fake_app
+    finally:
+        for p in patches:
+            p.stop()
         if fake_app in scheduler.apps:
             scheduler.apps.remove(fake_app)
         if hasattr(scheduler, '_original_apps'):
@@ -251,9 +252,7 @@ def badgebot_app_with_hexpansion(hexdrive_pid, hexdrive_port):
     _ensure_sim_initialized()
 
     vid = 0xCAFE  # standard VID for all hexpansion types
-    patches, fake_app = install_fake_hexpansion(vid, hexdrive_pid, hexdrive_port)
-
-    try:
+    with install_fake_hexpansion(vid, hexdrive_pid, hexdrive_port):
         from sim.apps.BadgeBot import BadgeBotApp
         from sim.apps.BadgeBot.app import STATE_MENU
         app = BadgeBotApp()
@@ -274,6 +273,5 @@ def badgebot_app_with_hexpansion(hexdrive_pid, hexdrive_port):
                 f"20 update() calls; final state={app.current_state}, "
                 f"hexpansion sub_state={sub_state}"
             )
+
         yield app
-    finally:
-        cleanup_fake_hexpansion(patches, fake_app)
