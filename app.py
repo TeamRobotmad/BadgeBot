@@ -235,25 +235,24 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
 
         # Hexpansion related
-        self.HEXPANSION_TYPES = # HexDrive V1 variants
-                                [HexpansionType(0xCBCB, "HexDrive",  motors=2, servos=4,                     app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp"), 
-                                 HexpansionType(0xCBCA, "HexDrive",  motors=2,           sub_type="2 Motor", app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp"), 
-                                 HexpansionType(0xCBCC, "HexDrive",            servos=4, sub_type="4 Servo", app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp"), 
-                                 # Prototype Hexpansion types
-                                 HexpansionType(0x0100, "Prototype", vid=0xCBCB, sensors=2,          sub_type="2 Line Sensors"), # , app_mpy_name="hexsense.mpy", app_mpy_version=HEXSENSE_APP_VERSION, app_name="HexSense                                 
-                                 # HexDrive V2 variants (I2C sensors are detected by scanning the I2C bus so they don't need to be included here, but we still need entries for the motor/servo variants)
-                                 HexpansionType(0x0200, "HexDrive",  vid=0xCBCB, motors=2, servos=2,                     app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp"), 
-                                 HexpansionType(0x0201, "HexDrive",  vid=0xCBCB, motors=2,           sub_type="2 Motor", app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp"), 
-                                 HexpansionType(0x0202, "HexDrive",  vid=0xCBCB,           servos=2, sub_type="2 Servo", app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp"), 
+        #                                       pid      name         vid          eeprom total size        eeprom page size      app mpy name                 app mpy version                       app name                motors    servos    sensors    sub_type            
+        self.HEXPANSION_TYPES = [HexpansionType(0xCBCB, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2, servos=4,            sub_type="Uncommitted" ),
+                                 HexpansionType(0xCBCA, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2,                      sub_type="2 Motor" ),
+                                 HexpansionType(0xCBCC, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp",           servos=4,            sub_type="4 Servo" ),
+                                 HexpansionType(0x0100, "Prototype",   vid=0xCBCB, eeprom_total_size=65536, eeprom_page_size=128,                                                                                                                sensors=2, sub_type="2 Line Sensors"),
+                                 HexpansionType(0x0200, "HexDriveV2",  vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2, servos=2,            sub_type="Uncommitted" ),
+                                 HexpansionType(0x0201, "HexDriveV2",  vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2,                      sub_type="2 Motor" ),
+                                 HexpansionType(0x0202, "HexDriveV2",  vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp",           servos=2,            sub_type="2 Servo" ),
+                                 HexpansionType(0xD15C, "Flopagon",                eeprom_total_size= 2048, eeprom_page_size= 16, app_mpy_name="flopagon.mpy", app_name="FlopagonApp"),
+                                 HexpansionType(0xCAF0, "Club Mate",               eeprom_total_size= 8192, eeprom_page_size= 32, app_mpy_name="caffeine.mpy", app_name="CaffeineJitter"),
 
-                                 # Virtual types to represent unrecognised hexpansions and blank EEPROMs
                                  HexpansionType(0x0000, "Unknown",   sub_type=""),       # Virtual type to represent unrecognised hexpansions
                                  HexpansionType(0xFFFF, "Blank",     sub_type="")]       # Virtual type to represent blank EEPROMs 
 
         self.HEXDRIVE_HEXPANSION_INDEX = 0      # Index in the HEXPANSION_TYPES list which corresponds to the basic HexDrive type
         self.HEXSENSE_HEXPANSION_INDEX = 3      # Index in the HEXPANSION_TYPES list which corresponds to the basic HexSense type 
-        self.UNRECOGNISED_HEXPANSION_INDEX = 7  # Index in the HEXPANSION_TYPES list which corresponds to unrecognised hexpansion types
-        self.BLANK_HEXPANSION_INDEX = 8         # Index in the HEXPANSION_TYPES list which corresponds to blank EEPROMs
+        self.UNRECOGNISED_HEXPANSION_INDEX = 9  # Index in the HEXPANSION_TYPES list which corresponds to unrecognised hexpansion types MUST BE LAST NON-BLANK ENTRY IN THE LIST
+        self.BLANK_HEXPANSION_INDEX = 10        # Index in the HEXPANSION_TYPES list which corresponds to blank EEPROMs
         self.hexpansion_update_required: bool = False # flag from async to main loop
 
         self.hexdrive_port = None
