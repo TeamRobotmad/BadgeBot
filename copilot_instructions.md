@@ -60,6 +60,7 @@ accelerometer distance estimation).  The app runs directly on an ESP32-S3 badge
 | `vl6180x.py` | VL6180X ToF proximity + ALS lux sensor (I2C `0x29`, 0–100 mm) |
 | `tcs3472.py` | TCS3472 colour RGBC + CCT + lux sensor (I2C `0x29`) |
 | `tcs3430.py` | TCS3430 colour CIE XYZ + lux sensor (I2C `0x39`) |
+| `opt4048.py` | OPT4048 tristimulus XYZ colour sensor (I2C `0x44`) |
 
 ### Configuration
 
@@ -341,6 +342,7 @@ note that servo test does not participate in the background dispatch table.  Sim
 Multiple sensor drivers share the same I2C address:
 - `0x29`: VL53L0X, VL6180X, TCS3472
 - `0x39`: TCS3430
+- `0x44`: OPT4048
 
 Only one sensor at each address can be present on a given I2C bus.  The
 `SensorManager` initialises sensors in `ALL_SENSOR_CLASSES` order (VL53L0X first
