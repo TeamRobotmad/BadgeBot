@@ -164,7 +164,8 @@ class OPT4048(SensorBase):
     def _init(self) -> bool:
         dev_id = self._read_reg16(_REG_DEVICE_ID)
         if dev_id != _DEVICE_ID_EXPECT:
-            print(f"S:OPT4048 ID 0x{dev_id:04X} (expected 0x{_DEVICE_ID_EXPECT:04X}) - proceeding")
+            print(f"S:OPT4048 ID 0x{dev_id:04X} (expected 0x{_DEVICE_ID_EXPECT:04X}) - rejecting")
+            return False
 
         # Configure for fast continuous reads within ~10 ms budget:
         #   Range       : auto (best dynamic range)
