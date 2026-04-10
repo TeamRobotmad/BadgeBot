@@ -515,7 +515,6 @@ class HexpansionMgr:
                             # Create the high-level MotorController for IMU-aided driving
                             # (only when the HexDrive has motors)
                             if app.num_motors > 0:
-                                # TODO - move this to when needed rather than here
                                 try:
                                     from .motor_controller import MotorController
                                     app.motor_controller = MotorController(

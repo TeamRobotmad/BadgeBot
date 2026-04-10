@@ -13,7 +13,6 @@ import settings as platform_settings
 from events.input import BUTTON_TYPES
 from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
-from .app import (MAIN_MENU_ITEMS, MENU_ITEM_SETTINGS)
 
 # Front face direction labels (0=BtnA corner between slots 6 & 1, each step = 30° CW)
 _FRONT_FACE_LABELS = (
@@ -22,6 +21,8 @@ _FRONT_FACE_LABELS = (
 )
 _FWD_DIR_LABELS = ("Normal", "Reverse")
 _DRIVE_MODE_LABELS = ("Time", "Distance")
+
+MENU_ENTRY_NAME = "Settings"
 
 class MySetting:
     def __init__(self, container, default, minimum, maximum):
@@ -174,8 +175,7 @@ class SettingsMgr:
                 app.button_states.clear()
                 if self._logging:
                     print(f"Setting: {self.edit_setting} Cancelled")
-                app.set_menu(MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS])
-                app.return_to_menu()
+                app.return_to_menu(MENU_ENTRY_NAME)
             elif app.button_states.get(BUTTON_TYPES["CONFIRM"]):
                 app.button_states.clear()
                 if self._logging:
@@ -183,8 +183,7 @@ class SettingsMgr:
                 app.settings[self.edit_setting].v = self.edit_setting_value
                 app.settings[self.edit_setting].persist()
                 app.notification = Notification(f"  Setting:   {self.edit_setting}={self.edit_setting_value}")
-                app.set_menu(MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS])
-                app.return_to_menu()
+                app.return_to_menu(MENU_ENTRY_NAME)
         return True
 
 
