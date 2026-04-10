@@ -1,5 +1,5 @@
 # Pylint formatting policy used across the project.
-# Set to 160 to match existing code style and reduce noisy line wrapping.
+# Set to 200 to match existing code style and reduce noisy line wrapping.
 [tool.pylint.format]
 max-line-length = 200
 
