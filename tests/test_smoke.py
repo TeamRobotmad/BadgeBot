@@ -135,7 +135,8 @@ def test_sensor_base_interface():
 def test_all_sensor_classes_populated():
     """Verify ALL_SENSOR_CLASSES contains the expected sensor drivers."""
     from sim.apps.BadgeBot.sensors import ALL_SENSOR_CLASSES
-    assert len(ALL_SENSOR_CLASSES) >= 4
+    assert len(ALL_SENSOR_CLASSES) >= 5
     names = {cls.NAME for cls in ALL_SENSOR_CLASSES}
     assert 'VL53L0X' in names or 'VL6180X' in names  # at least one ToF sensor
     assert 'TCS3472' in names or 'TCS3430' in names  # at least one color sensor
+    assert 'OPT4048' in names  # OPT4048 tristimulus sensor
