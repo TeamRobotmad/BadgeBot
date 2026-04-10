@@ -36,8 +36,6 @@ Install via the [Tildagon App Directory](https://apps.badge.emfcamp.org/) or cop
 | `__init__.py` | Re-exports `BadgeBotApp` from `app.py` |
 | `app.py` | **Main application** (~2 280 lines). Contains `BadgeBotApp`, the state machine, UI, motor/servo/stepper control, hexpansion management, EEPROM programming, settings, drawing routines, and helper classes (`Stepper`, `HexDriveType`, `MySetting`, `Instruction`, `StepperMode`, `ServoMode`). |
 | `hexdrive.py` | **HexDrive EEPROM app** (~548 lines). `HexDriveApp(app.App)` is the firmware stored on the HexDrive's EEPROM and executed by BadgeOS. Manages PWM outputs, motor driving, servo positioning, stepper phases, power control (SMPSU), and a keep-alive watchdog. Also contains a local `HexDriveType` class. Exports `__app_export__ = HexDriveApp`. |
-| `linefollower.py` | **Line Follower variant** (~2 611 lines). `LineFollowerApp(app.App)` — extended copy of BadgeBotApp with additional line-following (reflectance sensor) and gesture sensor (GR10-30) support. Has extra states (`STATE_FOLLOWER = 19`) and classes (`LineSensor`). Exports `__app_export__ = LineFollowerApp`. |
-| `gr10_30.py` | **DFRobot GR10-30 gesture sensor** I²C driver. Supports directional swipes, rotation, wave, hover, and continuous rotation gestures. |
 | `sensor_manager.py` | **SensorManager** — opens an I²C port, scans for known sensors (auto-discovery), and manages the currently selected sensor for the sensor-test UI mode. |
 | `sensors/` | Package of I²C sensor drivers, all inheriting from `SensorBase`. |
 | `utils.py` | Shared helpers: `roundtext()`, `draw_logo_animated()`, `draw_QRCode()`, `parse_version()`, `chain()`. |
