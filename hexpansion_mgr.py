@@ -420,6 +420,7 @@ class HexpansionMgr:
             print(f"H:Erasing EEPROM on port {self._erase_port}")        
         if self._erase_eeprom(self._erase_port, _EEPROM_ADDR):
             app.notification = Notification("Erased", port=self._erase_port)
+            self._hexpansion_type_by_slot[self._erase_port - 1] = app.BLANK_HEXPANSION_INDEX
             hexpansion_type = self._type_name_for_port(self._erase_port)
             app.show_message([hexpansion_type, f"in slot {self._erase_port}:", "Erased"], [(1,1,0), (1,1,1), (0,1,0)], "hexpansion")
             self._sub_state = _SUB_DETECTED
@@ -618,23 +619,26 @@ class HexpansionMgr:
         elif app.button_states.get(BUTTON_TYPES["CONFIRM"]):
             app.button_states.clear()
             app.refresh = True
-            if self._port_selected in self._ports_with_blank_eeprom:
-                # The selected port has a blank EEPROM, so we can initialise it without erasing first.
-                self._detected_port = self._port_selected
-                app.notification = Notification("Init?", port=self._detected_port)
-                self._sub_state = _SUB_DETECTED
-            elif self._hexpansion_type_by_slot[self._port_selected - 1] is not None:
-                # The selected port has a non-blank EEPROM with a detected hexpansion type, so we need to erase it before we can initialise or upgrade it.
-                self._erase_port = self._port_selected
-                app.notification = Notification("Erase?", port=self._erase_port)
-                self._sub_state = _SUB_ERASE_CONFIRM
+            if self._hexpansion_type_by_slot[self._port_selected - 1] is not None:
+                if self._hexpansion_type_by_slot[self._port_selected - 1] == app.BLANK_HEXPANSION_INDEX:
+                    # The selected port has a blank EEPROM, so we can initialise it without erasing first.
+                    self._detected_port = self._port_selected
+                    app.notification = Notification("Init?", port=self._detected_port)
+                    self._sub_state = _SUB_DETECTED
+                else:    
+                    # The selected port has a non-blank EEPROM with a detected hexpansion type, so we need to erase it before we can initialise or upgrade it.
+                    self._erase_port = self._port_selected
+                    app.notification = Notification("Erase?", port=self._erase_port)
+                    self._sub_state = _SUB_ERASE_CONFIRM
         elif app.button_states.get(BUTTON_TYPES["UP"]):
             app.button_states.clear()
-            self._port_detail_page = (self._port_detail_page - 1) % self._port_detail_page_count
+            if self._port_detail_page_count > 0:
+                self._port_detail_page = (self._port_detail_page - 1) % self._port_detail_page_count
             app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["DOWN"]):
             app.button_states.clear()
-            self._port_detail_page = (self._port_detail_page + 1) % self._port_detail_page_count
+            if self._port_detail_page_count > 0:
+                self._port_detail_page = (self._port_detail_page + 1) % self._port_detail_page_count
             app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["CANCEL"]):
             self._interactive_mode = False
@@ -709,7 +713,7 @@ class HexpansionMgr:
         else:
             # Common header lines for all pages
             page = self._port_detail_page
-            lines = [f"Slot {self._port_selected}-{self._PAGE_NAMES[page]}", hdr.name if hdr is not None else hexpansion_name]
+            lines = [f"Slot {self._port_selected}-{self._PAGE_NAMES[page]}", hdr.friendly_name if hdr is not None else hexpansion_name]
             colours = [(1, 1, 0), (1, 0, 1)]
             if page == 0:
                 # VID / PID page
