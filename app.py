@@ -262,6 +262,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.hexsense_app = None
 
         # Use HS pins on a spare Hexpansion to make diagnostic timing measurements
+        self._diag_config = None
         if _DIAG_PORT is not None and not _IS_SIMULATOR:
             self._diag_config = HexpansionConfig(_DIAG_PORT)  # Create a config instance to access the LED pin for diagnostics
             for i in range(4):
