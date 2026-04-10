@@ -1,45 +1,95 @@
+import argparse
 import os
+import subprocess
 import sys
 from pathlib import Path
 
 import mpy_cross
 
-files_to_mpy = {
-    Path("hexdrive.py"),
-    Path("utils.py"),
+RUNTIME_MODULES = {
+    "app",
+    "hexdrive",
+    "autotune",
+    "autotune_mgr",
+    "settings_mgr",
+    "hexpansion_mgr",
+    "line_follow",
+    "motor_moves",
+    "servo_test",
+    "stepper_test",
+    "utils",
+    "motor_controller",
+    "sensor_manager",
+    "sensor_test",
+    "autodrive",
 }
+
+# Sensor driver modules inside the sensors/ package
+SENSOR_MODULES = {
+    "sensors/__init__",
+    "sensors/sensor_base",
+    "sensors/tcs3430",
+    "sensors/tcs3472",
+    "sensors/vl53l0x",
+    "sensors/vl6180x",
+}
+
+files_to_mpy = {Path(f"{module}.py") for module in RUNTIME_MODULES}
+files_to_mpy.update({Path(f"{module}.py") for module in SENSOR_MODULES})
 
 files_to_keep = {
     Path("app.py"),
     Path("tildagon.toml"),
     Path("metadata.json"),
-    Path("hexdrive.mpy"),
-    Path("utils.mpy")
 }
+files_to_keep.update({Path(f"{module}.mpy") for module in RUNTIME_MODULES})
+files_to_keep.update({Path(f"{module}.mpy") for module in SENSOR_MODULES})
 
-def _cosntruct_filepaths(dirname, filenames):
+def _construct_filepaths(dirname, filenames):
     return [Path(dirname, filename) for filename in filenames]
 
 def find_files(top_level_dir):
     walkerator = iter(os.walk(top_level_dir))
-    dirname, dirnames, filenames = next(walkerator)
+    dirname, _, filenames = next(walkerator)
 
-    found_files = _cosntruct_filepaths(dirname, filenames)
+    all_files = _construct_filepaths(dirname, filenames)
 
-    for dirname, dirnames, filenames  in walkerator:
+    for dirname, _, filenames  in walkerator:
         # if dirname not in dirs_to_keep:
         if dirname != "./.git" and ".git/" not in dirname:
-            found_files.extend(_cosntruct_filepaths(dirname, filenames))
+            all_files.extend(_construct_filepaths(dirname, filenames))
 
-    return found_files
+    return all_files
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Build release artifacts by compiling runtime modules to .mpy and pruning non-release files."
+    )
+    parser.add_argument("-f", "--force", action="store_true", help="Skip confirmation prompt before file removal.")
+    parser.add_argument("--refresh-qr", action="store_true", help="Regenerate _QR_CODE in app.py before packaging.")
+    parser.add_argument("--no-check-qr", action="store_true", help="Skip QR sync check.")
+    parser.add_argument("--qr-url", default="https://robotmad.odoo.com", help="URL used for QR sync/refresh operations.")
+    options = parser.parse_args()
 
-    force_mode = False
+    force_mode = options.force
+    refresh_qr = options.refresh_qr
+    check_qr = not options.no_check_qr
+    qr_url = options.qr_url
 
-    if len(sys.argv) >= 2:
-        force_mode = sys.argv[1] == "-f"
+    if check_qr:
+        print(f"Checking _QR_CODE in app.py against URL: {qr_url}")
+        subprocess.run(
+            [sys.executable, "dev/check_qr_sync.py", "--url", qr_url],
+            check=True,
+        )
+
+    if refresh_qr:
+        print(f"Refreshing _QR_CODE in app.py for URL: {qr_url}")
+        subprocess.run(
+            [sys.executable, "dev/generate_qr_code.py", "--url", qr_url, "--write-app"],
+            check=True,
+        )
 
     found_files = set(find_files("."))
 

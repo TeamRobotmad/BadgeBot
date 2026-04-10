@@ -1,8 +1,8 @@
 # BadgeBot app
 
-Companion app for HexDrive expansion, assuming BadgeBot configuration with 2 motors or 4 servos.
+Companion app for the HexDrive hexpansion. Supports 2 brushed DC motors, 4 RC servos, 1 motor + 2 servos, or a single two-phase stepper. Features Logo-style motor programming, PID line following with automatic gain tuning, I²C sensor testing, servo/stepper test modes, and persistent settings management.
 
-This guide is current for Badgebot version 1.3
+This guide is current for BadgeBot version 1.5
 
 As this application has become quite complicated if you are looking for example code to use a HexDrive please see [HexDriveUseTemplate](https://github.com/TeamRobotmad/HexDriveUseTemplate)
 
@@ -24,16 +24,24 @@ There must be a HexDrive board plugged in and running the latest software to use
 
 ### Main Menu ###
 
-The main menu will present options for a demonstration for a 2 motor robot "Motor Moves", a test/demo a single Stepper Motor "Stepper Test", or a simple "Servo Test" function for up to 4 servos.
+The main menu presents the following options:
+- **Line Follower** – PID-controlled line following using a HexSense with QTRX reflectance sensors
+- **Motor Moves** – Logo/turtle-style motor programming (record UP/DOWN/LEFT/RIGHT sequences, then execute)
+- **Stepper Test** – Test and control a single stepper motor (position and speed modes)
+- **Servo Test** – Test up to 4 RC servos (position, trim, and scanning modes)
+- **PID Auto Tune** – Automatic PID gain tuning using relay feedback (Åström-Hägglund method)
+- **Settings** – Adjust configurable parameters (see below)
+- **About** – Show version info, animated logo and QR code
+- **Exit** – Exit the BadgeBot app
 
 ### Settings ###
 
 The main menu includes a sub-menu of Settings which can be adjusted.
-#### Motor Moves SETTINGS ####
+#### Motor Moves Settings ####
 | Setting          | Description                               | Default        | Min    | Max    |
 |------------------|-------------------------------------------|----------------|--------|--------|
 | acceleration     | Limits the change in motor drive per tick | 7500           | 1      | 65535  |
-| max_power        | Maximum Motor power level                 | 65536          | 1000   | 65535  |
+| max_power        | Maximum motor power level                 | 20000          | 1000   | 65535  |
 | drive_step_ms    | Step duration for driving in ms           | 50             | 5      | 200    |
 | turn_step_ms     | Step duration for turning in ms           | 20             | 5      | 200    |
 #### Servo Test Settings ####
@@ -42,13 +50,23 @@ The main menu includes a sub-menu of Settings which can be adjusted.
 | servo_step       | Servo pulse step value in us              | 10             | 1      | 100    |
 | servo_range      | Range of servo motion in us               | 1000           | 100    | 1400   |
 | servo_period     | Servo period duration in ms               | 20             | 5      | 50     |
+#### Line Follower Settings ####
+| Setting          | Description                               | Default        | Min    | Max    |
+|------------------|-------------------------------------------|----------------|--------|--------|
+| line_threshold   | Line sensor threshold                     | 500            | 0      | 65535  |
+| pid_kp           | Proportional gain for line following      | 20000          | 0      | 65536  |
+| pid_ki           | Integral gain for line following          | 0              | 0      | 65535  |
+| pid_kd           | Derivative gain for line following        | 0              | 0      | 65535  |
 #### Other Settings ####
 | Setting          | Description                               | Default        | Min    | Max    |
 |------------------|-------------------------------------------|----------------|--------|--------|
 | brightness       | LED brightness                            | 1.0            | 0.1    | 1.0    |
 | logging          | Enable or disable logging                 | False          | False  | True   |
-| erase_slot       | Slot to offer erase function              | 0 (i.e. none)  | 0      | 6      |
-| stepper_max_pos  | Maximum stepper position                  | 6200           | 0      | 65535  | 
+| step_max_pos     | Maximum stepper position                  | 3100           | 0      | 65535  |
+
+The PID gains are best set by using the "PID Auto Tune" menu option.  Place the robot on a line and press C to start the tuning process.  The auto-tuner uses relay feedback (Åström-Hägglund method) to determine the ultimate gain and period of oscillation, then calculates PID gains using Ziegler-Nichols tuning rules.  The tuning process includes a quality score (0-100%) indicating how consistent the oscillation data was.  Results are automatically saved to settings.
+
+The training line should ideally include gentle curves so that the controller is exercised across a range of error magnitudes, but a straight line will also work for basic tuning.
 
 ### Limitations ###
 
@@ -66,10 +84,29 @@ If you unplug a HexDrive the PWM resources will be released immediately so you c
 Stable version available via [Tildagon App Directory](https://apps.badge.emfcamp.org/).
 
 This repo contains lots of files that you don't need on your badge to use a HexDrive. If you want to load a minimal application onto a badge directly you only need the files (as long as you have already initialised the HexDrive EEPROM):
-+ app.py
 + tildagon.toml
 + metadata.json
-+ utils.py
++ app.py or app.mpy
++ hexdrive.mpy
++ utils.mpy
++ hexpansion_mgr.mpy
++ motor_controller.mpy
++ motor_moves.mpy
++ servo_test.mpy
++ stepper_test.mpy
++ settings_mgr.mpy
++ line_follow.mpy
++ autotune.mpy
++ autotune_mgr.mpy
++ autodrive.mpy
++ sensor_manager.mpy
++ sensor_test.mpy
++ sensors/__init__.mpy
++ sensors/sensor_base.mpy
++ sensors/vl53l0x.mpy
++ sensors/vl6180x.mpy
++ sensors/tcs3472.mpy
++ sensors/tcs3430.mpy
 
 
 ### Hexpansion Recovery ###
@@ -107,49 +144,94 @@ Writing your own code to control the motor driver is very easy.  The BadgeBot ap
 To fit the HexDrive software into a small EEPROM it is converted into a .mpy file.  The file hexdrive.py is the source of this code if you want to see what it is doing.  The intention is that this code manages the hardware as it knows which slot the hexpansion is in.
 
 ### Power
-The HexDrive incorporates a Switch Mode Power Supply which boosts the 3.3V provided by the badge up to 5V (or higher if your hexpansion has been modified).  To turn this on call
-```set_power(True)```
+The HexDrive incorporates a Switch Mode Power Supply which boosts the 3.3V provided by the badge up to 5V (or higher if your hexpansion has been modified) to drive the motors.  To turn this on or off call
+```set_power(True | False)```
 
 ### Drive
-Call ```set_motors()``` to control the two motors, providing a signed integer from -65555 to +65535 for each in a list.
+Call ```set_motors()``` to control the two motors, providing a signed integer from -65535 to +65535 for each in a tuple.
 
 Alternatively:
 Call ```set_pwm()``` to set the duty cycle of the 4 PWM channels which control the motors. This function takes a tuple of 4 integers, each from 0 to 65535. e.g.
 ```set_pwm((0,1000,1000,0))```
-note the extra set of brackets as the function argument is a single tupple of 4 values rather than being 4 individual values.
-
-
-To protect against most badge/software crashes causing the motors or servos to run out of control there is a keep alive mechanism which means that if you do not make a call to the ```set_pwm```, ```set_motors```, ```motor_step``` or ```set_servoposition``` functions the motors/servos will be turned off after 1000mS (default - which can be changed with a call to ```set_keep_alive()```).
-
-You can adjust the PWM frequency, default 20000Hz for motors and 50Hz for servos by calling the ```set_freq()``` function.
+note the extra set of brackets as the function argument is a single tuple of 4 values rather than being 4 individual values.
 
 ### Servos
-You can control 1,2,3 or 4 RC hobby servos (centre pulse width 1500us).  The first time you set a pulse width for a channel using ```set_servo()``` the PWM frequency for that channel will be set to 50Hz.
+You can control 1,2,3 or 4 RC hobby servos (centre pulse width 1500us).  The first time you set a pulse width for a channel using ```set_servoposition()``` the PWM frequency for that channel will be set to 50Hz.
 The first two Channels take up signals that would otherwise control Motor 1 and the second two Channels take up the signals that are used for Motor 2.
 You can use one motor and 1 or 2 servos simultaneously.
+
+### Frequency
+You can adjust the PWM frequency, default 20000Hz for motors and 50Hz for servos by calling the ```set_freq()``` function.
 
 ### Stepper Motor
 You can control a single 2 phase stepper motor using ```motor_step()``` specifying which of the 8 possible phases to output in the range 0 to 7.  There are 8 possible values as half stepping is supported. To use only full steps specify phase values of 0, 2, 4 and 6.  Information on the pros and cons of using full or half stepping can be found online and what is right for you will depend on your motor and the application.  The motor can be released (so that it is not taking power to hold it in a fixed position) using ```motor_release()```.
 
+#### Keep Alive
+To protect against most badge/software crashes causing the motors or servos to run out of control there is a keep alive mechanism which means that if you do not make a call to the ```set_pwm```, ```set_motors```, ```motor_step``` or ```set_servoposition``` functions the motors/servos will be turned off after 1000mS (default - which can be changed with a call to ```set_keep_alive()```).
+
 ### Developers setup
-This is to help develop the BadgeBot application
+This is to help develop the BadgeBot application using the Badge simulator.
+
+Windows:
 ```
 git clone https://github.com/TeamRobotmad/badge-2024-software.git
-cd badge-2024-software.git
+cd badge-2024-software
 git submodule update --init
-pip install --upgrade pip
-pip install -r ./sim/requirements.txt
-pip install -r ./sim/apps/BadgeBot/dev/dev_requirements.txt
+powershell -ExecutionPolicy Bypass -File .\dev\setup_dev_env.ps1
+```
+
+Linux/macOS:
+```
+git clone https://github.com/hughrawlinson/tildagon-demo.git
+cd tildagon-demo
+sh ./dev/setup_dev_env.sh
+```
+
+If you prefer to run commands manually:
+```
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r .\dev\dev_requirements.txt
 ```
 
 
 ### Running tests
+Tests must be run from the `tests/` directory:
 ```
-pytest test_smoke.py
+cd tests
+python -m pytest test_smoke.py test_autotune.py -v
 ```
 
 ### Best practise
 Run `isort` on in-app python files. Check `pylint` for linting errors.
+
+### Regenerating QR Code
+QR generation is a development-time task and is intentionally kept out of normal
+runtime loading for the app.
+
+Generate QR output only (prints `_QR_CODE = [...]`):
+```
+python dev/generate_qr_code.py --url https://robotmad.odoo.com
+```
+
+Generate and write directly back into `app.py`:
+```
+python dev/generate_qr_code.py --url https://robotmad.odoo.com --write-app
+```
+
+Optional: integrate into release prep:
+```
+python dev/build_release.py --refresh-qr --qr-url=https://robotmad.odoo.com
+```
+
+Validate `_QR_CODE` is in sync without modifying files:
+```
+python dev/check_qr_sync.py --url https://robotmad.odoo.com
+```
+
+`build_release.py` now checks QR sync by default before packaging.
+Use `--no-check-qr` to skip this check if needed.
 
 
 ### Contribution guidelines

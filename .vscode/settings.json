@@ -1,0 +1,26 @@
+{
+    // Force pylint to use the shared project config in pyproject.toml.
+    // This keeps CLI runs and VS Code diagnostics aligned.
+    "pylint.args": [
+        "--rcfile=${workspaceFolder}/pyproject.toml"
+    ],
+
+    // Pylance diagnostics are separate from pylint.
+    // We disable missing-import noise for BadgeOS/MicroPython modules that
+    // only exist on-device, while keeping other analysis enabled.
+    "python.analysis.diagnosticSeverityOverrides": {
+        "reportMissingModuleSource": "none",
+        "reportMissingImports": "none"
+    },
+
+    // Point Pylance at local .pyi stubs for BadgeOS and MicroPython APIs.
+    // See typings/README.md for rationale and maintenance notes.
+    "python.analysis.stubPath": "typings",
+
+    // No additional import roots are needed because stubs are provided via
+    // python.analysis.stubPath and project files resolve from workspace root.
+    "python.analysis.extraPaths": [],
+
+    // Keep analysis enabled for all project files by default.
+    "python.analysis.ignore": []
+}

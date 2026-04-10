@@ -1,10 +1,11 @@
-#util.py
+#utils.py
 from math import pi
 
 from display import hexagon
 
 
 def roundtext(ctx, t, r, top=False):
+    """Draw text t along a circular path with radius r.  If top is True, text is drawn above the center point, otherwise below."""
     ctx.save()
     h = ctx.font_size
     r=(h-r) if top else r-h/2
@@ -19,7 +20,9 @@ def roundtext(ctx, t, r, top=False):
         ctx.rotate(-w/2/r)
     ctx.restore()
 
+
 def draw_logo_animated(ctx, rpm, animation_counter=0, messages=None, qr_code=None):
+    """Draw the badge logo, with an animation based on the given RPM and animation counter.  Messages is an optional list of up to 2 strings to display below the logo.  QR code is an optional list of integers representing a QR code to display in the center of the logo."""
     # 0:black, 1:white, 2:yellow
     colours = [(0, 0, 0), (1, 1, 1), (1.0, 0.84, 0)]
 
@@ -30,7 +33,7 @@ def draw_logo_animated(ctx, rpm, animation_counter=0, messages=None, qr_code=Non
         hexagon(ctx, 0, 0, r)
     
     ctx.save()
-    ctx.rotate(rpm * animation_counter * pi / 30.0)
+    ctx.rotate(rpm * animation_counter * pi / 30000.0)
     # Chip
     rs = [(50, 0), (45, 2)] # , (40, 0)] # Outer, Inner, Solid (replaced by QR code)
     # pins - one rectangle does pins on opposite sides in one go
@@ -55,12 +58,13 @@ def draw_logo_animated(ctx, rpm, animation_counter=0, messages=None, qr_code=Non
         if 1 < len(messages):
             roundtext(ctx,messages[1], 105, True)
 
-    
+
 
 # QR code data
-def draw_QRCode(ctx, qr_code, size=240, colour=(1,1,1)):
+def draw_QRCode(ctx, qr_code, size=240, colour=(1,1,1)):        # pylint: disable=unused-argument
+    """Draw a QR code on the given canvas context.  qr_code is a list of integers, where each integer represents a row of the QR code, and the bits in the integer represent the pixels (LSBit is leftmost pixel).  Size is the total size of the area to draw within (including a border), and colour is the colour to use for the pixels (currently only black or white are supported)."""
     qr_size = len( qr_code )
-    
+
     #   Draw background - assume already drawn
     #ctx.rgb(*colour).rectangle(-size/2, -size/2, size, size).fill()
 
@@ -83,15 +87,16 @@ def draw_QRCode(ctx, qr_code, size=240, colour=(1,1,1)):
 
 
 def parse_version(version):
+    """Parse a version string into a list of components for comparison.  Components are converted to integers where possible, to allow correct ordering (e.g. 1.10 > 1.2).  Pre-release and build metadata are ignored for simplicity, as they are not currently used."""
     #pre_components = ["final"]
     #build_components = ["0", "000000z"]
     #build = ""
     components = []
     if "+" in version:
-        version, build = version.split("+", 1)
+        version, build = version.split("+", 1)          # pylint: disable=unused-variable
         #build_components = build.split(".")
     if "-" in version:
-        version, pre_release = version.split("-", 1)
+        version, pre_release = version.split("-", 1)    # pylint: disable=unused-variable
         #if pre_release.startswith("rc"):
         #    # Re-write rc as c, to support a1, b1, rc1, final ordering
         #    pre_release = pre_release[1:]
@@ -101,8 +106,30 @@ def parse_version(version):
     #components.append([int(item) if item.isdigit() else item for item in pre_components])
     #components.append([int(item) if item.isdigit() else item for item in build_components])
     return components
-    
+
 
 def chain(*iterables):
+    """Chain multiple iterables together into a single iterable."""
     for iterable in iterables:
         yield from iterable
+
+
+# Value increment/decrement functions — work for any integer (positive, negative, or zero)
+def inc_value(v: int, l: int):
+    """Increment the setting value.  If l > 0, snap up to the smallest multiple of 10^l strictly above v
+    (e.g. 10s place for l=1, 100s place for l=2, etc.). Works for any integer value of v."""
+    if l==0:
+        return v+1
+    else:
+        d = 10**l
+        return ((v // d) + 1) * d   # smallest multiple of d strictly above v
+
+
+def dec_value(v: int, l: int):
+    """Decrement the setting value.  If l > 0, snap down to the largest multiple of 10^l strictly below v
+    (e.g. 10s place for l=1, 100s place for l=2, etc.). Works for any integer value of v."""
+    if l==0:
+        return v-1
+    else:
+        d = 10**l
+        return ((v - 1) // d) * d   # largest multiple of d strictly below v
