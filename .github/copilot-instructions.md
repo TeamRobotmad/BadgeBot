@@ -8,7 +8,7 @@ The app lives at `sim/apps/BadgeBot/` inside the `badge-2024-software` repositor
 
 - **Author**: Team Robotmad
 - **License**: LGPL-3.0-only
-- **App version**: defined as `_APP_VERSION` in `app.py` (currently `"1.5"`)
+- **App version**: defined as `APP_VERSION` in `app.py` (currently `"1.5"`)
 - **HexDrive firmware version**: `VERSION` in `hexdrive.py` (integer, currently `6`)
 - **Repository**: <https://github.com/TeamRobotmad/BadgeBot>
 
@@ -24,8 +24,24 @@ pipenv run python run.py
 The simulator is detected at runtime via `sys.platform != "esp32"` and stored in `_IS_SIMULATOR`.
 
 ### Real Badge
-Install via the [Tildagon App Directory](https://apps.badge.emfcamp.org/) or copy the minimal file set onto the badge:
-- `app.py`, `tildagon.toml`, `metadata.json`, `utils.py`
+Install via the [Tildagon App Directory](https://apps.badge.emfcamp.org/) or copy the required runtime files onto the badge (as `.mpy` compiled files or `.py` source):
+- `tildagon.toml`, `metadata.json`
+- `app.py` / `app.mpy`
+- `hexdrive.mpy`
+- `utils.mpy`
+- `hexpansion_mgr.mpy`
+- `motor_controller.mpy`
+- `motor_moves.mpy`
+- `servo_test.mpy`
+- `stepper_test.mpy`
+- `settings_mgr.mpy`
+- `line_follow.mpy`
+- `autotune.mpy`
+- `autotune_mgr.mpy`
+- `sensor_manager.mpy`
+- `sensor_test.mpy`
+
+Use `dev/build_release.py` to compile and package all modules for deployment. For incremental development deployment use `dev/download_to_device.py`.
 
 ---
 

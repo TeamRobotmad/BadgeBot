@@ -1,6 +1,6 @@
 # BadgeBot app
 
-Companion app for HexDrive expansion, assuming BadgeBot configuration with 2 motors or 4 servos.
+Companion app for the HexDrive hexpansion. Supports 2 brushed DC motors, 4 RC servos, 1 motor + 2 servos, or a single two-phase stepper. Features Logo-style motor programming, PID line following with automatic gain tuning, I²C sensor testing, servo/stepper test modes, and persistent settings management.
 
 This guide is current for BadgeBot version 1.5
 
@@ -89,14 +89,17 @@ This repo contains lots of files that you don't need on your badge to use a HexD
 + app.py or app.mpy
 + hexdrive.mpy
 + utils.mpy
-+ autotune.mpy
-+ autotune_mgr.mpy
-+ settings_mgr.mpy
 + hexpansion_mgr.mpy
-+ line_follow.mpy
++ motor_controller.mpy
 + motor_moves.mpy
 + servo_test.mpy
 + stepper_test.mpy
++ settings_mgr.mpy
++ line_follow.mpy
++ autotune.mpy
++ autotune_mgr.mpy
++ sensor_manager.mpy
++ sensor_test.mpy
 
 
 ### Hexpansion Recovery ###
