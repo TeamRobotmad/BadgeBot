@@ -42,8 +42,8 @@ The main menu includes a sub-menu of Settings which can be adjusted.
 |------------------|-------------------------------------------|----------------|--------|--------|
 | acceleration     | Limits the change in motor drive per tick | 7500           | 1      | 65535  |
 | max_power        | Maximum motor power level                 | 20000          | 1000   | 65535  |
-| drive_step_ms    | Step duration for driving in ms           | 50             | 5      | 200    |
-| turn_step_ms     | Step duration for turning in ms           | 20             | 5      | 200    |
+| drive_step_mm    | Distance per forward/backward step in mm  | 50             | 5      | 500    |
+| turn_step_deg    | Angle per turn step in degrees            | 30             | 5      | 360    |
 #### Servo Test Settings ####
 | Setting          | Description                               | Default        | Min    | Max    |
 |------------------|-------------------------------------------|----------------|--------|--------|

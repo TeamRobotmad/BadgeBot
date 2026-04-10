@@ -40,8 +40,8 @@ _LONG_PRESS_MS = 750
 # Default user timings for drive and turn steps (can be configured in settings)
 DEFAULT_POWER_STEP_PER_TICK = 7500
 DEFAULT_MAX_POWER = 20000
-DEFAULT_USER_DRIVE_MS =  50
-DEFAULT_USER_TURN_MS  =  20
+DEFAULT_USER_DRIVE_MM =  50
+DEFAULT_USER_TURN_DEG  =  30
 
 # Local sub-states (internal to Motor Moves)
 _SUB_HELP          = 0
@@ -87,9 +87,9 @@ class Instruction:
 
     def directional_duration(self, mysettings) -> int:
         if self._press_type == BUTTON_TYPES["UP"] or self._press_type == BUTTON_TYPES["DOWN"]:
-            return (mysettings['drive_step_ms'].v)
+            return (mysettings['drive_step_mm'].v)
         elif self._press_type == BUTTON_TYPES["LEFT"] or self._press_type == BUTTON_TYPES["RIGHT"]:
-            return (mysettings['turn_step_ms'].v)
+            return (mysettings['turn_step_deg'].v)
 
 
     def make_power_plan(self, mysettings):
@@ -120,8 +120,8 @@ def init_settings(s, MySetting: type):
     """Register motor-moves-specific settings in the shared settings dict."""
     s['acceleration']  = MySetting(s, DEFAULT_POWER_STEP_PER_TICK, 1, 65535)
     s['max_power']     = MySetting(s, DEFAULT_MAX_POWER, 1000, 65535)
-    s['drive_step_ms'] = MySetting(s, DEFAULT_USER_DRIVE_MS, 5, 200)
-    s['turn_step_ms']  = MySetting(s, DEFAULT_USER_TURN_MS, 5, 200)
+    s['drive_step_mm'] = MySetting(s, DEFAULT_USER_DRIVE_MM, 5, 500)
+    s['turn_step_deg'] = MySetting(s, DEFAULT_USER_TURN_DEG, 5, 360)
 
 
 # ---- Motor Moves manager ---------------------------------------------------

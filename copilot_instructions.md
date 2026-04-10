@@ -46,6 +46,7 @@ accelerometer distance estimation).  The app runs directly on an ESP32-S3 badge
 | `sensor_manager.py` | `SensorManager` – opens an I2C port, probes for known sensors, manages sensor selection and reading |
 | `sensor_test.py` | Sensor test UI – port selection, live reading display, sensor switching; uses `SensorManager` |
 | `autodrive.py` | Autonomous drive mode – obstacle avoidance via ToF spin-scan with IMU gyro tracking |
+| `colour_drive.py` | Colour Drive mode – reads downward-facing TCS3472 colour sensor to detect coloured cards and translate them into robot movements (Red=Stop, Green=Forward, Blue=Backward, Yellow=Turn Left, Magenta=Turn Right, White=Pause) |
 | `settings_mgr.py` | `MySetting` class (bounded values with persistence) and `SettingsMgr` UI |
 | `utils.py` | Helper functions: animated logo drawing, QR code rendering, version parsing, `chain()` |
 | `uQR.py` | Micro QR code generator (third-party, for MicroPython) |
@@ -129,14 +130,15 @@ STATE_FOLLOWER = 8       Line follower
 STATE_AUTOTUNE = 9       PID auto-tuner
 STATE_SENSOR = 10        Sensor test (I2C sensor probing and live display)
 STATE_AUTO = 11          Autonomous drive (obstacle avoidance via ToF spin-scan)
+STATE_COLOUR_DRIVE = 12  Colour drive (colour cards → movement)
 ```
 
 ### Main Menu
 
 Menu items are defined in `MAIN_MENU_ITEMS` in `app.py`.  Items are dynamically
 filtered based on detected hardware capabilities (e.g. Motor Moves, Line Follower,
-PID Auto Tune, and Auto Drive are hidden when no motors are detected; Servo/Stepper
-Test are hidden when no servos/steppers are available):
+PID Auto Tune, Auto Drive, and Colour Drive are hidden when no motors are detected;
+Servo/Stepper Test are hidden when no servos/steppers are available):
 
 | Index | Constant | Label |
 |-------|----------|-------|
@@ -147,9 +149,10 @@ Test are hidden when no servos/steppers are available):
 | 4 | `MENU_ITEM_PID_AUTOTUNE` | PID Auto Tune |
 | 5 | `MENU_ITEM_SENSOR_TEST` | Sensor Test |
 | 6 | `MENU_ITEM_AUTO_DRIVE` | Auto Drive |
-| 7 | `MENU_ITEM_SETTINGS` | Settings |
-| 8 | `MENU_ITEM_ABOUT` | About |
-| 9 | `MENU_ITEM_EXIT` | Exit |
+| 7 | `MENU_ITEM_COLOUR_DRIVE` | Colour Drive |
+| 8 | `MENU_ITEM_SETTINGS` | Settings |
+| 9 | `MENU_ITEM_ABOUT` | About |
+| 10 | `MENU_ITEM_EXIT` | Exit |
 
 ### Manager Pattern
 
@@ -174,6 +177,7 @@ The main app uses dispatch tables (`_state_update_dispatch`, `_state_draw_dispat
 | `AutotuneMgr` | `autotune_mgr.py` | `STATE_AUTOTUNE` | Yes |
 | `SensorTestMgr` | `sensor_test.py` | `STATE_SENSOR` | No |
 | `AutoDriveMgr` | `autodrive.py` | `STATE_AUTO` | Yes |
+| `ColourDriveMgr` | `colour_drive.py` | `STATE_COLOUR_DRIVE` | Yes |
 
 ### MotorController
 
@@ -191,7 +195,7 @@ on-board IMU gyroscope for accurate heading changes and double-integrates the
 accelerometer for approximate distance measurement.
 
 The controller reads `max_power`, `acceleration`, `fwd_dir`, `front_face`,
-`drive_step_ms`, `turn_step_ms` from the shared settings dict.  It also
+`drive_step_mm`, `turn_step_deg` from the shared settings dict.  It also
 optionally reads `drive_mode` (0=time, 1=distance for instruction replay) and
 `accel_scale` (calibration percentage) if those settings are registered.
 
@@ -238,8 +242,8 @@ After the countdown finishes, `_update_state_countdown()` calls `begin_moves()` 
 |-----|---------|-----|-----|-------------|
 | `acceleration` | 7500 | 1 | 65535 | PWM change limit per tick (prevents jerky motion) |
 | `max_power` | 20000 | 1000 | 65535 | Maximum motor power level |
-| `drive_step_ms` | 50 | 5 | 200 | Step duration for forward/backward (ms) |
-| `turn_step_ms` | 20 | 5 | 200 | Step duration for turning (ms) |
+| `drive_step_mm` | 50 | 5 | 500 | Distance per forward/backward step (mm) |
+| `turn_step_deg` | 30 | 5 | 360 | Angle per turn step (degrees) |
 
 ### Servo Test (registered in `servo_test.py`)
 | Key | Default | Min | Max | Description |
@@ -282,6 +286,13 @@ After the countdown finishes, `_update_state_countdown()` calls `begin_moves()` 
 
 ### Sensor Test (registered in `sensor_test.py`)
 No dedicated settings currently; the `init_settings` hook exists for future use.
+
+### Colour Drive (registered in `colour_drive.py`)
+| Key | Default | Min | Max | Description |
+|-----|---------|-----|-----|-------------|
+| `cd_drive_mm` | 100 | 10 | 1000 | Distance per forward/backward card (mm, accelerometer-aided) |
+| `cd_turn_deg` | 90 | 5 | 360 | Turn angle per left/right card (degrees) |
+| `cd_speed` | 56000 | 1000 | 65535 | Motor PWM power for colour-drive movements (~43% max) |
 
 ---
 

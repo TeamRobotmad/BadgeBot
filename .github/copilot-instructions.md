@@ -238,8 +238,8 @@ Settings are stored as `MySetting` objects in `self._settings` dict. Each has a 
 |---|---|---|
 | `acceleration` | 7500 | Motor power ramp rate per tick |
 | `max_power` | 65535 | Maximum PWM duty cycle |
-| `drive_step_ms` | 50 | Duration per drive step |
-| `turn_step_ms` | 20 | Duration per turn step |
+| `drive_step_mm` | 50 | Distance per forward/backward step (mm) |
+| `turn_step_deg` | 30 | Angle per turn step (degrees) |
 | `servo_step` | 10 | Servo pulse increment (µs) |
 | `servo_range` | 1000 | Servo range (±µs from centre) |
 | `servo_period` | 20 | Servo PWM period (ms) |

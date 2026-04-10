@@ -46,6 +46,7 @@ MODULES: tuple[ModuleSpec, ...] = (
     ModuleSpec(Path("sensor_manager.py"), Path("sensor_manager.mpy")),
     ModuleSpec(Path("sensor_test.py"), Path("sensor_test.mpy")),
     ModuleSpec(Path("autodrive.py"), Path("autodrive.mpy")),
+    ModuleSpec(Path("colour_drive.py"), Path("colour_drive.mpy")),
     ModuleSpec(Path("sensors/__init__.py"), Path("sensors/__init__.mpy")),
     ModuleSpec(Path("sensors/sensor_base.py"), Path("sensors/sensor_base.mpy")),
     ModuleSpec(Path("sensors/apds9960.py"), Path("sensors/apds9960.mpy")),

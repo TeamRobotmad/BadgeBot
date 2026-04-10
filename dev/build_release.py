@@ -22,6 +22,7 @@ RUNTIME_MODULES = {
     "sensor_manager",
     "sensor_test",
     "autodrive",
+    "colour_drive",
 }
 
 # Sensor driver modules inside the sensors/ package

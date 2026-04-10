@@ -91,19 +91,20 @@ STATE_FOLLOWER = 8        # Line Follower
 STATE_AUTOTUNE = 9        # PID Auto Tune
 STATE_SENSOR = 10         # Sensor Test
 STATE_AUTO = 11           # Autonomous Drive
+STATE_COLOUR_DRIVE = 12   # Colour Drive (colour cards → movement)
 
 # App states where user can minimise app (Menu, Message, Logo)
 MINIMISE_VALID_STATES = [STATE_MENU, STATE_MESSAGE, STATE_LOGO]
  
 # App states where BadgeBot directly controls the badge LEDs (Motor Moves, Countdown, Message, Logo, Line Follower, AutoTune)
-_LED_CONTROL_STATES    = [STATE_MOTOR_MOVES, STATE_COUNTDOWN, STATE_MESSAGE, STATE_LOGO, STATE_FOLLOWER, STATE_AUTOTUNE, STATE_AUTO]
+_LED_CONTROL_STATES    = [STATE_MOTOR_MOVES, STATE_COUNTDOWN, STATE_MESSAGE, STATE_LOGO, STATE_FOLLOWER, STATE_AUTOTUNE, STATE_AUTO, STATE_COLOUR_DRIVE]
 
 #Misceallaneous Settings
 _LOGGING = False
 _IS_SIMULATOR = sys.platform != "esp32"  # True when running in the simulator, not on real badge hardware
 
 # Main Menu Items
-MAIN_MENU_ITEMS = ["Line Follower","Motor Moves", "Stepper Test", "Servo Test", "PID Auto Tune", "Sensor Test", "Auto Drive", "Settings", "About","Exit"]
+MAIN_MENU_ITEMS = ["Line Follower","Motor Moves", "Stepper Test", "Servo Test", "PID Auto Tune", "Sensor Test", "Auto Drive", "Colour Drive", "Settings", "About","Exit"]
 MENU_ITEM_LINE_FOLLOWER = 0
 MENU_ITEM_MOTOR_MOVES = 1
 MENU_ITEM_STEPPER_TEST = 2
@@ -111,9 +112,10 @@ MENU_ITEM_SERVO_TEST = 3
 MENU_ITEM_PID_AUTOTUNE = 4
 MENU_ITEM_SENSOR_TEST = 5
 MENU_ITEM_AUTO_DRIVE = 6
-MENU_ITEM_SETTINGS = 7
-MENU_ITEM_ABOUT = 8
-MENU_ITEM_EXIT = 9
+MENU_ITEM_COLOUR_DRIVE = 7
+MENU_ITEM_SETTINGS = 8
+MENU_ITEM_ABOUT = 9
+MENU_ITEM_EXIT = 10
 
 
 # Front face direction labels (0=BtnA corner between slots 6 & 1, each step = 30° CW)
@@ -137,6 +139,7 @@ from .line_follow import  LineFollowMgr
 from .autotune_mgr import AutotuneMgr
 from .sensor_test import SensorTestMgr
 from .autodrive import AutoDriveMgr
+from .colour_drive import ColourDriveMgr
 
 # Each module registers its own settings via init_settings()
 from .hexpansion_mgr import init_settings as _hexpansion_init_settings
@@ -146,6 +149,7 @@ from .stepper_test import init_settings as _stepper_test_init_settings
 from .line_follow import init_settings as _line_follow_init_settings
 from .sensor_test import init_settings as _sensor_test_init_settings
 from .autodrive import init_settings as _autodrive_init_settings
+from .colour_drive import init_settings as _colour_drive_init_settings
 
 
 class BadgeBotApp(app.App):         # pylint: disable=no-member
@@ -197,6 +201,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         _line_follow_init_settings(self.settings, MySetting)
         _sensor_test_init_settings(self.settings, MySetting)
         _autodrive_init_settings(self.settings, MySetting)
+        _colour_drive_init_settings(self.settings, MySetting)
         # Direction settings
         self.settings['fwd_dir']       = MySetting(self.settings, _FWD_DIR_DEFAULT, 0, 1)
         self.settings['front_face']    = MySetting(self.settings, _FRONT_FACE_DEFAULT, 0, 11)
@@ -244,6 +249,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self._autotune_mgr     = AutotuneMgr(self, self._line_follow_mgr)
         self._sensor_test_mgr  = SensorTestMgr(self)
         self._autodrive_mgr    = AutoDriveMgr(self)
+        self._colour_drive_mgr = ColourDriveMgr(self)
 
         # State → manager dispatch table (for efficient update/draw routing)
         self._state_update_dispatch = {
@@ -256,6 +262,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             STATE_SETTINGS:    self._settings_mgr.update,
             STATE_SENSOR:      self._sensor_test_mgr.update,
             STATE_AUTO:        self._autodrive_mgr.update,
+            STATE_COLOUR_DRIVE: self._colour_drive_mgr.update,
         }
         self._state_draw_dispatch = {
             STATE_HEXPANSION:  self._hexpansion_mgr.draw,
@@ -267,12 +274,14 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             STATE_SETTINGS:    self._settings_mgr.draw,
             STATE_SENSOR:      self._sensor_test_mgr.draw,
             STATE_AUTO:        self._autodrive_mgr.draw,
+            STATE_COLOUR_DRIVE: self._colour_drive_mgr.draw,
         }
         self._BG_DISPATCH = {
             STATE_MOTOR_MOVES: self._motor_moves_mgr.background_update,
             STATE_FOLLOWER:    self._line_follow_mgr.background_update,
             STATE_AUTOTUNE:    self._autotune_mgr.background_update,
             STATE_AUTO:        self._autodrive_mgr.background_update,
+            STATE_COLOUR_DRIVE: self._colour_drive_mgr.background_update,
         }
 
         # Motor Driver Hardware
@@ -767,6 +776,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_LINE_FOLLOWER])
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_PID_AUTOTUNE])
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_AUTO_DRIVE])
+                menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_COLOUR_DRIVE])
             if self.num_line_sensors == 0:
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_LINE_FOLLOWER])
                 if MAIN_MENU_ITEMS[MENU_ITEM_PID_AUTOTUNE] in menu_items:
@@ -836,6 +846,14 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_AUTO_DRIVE]: # Auto Drive
             if self._autodrive_mgr.start():
                 self.current_state = STATE_AUTO
+        elif item == MAIN_MENU_ITEMS[MENU_ITEM_COLOUR_DRIVE]: # Colour Drive
+            if self.num_motors == 0:
+                self.notification = Notification("No Motors")
+            elif self.num_motors == 1:
+                self.notification = Notification(" 2 Motors  Required")
+            else:
+                if self._colour_drive_mgr.start():
+                    self.current_state = STATE_COLOUR_DRIVE
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS]:   # Settings
             self.set_menu(MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS])
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_ABOUT]:      # About
