@@ -88,6 +88,12 @@ class SensorManager:
         self._index = 0
         self._last_data = {}
 
+        # Set read interval from the first found sensor, or default to 250ms
+        if self._sensors:
+            self._read_interval_ms = getattr(self._sensors[0], 'READ_INTERVAL_MS', 250)
+        else:
+            self._read_interval_ms = 250
+
         # Enable LED if there is at least one sensor
         if len(self._sensors) > 0:
             if self.logging:
@@ -124,11 +130,13 @@ class SensorManager:
         if self._sensors:
             self._index = (self._index + 1) % len(self._sensors)
             self._last_data = {}
+            self._read_interval_ms = getattr(self._sensors[self._index], 'READ_INTERVAL_MS', 250)
 
     def prev_sensor(self):
         if self._sensors:
             self._index = (self._index - 1) % len(self._sensors)
             self._last_data = {}
+            self._read_interval_ms = getattr(self._sensors[self._index], 'READ_INTERVAL_MS', 250)
 
     def select_sensor(self, name: str) -> bool:
         """Select sensor by NAME. Returns True if found."""
