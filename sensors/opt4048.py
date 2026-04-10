@@ -93,7 +93,8 @@ class OPT4048(SensorBase):
     I2C_ADDR = 0x44
     NAME = "OPT4048"
     READ_INTERVAL_MS = 10
-
+    TYPE = "Colour"
+    
     def __init__(self):
         super().__init__()
         self._overload = False

@@ -20,7 +20,7 @@ from tildagonos import tildagonos
 from machine import Pin
 
 import app
-
+from .settings_mgr import _FRONT_FACE_LABELS
 from .utils import draw_logo_animated, parse_version
 from. hexdrive import VERSION as HEXDRIVE_APP_VERSION
 
@@ -98,7 +98,7 @@ STATE_HEXPANSION = 12     # Hexpansion Management (sub-states managed by Hexpans
 MINIMISE_VALID_STATES = [STATE_MENU, STATE_MESSAGE, STATE_LOGO]
  
 # App states where BadgeBot directly controls the badge LEDs (Motor Moves, Countdown, Message, Logo, Line Follower, AutoTune)
-_LED_CONTROL_STATES    = [STATE_MOTOR_MOVES, STATE_COUNTDOWN, STATE_MESSAGE, STATE_LOGO, STATE_FOLLOWER, STATE_AUTOTUNE, STATE_AUTODRIVE]
+_LED_CONTROL_STATES    = [STATE_MOTOR_MOVES, STATE_COUNTDOWN, STATE_MESSAGE, STATE_LOGO, STATE_FOLLOWER, STATE_AUTOTUNE, STATE_AUTODRIVE, STATE_SENSOR]
 
 #Misceallaneous Settings
 _LOGGING = False
@@ -121,21 +121,7 @@ MENU_ITEM_EXIT = 10
 
 # Front face direction labels (0=BtnA corner between slots 6 & 1, each step = 30° CW)
 _FRONT_FACE_DEFAULT = 0
-_FRONT_FACE_NUM_ORIENTATIONS = 12   
-_FRONT_FACE_LABELS = (
-    "BtnA",   # 0  - corner between slot 6 & slot 1 (default top)
-    "Slot 1", # 1
-    "BtnB",   # 2  - corner between slot 1 & slot 2
-    "Slot 2", # 3
-    "BtnC",   # 4
-    "Slot 3", # 5
-    "BtnD",   # 6  - corner between slot 3 & slot 4 (bottom)
-    "Slot 4", # 7
-    "BtnE",   # 8
-    "Slot 5", # 9
-    "BtnF",   # 10
-    "Slot 6", # 11
-)
+_FRONT_FACE_NUM_ORIENTATIONS = len(_FRONT_FACE_LABELS)   
 _FWD_DIR_DEFAULT = 0
 
 
@@ -526,10 +512,16 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
         if self.notification:
             self.notification.update(delta)
-            if self.notification._is_closed():
+            try:
+                # in case access to protected member _is_closed() is not allowed, we catch the exception and just set notification to None to prevent crashes - this means that in this case we won't be able to automatically clear notifications when they are closed, but at least the app won't crash.
+                if self.notification._is_closed():  # pylint: disable=protected-access
+                    self.notification = None
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                if self.logging:
+                    print(f"Error checking notification status: {e}")
                 self.notification = None
 
-        # Unfortunately, even though we can track if there is an active  notification that we have triggered, 
+        # Unfortunately, even though we can track if there is an active notification that we have triggered,
         # we don't have a way to track if there are any other notifications active that we
         # didn't trigger, so we need to perform extra display refresh cycles in case.
         # As the draw function is VERY slow, and hence it stalls background updates
