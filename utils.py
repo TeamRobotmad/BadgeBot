@@ -114,22 +114,22 @@ def chain(*iterables):
         yield from iterable
 
 
-# Value increment/decrement functions for positive integers only
+# Value increment/decrement functions — work for any integer (positive, negative, or zero)
 def inc_value(v: int, l: int):
-    """Increment the setting value.  If l > 0, increment by the next highest order of magnitude (e.g. 10s place for l=1, 100s place for l=2, etc.)"""
+    """Increment the setting value.  If l > 0, snap up to the smallest multiple of 10^l strictly above v
+    (e.g. 10s place for l=1, 100s place for l=2, etc.). Works for any integer value of v."""
     if l==0:
         return v+1
     else:
         d = 10**l
-        v = ((v // d) + 1) * d   # round up to the next multiple of 10^l
-        return v
+        return ((v // d) + 1) * d   # smallest multiple of d strictly above v
 
 
 def dec_value(v: int, l: int):
-    """Decrement the setting value.  If l > 0, decrement by the next highest order of magnitude (e.g. 10s place for l=1, 100s place for l=2, etc.)"""
+    """Decrement the setting value.  If l > 0, snap down to the largest multiple of 10^l strictly below v
+    (e.g. 10s place for l=1, 100s place for l=2, etc.). Works for any integer value of v."""
     if l==0:
         return v-1
     else:
         d = 10**l
-        v = (((v+(9*(10**(l-1)))) // d) - 1) * d   # round down to the next multiple of 10^l
-        return v
+        return ((v - 1) // d) * d   # largest multiple of d strictly below v
