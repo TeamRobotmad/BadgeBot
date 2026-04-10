@@ -151,14 +151,14 @@ def test_begin_sets_continuous_mode(opt4048_module, fake_i2c):
     assert (cfg >> 4) & 0x03 == mod.MODE_CONTINUOUS
 
 
-def test_begin_wrong_id_still_succeeds(opt4048_module, fake_i2c):
-    """begin() should proceed even with an unexpected device ID."""
+def test_begin_wrong_id_fails(opt4048_module, fake_i2c):
+    """begin() should reject an unexpected device ID."""
     mod = opt4048_module
     fake_i2c.set_reg16(mod.OPT4048.I2C_ADDR, 0x11, 0xFFFF)  # wrong ID
     fake_i2c.set_reg16(mod.OPT4048.I2C_ADDR, 0x0C, 0x0004)
 
     s = mod.OPT4048()
-    assert s.begin(fake_i2c) is True
+    assert s.begin(fake_i2c) is False
 
 
 # ---------------------------------------------------------------------------
