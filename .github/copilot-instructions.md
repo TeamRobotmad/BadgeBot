@@ -68,38 +68,46 @@ Use `dev/build_release.py` to compile and package all modules for deployment. Fo
 
 ### BadgeBotApp (app.py)
 
-`BadgeBotApp` extends `app.App` (the Tildagon app base class) and uses a **state-machine** pattern:
+`BadgeBotApp` extends `app.App` (the Tildagon app base class) and uses a **manager-based state-machine** pattern. The app holds a `current_state` integer and routes `update(delta)`, `draw(ctx)`, and `background_update(delta)` calls through dispatch tables populated at startup.
+
+**State constants** (defined at module level in `app.py`):
 
 | Constant | Value | Description |
 |---|---|---|
-| `STATE_INIT` | -1 | Initial / startup |
-| `STATE_WARNING` | 0 | No HexDrive found warning |
-| `STATE_MENU` | 1 | Main menu |
-| `STATE_HELP` | 2 | Help screen |
-| `STATE_RECEIVE_INSTR` | 3 | User entering motor-move sequence |
-| `STATE_COUNTDOWN` | 4 | Countdown before executing moves |
-| `STATE_RUN` | 5 | Executing motor-move sequence |
-| `STATE_DONE` | 6 | Sequence complete |
-| `STATE_CHECK` | 7 | Scanning hexpansion ports |
-| `STATE_DETECTED` | 8 | Blank EEPROM detected, offer init |
-| `STATE_UPGRADE` | 9 | Offer HexDrive firmware upgrade |
-| `STATE_ERASE` | 10 | Offer EEPROM erase |
-| `STATE_PROGRAMMING` | 11 | EEPROM write in progress |
-| `STATE_REMOVED` | 12 | Hexpansion removed |
-| `STATE_ERROR` | 13 | Error display |
-| `STATE_MESSAGE` | 14 | General message display |
-| `STATE_LOGO` | 15 | Animated logo |
-| `STATE_SERVO` | 16 | Servo test UI |
-| `STATE_STEPPER` | 17 | Stepper test UI |
-| `STATE_SETTINGS` | 18 | Settings editor |
+| `STATE_MENU` | 0 | Main menu |
+| `STATE_MESSAGE` | 1 | General message / notification display |
+| `STATE_LOGO` | 2 | Animated logo screen |
+| `STATE_COUNTDOWN` | 3 | Shared countdown (Motor Moves & PID AutoTune) |
+| `STATE_SETTINGS` | 4 | Settings editor (managed by `SettingsMgr`) |
+| `STATE_MOTOR_MOVES` | 5 | Programmed motor-move sequence (managed by `MotorMovesMgr`) |
+| `STATE_SERVO` | 6 | Servo test UI (managed by `ServoTestMgr`) |
+| `STATE_STEPPER` | 7 | Stepper test UI (managed by `StepperTestMgr`) |
+| `STATE_FOLLOWER` | 8 | Line-follower mode (managed by `LineFollowMgr`) |
+| `STATE_AUTOTUNE` | 9 | PID auto-tune (managed by `AutotuneMgr`) |
+| `STATE_SENSOR` | 10 | I²C sensor test (managed by `SensorTestMgr`) |
+| `STATE_AUTODRIVE` | 11 | Autonomous drive (managed by `AutoDriveMgr`) |
+| `STATE_HEXPANSION` | 12 | Hexpansion management (sub-states managed by `HexpansionMgr`) |
 
-State transitions are managed in `update(delta)` → `_update_main_application(delta)` which dispatches to per-state handlers like `_update_state_warning()`, `_update_state_receive_instr()`, etc.
+**State management pattern**: `update(delta)` calls `_update_main_application(delta)`, which:
+1. Handles the `STATE_MENU` and `STATE_MESSAGE`/`STATE_LOGO` states directly.
+2. For all other states, looks up the manager's `update` function in `_state_update_dispatch` and calls it.
 
-Drawing follows the same pattern: `draw(ctx)` dispatches to `_draw_receive_instr()`, `_draw_state_stepper()`, `_draw_state_servo()`, etc.
+`draw(ctx)` and `background_update(delta)` follow the same dispatch pattern via `_state_draw_dispatch` and `_state_background_dispatch`.
 
-### LineFollowerApp (linefollower.py)
+**`HexpansionMgr` sub-states** (module-level constants in `hexpansion_mgr.py`, prefixed `_SUB_*`):
 
-Extended variant adding `STATE_FOLLOWER = 19` for line-following mode plus gesture control via the GR10-30. Uses `LineSensor` class for reflectance sensor reading and adds menu items for the line follower.
+| Constant | Value | Description |
+|---|---|---|
+| `_SUB_INIT` | 0 | Initial state, before first port scan |
+| `_SUB_CHECK` | 1 | Scanning ports for EEPROMs and HexDrives |
+| `_SUB_DETECTED` | 2 | Hexpansion detected, ready for EEPROM init |
+| `_SUB_ERASE_CONFIRM` | 3 | Confirmation prompt for EEPROM erase |
+| `_SUB_ERASE` | 4 | EEPROM erase in progress |
+| `_SUB_UPGRADE_CONFIRM` | 5 | Ready for firmware upgrade |
+| `_SUB_PROGRAMMING` | 6 | EEPROM programming in progress |
+| `_SUB_PORT_SELECT` | 7 | Selecting which hexpansion to erase |
+
+When adding or modifying state-driven behaviour, always inspect the current state constants, manager registrations, and dispatch logic in `app.py` — treat that file as the source of truth.
 
 ### Event-Driven Architecture
 
@@ -388,11 +396,6 @@ HexDriveApp (hexdrive.py)
   ├── runs from EEPROM, managed by BadgeOS
   ├── owns PWM outputs, SMPSU control
   └── implements keep-alive safety timeout
-
-LineFollowerApp (linefollower.py)
-  ├── extended fork of BadgeBotApp
-  ├── adds LineSensor, gesture sensor (GR10-30)
-  └── adds STATE_FOLLOWER for autonomous driving
 
 SensorManager (sensor_manager.py)
   └── auto-discovers sensors via sensors/ package

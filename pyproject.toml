@@ -39,6 +39,7 @@ ignored-modules = [
 generated-members = [
     "time.ticks_ms",
     "time.ticks_diff",
+    "time.ticks_add",
     "time.sleep_ms",
     "asyncio.sleep_ms",
     "time.ticks_us",

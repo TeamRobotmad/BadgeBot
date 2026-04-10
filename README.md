@@ -98,8 +98,15 @@ This repo contains lots of files that you don't need on your badge to use a HexD
 + line_follow.mpy
 + autotune.mpy
 + autotune_mgr.mpy
++ autodrive.mpy
 + sensor_manager.mpy
 + sensor_test.mpy
++ sensors/__init__.mpy
++ sensors/sensor_base.mpy
++ sensors/vl53l0x.mpy
++ sensors/vl6180x.mpy
++ sensors/tcs3472.mpy
++ sensors/tcs3430.mpy
 
 
 ### Hexpansion Recovery ###
