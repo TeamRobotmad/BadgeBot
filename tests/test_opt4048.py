@@ -186,8 +186,8 @@ def test_decode_channel_known_value(opt4048_module):
 
 def test_decode_channel_max_exponent(opt4048_module):
     """Maximum exponent (15) should shift mantissa left by 15."""
-    # exponent=15 (0xF), mantissa_hi=0x001, mantissa_lo=0x00
-    buf = bytes([0xF0, 0x01, 0x00, 0x00])
+    # exponent=15 (0xF), mantissa_hi=0x000, mantissa_lo=0x01  → mantissa=1
+    buf = bytes([0xF0, 0x00, 0x01, 0x00])
     result = opt4048_module.OPT4048._decode_channel(buf, 0)
     assert result == 1 << 15
 
