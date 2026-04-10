@@ -369,7 +369,7 @@ class SensorTestMgr:
                             colour_name = f"x={x_f:.2f}, y={y_f:.2f}"
                         self._display_data["colour"] = colour_name
                     elif self._page_selected == _PAGE_RAW:
-                       self._display_data = {k: str(v) for k, v in self._sensor_data.items()}
+                        self._display_data = {k: str(v) for k, v in self._sensor_data.items()}
 
                     #convert CIE1931 XYZ to RGB using a simple matrix transform
                     r = int( 3.2406 * x - 1.5372 * y - 0.4986 * z)

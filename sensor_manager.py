@@ -11,13 +11,13 @@ Usage (lazy import pattern to conserve badge RAM):
     mgr.close()
 """
 
-import machine
+from machine import I2C, Pin
 from .sensors import ALL_SENSOR_CLASSES
 from system.hexpansion.config import HexpansionConfig
 
 #HexSense LED pin
-_LED_PIN = 1
-_INTERRUPT_PIN = 2
+_LED_PIN = 1        # LED to illumiinate area under colour sensor to mmeasure reflected light from surface below.
+_INTERRUPT_PIN = 2  # Not currently used, but we can set it up as an input for future interrupt-based drivers
 
 
 class SensorManager:
@@ -52,6 +52,7 @@ class SensorManager:
     def type(self) -> str:
         return self._type    
 
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -63,7 +64,7 @@ class SensorManager:
         self._port = port
 
         try:
-            self._i2c = machine.I2C(port)
+            self._i2c = I2C(port)
         except Exception as e:      # pylint: disable=broad-exception-caught
             if self.logging:
                 print(f"SM:Cannot open I2C port {port}: {e}")
@@ -106,11 +107,12 @@ class SensorManager:
             if self.logging:
                 print(f"SM:LED On port {port}")
             config = HexpansionConfig(port)    
-            config.ls_pin[_LED_PIN].init(mode=machine.Pin.OUT)
+            config.ls_pin[_LED_PIN].init(mode=Pin.OUT)
             config.ls_pin[_LED_PIN].value(1)
             
-            config.ls_pin[_INTERRUPT_PIN].init(mode=machine.Pin.IN)
+            config.ls_pin[_INTERRUPT_PIN].init(mode=Pin.IN)
         return len(self._sensors) > 0
+
 
     def close(self):
         """Shutdown all sensors and release the I2C bus."""
@@ -125,12 +127,13 @@ class SensorManager:
             config = HexpansionConfig(self._port)    
             if config is not None:
                 config.ls_pin[_LED_PIN].value(0)
-                config.ls_pin[_LED_PIN].init(mode=machine.Pin.IN)
+                config.ls_pin[_LED_PIN].init(mode=Pin.IN)
         self._sensors = []
         self._index = 0
         self._last_data = {}
         self._i2c = None
         self._port = None
+
 
     # ------------------------------------------------------------------
     # Sensor selection
@@ -150,44 +153,8 @@ class SensorManager:
             self._last_data = {}
             self._read_interval_ms = getattr(self._sensors[self._index], 'READ_INTERVAL_MS', 250)
             self._type = getattr(self._sensors[self._index], 'TYPE', 'Generic')
-
-
-    def select_sensor(self, index: int) -> bool:
-        """Select sensor by index. Returns True if index is valid."""
-        if 0 <= index < len(self._sensors):
-            self._index = index
-            self._last_data = {}
-            self._read_interval_ms = getattr(self._sensors[self._index], 'READ_INTERVAL_MS', 250)
-            self._type = getattr(self._sensors[self._index], 'TYPE', 'Generic')
-            return True
-        return False
-
-
-    # Select sensor by type
-    def select_sensor_by_type(self, sensor_type: str) -> bool:
-        """Select the first sensor of the given type. Returns True if found."""
-        for idx, sensor in enumerate(self._sensors):
-            if getattr(sensor, 'TYPE', 'Generic') == sensor_type:
-                self._index = idx
-                self._last_data = {}
-                self._read_interval_ms = getattr(sensor, 'READ_INTERVAL_MS', 250)
-                self._type = getattr(sensor, 'TYPE', 'Generic')
-                return True
-        return False
-    
-
-    def select_sensor(self, name: str) -> bool:
-        """Select sensor by NAME. Returns True if found."""
-        for idx, sensor in enumerate(self._sensors):
-            if sensor.NAME == name:
-                self._index = idx
-                self._last_data = {}
-                self._read_interval_ms = getattr(sensor, 'READ_INTERVAL_MS', 250)
-                self._type = getattr(sensor, 'TYPE', 'Generic')
-                return True
-        return False
-
-
+   
+   
     # ------------------------------------------------------------------
     # Reading
     # ------------------------------------------------------------------
