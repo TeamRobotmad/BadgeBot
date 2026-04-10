@@ -2,7 +2,7 @@
 
 Provides a generic fake-hexpansion framework that allows tests to simulate
 the presence of any hexpansion type (HexDrive, HexSense, etc.) without
-real hardware.  The mechanism patches the ``read_header()`` function so that
+real hardware.  The mechanism patches ``HexpansionMgr._read_header()`` so that
 ``HexpansionMgr._check_port_for_known_hexpansions`` finds a valid EEPROM
 header, and injects a lightweight stub app into ``scheduler.apps`` so that
 ``_find_hexpansion_app`` succeeds.
@@ -132,7 +132,7 @@ HexDriveApp = type("HexDriveApp", (_FakeHexDriveApp,), {})
 @contextlib.contextmanager
 def install_fake_hexpansion(vid: int, pid: int, port: int,
                             app_class=None, app_version: int | None = None):
-    """Context manager that patches ``read_header`` and ``scheduler.apps``
+    """Context manager that patches ``HexpansionMgr._read_header`` and ``scheduler.apps``
     so that a fake hexpansion of the given type appears on *port*.
 
     Cleanup (stopping patches and removing the fake app from
@@ -167,17 +167,20 @@ def install_fake_hexpansion(vid: int, pid: int, port: int,
 
     fake_app = app_class(port, app_version)
 
-    # Build a ``read_header`` replacement that returns the fake header for
+    # Build a ``_read_header`` replacement that returns the fake header for
     # *port* and raises OSError for all other ports (= no EEPROM present).
-    def _fake_read_header(port_arg, *args, **kwargs):
-        if port_arg == port:
+    # The real method signature is: _read_header(self, port=None, i2c=None, ...)
+    _expected_port = port  # capture before it could be shadowed by the parameter name
+
+    def _fake_read_header(self, port=None, **kwargs):  # pylint: disable=unused-argument
+        if port == _expected_port:
             return FakeHexpansionHeader(vid, pid)
         raise OSError("no EEPROM")
 
     patches = []
 
-    # Patch read_header in the hexpansion_mgr module's namespace
-    p1 = patch("sim.apps.BadgeBot.hexpansion_mgr.read_header", side_effect=_fake_read_header)
+    # Patch the instance method on the class so all HexpansionMgr instances use the stub
+    p1 = patch("sim.apps.BadgeBot.hexpansion_mgr.HexpansionMgr._read_header", _fake_read_header)
     p1.start()
     patches.append(p1)
 
@@ -241,7 +244,7 @@ def badgebot_app_with_hexpansion(hexdrive_pid, hexdrive_port):
     """A BadgeBotApp that has detected a fake HexDrive on *hexdrive_port*.
 
     The fixture:
-    1. Patches ``read_header`` so the HexpansionMgr finds a valid header.
+    1. Patches ``HexpansionMgr._read_header`` so the HexpansionMgr finds a valid header.
     2. Injects a stub ``HexDriveApp`` into ``scheduler.apps``.
     3. Drives the hexpansion-management state-machine through enough
        ``update()`` calls for the app to reach STATE_MENU with all
