@@ -20,6 +20,17 @@ from .app import DEFAULT_BACKGROUND_UPDATE_PERIOD
 _SUB_SELECT_PORT = 0
 _SUB_READING     = 1
 
+
+# Pages of information to show for each sensor (can be switched with up/down buttons)
+_PAGE_RAW = 0
+_PAGE_STATS = 1
+_PAGE_DATA = 2
+_PAGE_NAMES = {
+    0: "Raw",
+    1: "Stats",
+    2: "Data",
+}
+
 # Values are based on the CIE 1931 Chromaticity Diagram
 COLOR_REGIONS = [
     {"name": "White",   "x": (0.28, 0.35), "y": (0.28, 0.35)},
@@ -59,6 +70,8 @@ class SensorTestMgr:
         self._port_selected: int = 1
         self._sensor_data: dict = {}
         self._display_data: dict = {}
+        self._page_selected: int = _PAGE_RAW
+        self._page_count: int = 3
         self._logging: bool = logging
         self._read_timer: int = 0    # ms since last sensor read
         self._sample_count: int = 0
@@ -167,7 +180,7 @@ class SensorTestMgr:
 
 
     @staticmethod
-    def lookup_color(x: int, y: int, z: int, brightness_threshold: int = 10) -> str:
+    def lookup_color_XYZ(x: int, y: int, z: int, brightness_threshold: int = 10) -> str:
         """
         Identifies a color name by searching through the COLOR_REGIONS table.
             Parameters:
@@ -198,6 +211,67 @@ class SensorTestMgr:
     # result = lookup_color(0.6, 0.3, 0.1)
     # print(f"Detected: {result}")
 
+    @staticmethod
+    def lookup_colour_RGB(r: int, g: int, b: int, clear: int = 0) -> str:
+        """Identifies a color name from raw RGB channel readings using HSV colour space.
+
+        HSV naturally separates chromatic colour (hue) from achromatic attributes
+        (saturation and brightness), giving far more accurate named-colour matching
+        than projecting R/G/B onto the CIE xy diagram.
+
+        Parameters:
+            r, g, b : raw channel values (any consistent scale — need not be 0-255).
+            clear   : optional broadband clear-channel reading from the same sensor.
+                      When provided it is used as a brightness reference to distinguish
+                      Black from Gray from White in low-saturation scenes.
+        """
+        max_c = max(r, g, b)
+        if max_c == 0:
+            return "Black"
+
+        min_c = min(r, g, b)
+        delta = max_c - min_c
+
+        # Saturation (0.0 – 1.0): how far from grey the colour is
+        s = delta / max_c
+
+        # --- Achromatic branch (low saturation) ---
+        if s < 0.20:
+            # Use the clear channel as a brightness reference when available;
+            # otherwise fall back to max_c compared to the channel ceiling.
+            brightness_ref = clear if clear > 0 else max_c
+            if brightness_ref > 0:
+                reflectance = max_c / brightness_ref
+            else:
+                reflectance = 0.0
+            if reflectance < 0.15:
+                return "Black"
+            if reflectance > 0.65:
+                return "White"
+            return "Gray"
+
+        # --- Chromatic branch: compute hue (0 – 360°) ---
+        if max_c == r:
+            h = 60.0 * (((g - b) / delta) % 6)
+        elif max_c == g:
+            h = 60.0 * ((b - r) / delta + 2)
+        else:
+            h = 60.0 * ((r - g) / delta + 4)
+
+        if h < 20 or h >= 340:
+            return "Red"
+        if h < 45:
+            return "Orange"
+        if h < 70:
+            return "Yellow"
+        if h < 150:
+            return "Green"
+        if h < 200:
+            return "Cyan"
+        if h < 260:
+            return "Blue"
+        return "Magenta"
+
 
     # ------------------------------------------------------------------
     # Background update (called from the fast loop)
@@ -216,10 +290,9 @@ class SensorTestMgr:
             self._sensor_data = {"Error": str(e)}
 
         self._count_timer += delta
-        if self._count_timer >= 10000:
+        if self._count_timer >= 1000:
             # compute sample rate
             self._sample_rate = (((1000 * self.sample_count) + 500) // self._count_timer) # sample rate in Hz
-            #print(f"S:Sample count={self.sample_count}, sample_rate={self._sample_rate}Hz")
             self._count_timer = 0
             self.sample_count = 0
             self._new_sample = True
@@ -273,44 +346,63 @@ class SensorTestMgr:
             app.return_to_menu()
 
 
-    def _update_reading(self, delta: int):      # pylint: disable=unused-argument
-        app = self._app
-        if self._new_sample:  # reading is handled in background_update, which updates self._sensor_data when a new reading is available
-            self._new_sample = False
-            # if the sensor is a colour sensor: create colour which can be used with ctx to show the detected colour
+    def _update_display_values(self):      # pylint: disable=unused-argument
+        # clear old display data
+        self._display_data = {}
+
+        # Sensor-specific display logic based on sensor type and available data
+        if self._sensor_mgr and self._sensor_mgr.type == "Colour":
+            # Colour Sensors typically provide either raw RGB channels or CIE XYZ channels, so check which we have and process accordingly.
             if all(k in self._sensor_data for k in ("x", "y", "z")):
                 try:
                     x = int(self._sensor_data["x"])
                     y = int(self._sensor_data["y"])
                     z = int(self._sensor_data["z"])
 
-                    # Look up the colour name based on the chromaticity coordinates and brightness
-                    colour_name = self.lookup_color(x, y, z)
-                    if colour_name == "Unknown":
-                        total = x + y + z
-                        x_f = x / total
-                        y_f = y / total
-                        colour_name = f"x={x_f:.2f}, y={y_f:.2f}"
-                    self._display_data["colour"] = colour_name
-                    
+                    if self._page_selected == _PAGE_DATA:
+                        # Look up the colour name based on the chromaticity coordinates and brightness
+                        colour_name = self.lookup_color_XYZ(x, y, z)
+                        if colour_name == "Unknown":
+                            total = x + y + z
+                            x_f = x / total
+                            y_f = y / total
+                            colour_name = f"x={x_f:.2f}, y={y_f:.2f}"
+                        self._display_data["colour"] = colour_name
+                    elif self._page_selected == _PAGE_RAW:
+                       self._display_data = {k: str(v) for k, v in self._sensor_data.items()}
+
                     #convert CIE1931 XYZ to RGB using a simple matrix transform
                     r = int( 3.2406 * x - 1.5372 * y - 0.4986 * z)
                     g = int(-0.9689 * x + 1.8758 * y + 0.0415 * z)
                     b = int( 0.0557 * x - 0.2040 * y + 1.0570 * z)
+
                 except Exception as e:    # pylint: disable=broad-exception-caught
                     print(f"S:Colour conversion error: {e}")
                     r = g = b = 0
+
             elif all(k in self._sensor_data for k in ("red", "green", "blue")):
                 try:
                     r = int(self._sensor_data["red"])
                     g = int(self._sensor_data["green"])
                     b = int(self._sensor_data["blue"])
+
+                    if self._page_selected == _PAGE_DATA:
+                        if "clear" in self._sensor_data:
+                            clear = int(self._sensor_data["clear"])
+                            colour_name = self.lookup_colour_RGB(r, g, b, clear)
+                        else:
+                            colour_name = self.lookup_colour_RGB(r, g, b)
+                        self._display_data["colour"] = colour_name
+                    elif self._page_selected == _PAGE_RAW:
+                        self._display_data = {k: str(v) for k, v in self._sensor_data.items()}
+
                 except Exception as e:    # pylint: disable=broad-exception-caught
                     print(f"S:Colour conversion error: {e}")
                     r = g = b = 0
             else:
                 r = g = b = 0
-
+                
+            # if the sensor is a colour sensor: create colour which can be used with ctx to show the detected colour
             max_channel = max(r, g, b)
             if max_channel > 0:
                 # display colour from sensed colour
@@ -320,11 +412,35 @@ class SensorTestMgr:
                 self.colour = (red_f, green_f, blue_f)
             else:
                 self.colour = (1.0,1.0,0.0)  # default to yellow if all channels are zero to avoid divide-by-zero and to provide a visible colour for non-colour sensors
+        elif self._sensor_mgr and self._sensor_mgr.type == "Distance":
+            if self._page_selected == _PAGE_DATA and "dist_mm" in self._sensor_data:
+                try:
+                    dist_mm = int(self._sensor_data["dist_mm"])
+                    if dist_mm < 20:
+                        distance_str = f"{dist_mm}mm (Very Close)"
+                    elif dist_mm < 100:
+                        distance_str = f"{dist_mm}mm (Close)"
+                    elif dist_mm < 500:
+                        distance_str = f"{dist_mm}mm (Medium)"
+                    else:
+                        distance_str = f"{dist_mm}mm (Far)"
+                    self._display_data["Distance"] = distance_str
+                except Exception as e:    # pylint: disable=broad-exception-caught
+                    print(f"S:Distance processing error: {e}")
+        elif self._page_selected == _PAGE_RAW:
+            self._display_data = {k: str(v) for k, v in self._sensor_data.items()}
 
+        if self._page_selected == _PAGE_STATS:
             if self._sample_rate > 0:
-                print(f"S:sample_rate={self._sample_rate}Hz")
                 self._display_data["rate"] = f"{self._sample_rate}Hz"    
-                app.refresh = True
+
+
+    def _update_reading(self, delta: int):      # pylint: disable=unused-argument
+        app = self._app
+        if self._new_sample:  # reading is handled in background_update, which updates self._sensor_data when a new reading is available
+            self._new_sample = False
+            self._update_display_values()
+            app.refresh = True
 
         if app.button_states.get(BUTTON_TYPES["RIGHT"]) and self._sensor_mgr and self._sensor_mgr.num_sensors > 1:
             app.button_states.clear()
@@ -340,6 +456,18 @@ class SensorTestMgr:
             self._sensor_data = {}
             self._display_data = {}
             app.refresh = True
+        elif app.button_states.get(BUTTON_TYPES["UP"]):
+            app.button_states.clear()
+            if self._page_count > 0:
+                self._page_selected = (self._page_selected - 1) % self._page_count
+                self._update_display_values()               
+            app.refresh = True
+        elif app.button_states.get(BUTTON_TYPES["DOWN"]):
+            app.button_states.clear()
+            if self._page_count > 0:
+                self._page_selected = (self._page_selected + 1) % self._page_count
+                self._update_display_values()
+            app.refresh = True            
         elif app.button_states.get(BUTTON_TYPES["CANCEL"]):
             app.button_states.clear()
             self._sensor_mgr.close()
@@ -353,33 +481,63 @@ class SensorTestMgr:
 
     def draw(self, ctx):
         """Render sensor test UI."""
-        app = self._app
         if self._sub_state == _SUB_SELECT_PORT:
-            app.draw_message(ctx,
-                ["Sensor Test", f"Port: {self._port_selected}"],
-                [(1, 1, 0), (0, 1, 1)],
-                label_font_size)
-            button_labels(ctx, left_label="<Port", right_label="Port>",
-                          confirm_label="Scan", cancel_label="Back")
+            self._draw_select_port(ctx)
+            return True
+        elif self._sub_state == _SUB_READING:
+            self._draw_reading(ctx)
+            return True
+        return False
+    
+    def _draw_select_port(self, ctx):
+        self._app.draw_message(ctx,
+            ["Sensor Test", f"Port: {self._port_selected}"],
+            [(1, 1, 0), (0, 1, 1)],
+            label_font_size)
+        button_labels(ctx, left_label="<Port", right_label="Port>",
+                      confirm_label="Scan", cancel_label="Back")
+        
+
+    def _draw_reading(self, ctx):
+        up_label = down_label = ""
+        num_sensors = self._sensor_mgr.num_sensors if self._sensor_mgr else 1
+        sensor_name = self._sensor_mgr.current_sensor_name if self._sensor_mgr else "Sensor"
+        if num_sensors > 1:
+            lines = [f"Slot {self._port_selected}-{self._sensor_mgr.current_sensor_index + 1}/{num_sensors}"]
         else:
-            num_sensors = self._sensor_mgr.num_sensors if self._sensor_mgr else 1
-            sensor_name = self._sensor_mgr.current_sensor_name if self._sensor_mgr else "Sensor"
-            if num_sensors > 1:
-                title = f"{sensor_name} {self._sensor_mgr.current_sensor_index + 1}/{num_sensors}"
-            else:
-                title = sensor_name
-            lines = [title]
-            colours = [(0.0, 1.0, 1.0)]
-            if self._display_data:
-                for label, value in self._display_data.items():
-                    lines.append(f"{label}:{value}")
-                    colours.append(self.colour)
-            else:
-                lines.append("Reading...")
-                colours.append((0.5, 0.5, 0.5))
-            app.draw_message(ctx, lines, colours, label_font_size)
+            lines = [f"Slot {self._port_selected}"]
+        colours = [(1, 1, 0)]
+        if self._page_count == 0:
+            lines += [sensor_name]
+        else:            
+            lines += [f"{sensor_name}-{_PAGE_NAMES[self._page_selected]}"]
+        colours += [(1, 0, 1)]
+        if self._display_data:
+            for label, value in self._display_data.items():
+                lines += [f"{label}:{value}"]
+                colours += [self.colour]
+        else:
+            lines += ["Reading..."]
+            colours += [(0.5, 0.5, 0.5)]
+
+        if self._page_count > 0:
+            # Button labels: up/down show destination page names
+            down_page = (self._page_selected + 1) % self._page_count
+            up_page = (self._page_selected - 1) % self._page_count
+            # Only show the DOWN label if there is more than 1 page, otherwise there is no other page to go to
+            down_label=_PAGE_NAMES[down_page] if self._page_count > 1 else ""
+            # only show the UP label if there are more than 2 pages, otherwise it would just show the same as the DOWN
+            up_label=_PAGE_NAMES[up_page] if self._page_count > 2 else ""
+
             if num_sensors > 1:
                 button_labels(ctx, left_label="<Prev", right_label="Next>",
-                              cancel_label="Back")
+                            up_label=up_label, down_label=down_label, cancel_label="Back")
             else:
-                button_labels(ctx, cancel_label="Back")
+                button_labels(ctx, up_label=up_label, down_label=down_label, cancel_label="Back")
+
+        # Ensure there are always 5 lines to draw for consistent layout, even if some are blank
+        while len(lines) < 5:
+            lines.append("")
+            colours.append((1, 1, 1))
+
+        self._app.draw_message(ctx, lines, colours, label_font_size)

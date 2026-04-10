@@ -25,8 +25,6 @@ from system.hexpansion.util import get_hexpansion_block_devices, detect_eeprom_a
 from system.hexpansion.config import HexpansionConfig
 from system.scheduler import scheduler
 
-import app
-
 _NUM_HEXPANSION_SLOTS = 6
 
 # HexDrive Hexpansion constants
@@ -239,7 +237,7 @@ class HexpansionMgr:
             self._port_selected_header = None
         self._update_detail_page_count()
         # Default to details page if available, otherwise vid/pid
-        self._port_detail_page = 2 if self._port_detail_page_count > 2 else 0
+        self._port_detail_page = self._PAGE_DETAILS if self._port_detail_page_count > 2 else self._PAGE_VID_PID
 
 
     def _update_detail_page_count(self):
@@ -251,14 +249,14 @@ class HexpansionMgr:
             if ht.sub_type or ht.app_name:
                 # Recognised type with sub_type or app_name, so show details page
                 self._port_detail_page_count = 3
-                self._port_detail_page = 2
+                self._port_detail_page = self._PAGE_DETAILS
             elif type_idx == app.BLANK_HEXPANSION_INDEX:
                 # Blank EEPROM - no details to show, so only show the EEPROM page
                 self._port_detail_page_count = 0
             elif type_idx == app.UNRECOGNISED_HEXPANSION_INDEX:
                 # Unrecognised type - show vid/pid page and EEPROM page
                 self._port_detail_page_count = 2
-                self._port_detail_page = 0
+                self._port_detail_page = self._PAGE_VID_PID
         else:
             # Empty
             self._port_detail_page_count = 0
@@ -552,7 +550,7 @@ class HexpansionMgr:
                         self._sub_state = _SUB_UPGRADE_CONFIRM
                     else:   # end of loop
                         if self._logging:
-                            print(f"H:HexDrive not found, Interactive mode -> port select state")
+                            print("H:HexDrive not found, Interactive mode -> port select state")
                         self._enter_port_select()
                 else:
                     if self._logging:
@@ -699,7 +697,12 @@ class HexpansionMgr:
     
     
 
+
+# Hexpansion/EEPROM information pages
     _PAGE_NAMES = ("VID/PID", "EEPROM", "Details")
+    _PAGE_VID_PID = 0
+    _PAGE_EEPROM = 1
+    _PAGE_DETAILS = 2    
 
     def _draw_port_select(self, ctx):
         """Draw the port-select screen with paged details."""
@@ -715,7 +718,7 @@ class HexpansionMgr:
             page = self._port_detail_page
             lines = [f"Slot {self._port_selected}-{self._PAGE_NAMES[page]}", hdr.friendly_name if hdr is not None else hexpansion_name]
             colours = [(1, 1, 0), (1, 0, 1)]
-            if page == 0:
+            if page == self._PAGE_VID_PID:
                 # VID / PID page
                 if hdr is not None:
                     lines += [f"VID: {hdr.vid:04X}", f"PID: {hdr.pid:04X}"]
@@ -723,7 +726,7 @@ class HexpansionMgr:
                 #else:
                 #    lines = header_lines + ["No header"]
                 #    colours = header_colours + [(1, 0, 0)]
-            elif page == 1:
+            elif page == self._PAGE_EEPROM:
                 # EEPROM parameters page
                 if hdr is not None:
                     lines += [f"Size: {hdr.eeprom_total_size} Bytes", f"Page: {hdr.eeprom_page_size} Bytes"]
@@ -731,7 +734,7 @@ class HexpansionMgr:
                 #else:
                 #    lines = header_lines + ["No header"]
                 #    colours = header_colours + [(1, 0, 0)]
-            else: # page == 2:
+            else: # page == self._PAGE_DETAILS:
                 # Details page (only when page_count == 3)
                 type_idx = self._hexpansion_type_by_slot[self._port_selected - 1]
                 ht = app.HEXPANSION_TYPES[type_idx] if type_idx is not None else None
