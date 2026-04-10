@@ -84,7 +84,7 @@ class AutotuneMgr:
 
         if self.follower.line_sensors is None:
             # Line sensors are not available; inform the user and abort autotune.
-            Notification(app, "Line sensors not available")
+            app.notification = Notification("Line sensors not available")
             return False
         if app.hexdrive_app is not None:
             app.hexdrive_app.set_logging(False)
