@@ -18,10 +18,7 @@ from system.scheduler.events import (RequestForegroundPopEvent,
                                      RequestStopAppEvent)
 from tildagonos import tildagonos
 from machine import Pin
-
 import app
-from .utils import draw_logo_animated, parse_version
-from. hexdrive import VERSION as HEXDRIVE_APP_VERSION
 
 # If you could use hard=True in setting up a Pin IRQ hander, which you can't as of BadgeOS V1.10, then it is recommended to
 # allocate the emergency exception buffer to prevent crashes due to OSError: Out of memory when an interrupt occurs and
@@ -29,41 +26,13 @@ from. hexdrive import VERSION as HEXDRIVE_APP_VERSION
 #import micropython
 #micropython.alloc_emergency_exception_buf(100)
 
-# Import sub-modules after constants are defined so they can safely
-# `from .app import STATE_*` without circular-import timing issues.
-# Each module registers its own settings via init_settings()
-# This is just a very robust way of doing from .module import XYZ which does
-# not crash if anything in the module fails to import, and allows us to import
-# individual classes from the modules without importing the whole module.
-def _try_import(module_name, *attr_names):
-    """Try importing named attributes from a sibling submodule.
-    Returns a tuple of the requested attributes (or None for each on failure)."""
-    nones = (None,) * len(attr_names)
-    pkg_name = __name__.rsplit('.', 1)[0]
-    full_name = pkg_name + '.' + module_name
-    try:
-        __import__(full_name)
-        mod = sys.modules[full_name]
-        return tuple(getattr(mod, n) for n in attr_names)
-    except ImportError as e:
-        print(f"Warning: {module_name} module not found ({e})")
-    except Exception as e:                          # pylint: disable=broad-except
-        print(f"Error importing {module_name} module ({e})")
-    return nones
-
-HexpansionMgr, HexpansionType, _hexpansion_init_settings = _try_import('hexpansion_mgr', 'HexpansionMgr', 'HexpansionType', 'init_settings')
-SettingsMgr, MySetting                                    = _try_import('settings_mgr',   'SettingsMgr', 'MySetting')
-MotorMovesMgr, _motor_moves_init_settings                 = _try_import('motor_moves',    'MotorMovesMgr', 'init_settings')
-ServoTestMgr, _servo_test_init_settings                   = _try_import('servo_test',     'ServoTestMgr', 'init_settings')
-StepperTestMgr, _stepper_test_init_settings               = _try_import('stepper_test',   'StepperTestMgr', 'init_settings')
-LineFollowMgr, _line_follow_init_settings                 = _try_import('line_follow',    'LineFollowMgr', 'init_settings')
-(AutotuneMgr,)                                            = _try_import('autotune_mgr',   'AutotuneMgr')
-SensorTestMgr, _sensor_test_init_settings                 = _try_import('sensor_test',    'SensorTestMgr', 'init_settings')
-AutoDriveMgr, _autodrive_init_settings                    = _try_import('autodrive',      'AutoDriveMgr', 'init_settings')
+from .utils import draw_logo_animated, parse_version
+from. hexdrive import VERSION as HEXDRIVE_APP_VERSION
 
 
 _SETTINGS_NAME_PREFIX = "badgebot."  # Prefix for settings keys in EEPROM
 APP_VERSION = "1.5" # BadgeBot App Version Number
+
 _DIAG_PORT = 2  # Hexpansion port to use for diagnostic timing measurements
 
 # If you change the URL then you will need to regenerate the QR code
@@ -152,6 +121,40 @@ MENU_ITEM_HEXPANSION = 7
 MENU_ITEM_SETTINGS = 8  
 MENU_ITEM_ABOUT = 9
 MENU_ITEM_EXIT = 10
+
+
+
+# Import sub-modules after constants are defined so they can safely
+# `from .app import STATE_*` without circular-import timing issues.
+# Each module registers its own settings via init_settings()
+# This is just a very robust way of doing from .module import XYZ which does
+# not crash if anything in the module fails to import, and allows us to import
+# individual classes from the modules without importing the whole module.
+def _try_import(module_name, *attr_names):
+    """Try importing named attributes from a sibling submodule.
+    Returns a tuple of the requested attributes (or None for each on failure)."""
+    nones = (None,) * len(attr_names)
+    pkg_name = __name__.rsplit('.', 1)[0]
+    full_name = pkg_name + '.' + module_name
+    try:
+        __import__(full_name)
+        mod = sys.modules[full_name]
+        return tuple(getattr(mod, n) for n in attr_names)
+    except ImportError as e:
+        print(f"Warning: {module_name} module not found ({e})")
+    except Exception as e:                          # pylint: disable=broad-except
+        print(f"Error importing {module_name} module ({e})")
+    return nones
+
+HexpansionMgr, HexpansionType, _hexpansion_init_settings = _try_import('hexpansion_mgr', 'HexpansionMgr', 'HexpansionType', 'init_settings')
+SettingsMgr, MySetting                                    = _try_import('settings_mgr',   'SettingsMgr', 'MySetting')
+MotorMovesMgr, _motor_moves_init_settings                 = _try_import('motor_moves',    'MotorMovesMgr', 'init_settings')
+ServoTestMgr, _servo_test_init_settings                   = _try_import('servo_test',     'ServoTestMgr', 'init_settings')
+StepperTestMgr, _stepper_test_init_settings               = _try_import('stepper_test',   'StepperTestMgr', 'init_settings')
+LineFollowMgr, _line_follow_init_settings                 = _try_import('line_follow',    'LineFollowMgr', 'init_settings')
+(AutotuneMgr,)                                            = _try_import('autotune_mgr',   'AutotuneMgr')
+SensorTestMgr, _sensor_test_init_settings                 = _try_import('sensor_test',    'SensorTestMgr', 'init_settings')
+AutoDriveMgr, _autodrive_init_settings                    = _try_import('autodrive',      'AutoDriveMgr', 'init_settings')
 
 
 class BadgeBotApp(app.App):         # pylint: disable=no-member
