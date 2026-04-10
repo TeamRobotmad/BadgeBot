@@ -122,6 +122,20 @@ MENU_ITEM_EXIT = 10
 # Front face direction labels (0=BtnA corner between slots 6 & 1, each step = 30° CW)
 _FRONT_FACE_DEFAULT = 0
 _FRONT_FACE_NUM_ORIENTATIONS = 12   
+_FRONT_FACE_LABELS = (
+    "BtnA",   # 0  - corner between slot 6 & slot 1 (default top)
+    "Slot 1", # 1
+    "BtnB",   # 2  - corner between slot 1 & slot 2
+    "Slot 2", # 3
+    "BtnC",   # 4
+    "Slot 3", # 5
+    "BtnD",   # 6  - corner between slot 3 & slot 4 (bottom)
+    "Slot 4", # 7
+    "BtnE",   # 8
+    "Slot 5", # 9
+    "BtnF",   # 10
+    "Slot 6", # 11
+)
 _FWD_DIR_DEFAULT = 0
 
 
@@ -236,9 +250,11 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
         # Hexpansion related
         #                                       pid      name         vid          eeprom total size        eeprom page size      app mpy name                 app mpy version                       app name                motors    servos    sensors    sub_type            
-        self.HEXPANSION_TYPES = [HexpansionType(0xCBCB, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2, servos=4,            sub_type="Uncommitted" ),
-                                 HexpansionType(0xCBCA, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2,                      sub_type="2 Motor" ),
-                                 HexpansionType(0xCBCC, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp",           servos=4,            sub_type="4 Servo" ),
+        self.HEXPANSION_TYPES = [HexpansionType(0xCBCB, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2, servos=4, steppers=1, sub_type="Uncommitted" ),
+                                 HexpansionType(0xCBCA, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2,                               sub_type="2 Motor" ),
+                                 HexpansionType(0xCBCC, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp",           servos=4,               sub_type="4 Servo" ),
+                                 HexpansionType(0xCBCD, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=1, servos=2,               sub_type="1 Mot 2 Srvo" ),
+                                 HexpansionType(0xCBCE, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp",                      steppers=1, sub_type="1 Stepper" ),
                                  HexpansionType(0x0100, "Prototype",   vid=0xCBCB, eeprom_total_size=65536, eeprom_page_size=128,                                                                                                                sensors=2, sub_type="2 Line Sensors"),
                                  HexpansionType(0x0200, "HexDriveV2",  vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2, servos=2,            sub_type="Uncommitted" ),
                                  HexpansionType(0x0201, "HexDriveV2",  vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2,                      sub_type="2 Motor" ),
@@ -250,9 +266,9 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                                  HexpansionType(0xFFFF, "Blank",     sub_type="")]       # Virtual type to represent blank EEPROMs 
 
         self.HEXDRIVE_HEXPANSION_INDEX = 0      # Index in the HEXPANSION_TYPES list which corresponds to the basic HexDrive type
-        self.HEXSENSE_HEXPANSION_INDEX = 3      # Index in the HEXPANSION_TYPES list which corresponds to the basic HexSense type 
-        self.UNRECOGNISED_HEXPANSION_INDEX = 9  # Index in the HEXPANSION_TYPES list which corresponds to unrecognised hexpansion types MUST BE LAST NON-BLANK ENTRY IN THE LIST
-        self.BLANK_HEXPANSION_INDEX = 10        # Index in the HEXPANSION_TYPES list which corresponds to blank EEPROMs
+        self.HEXSENSE_HEXPANSION_INDEX = 5      # Index in the HEXPANSION_TYPES list which corresponds to the basic HexSense type 
+        self.UNRECOGNISED_HEXPANSION_INDEX = 11 # Index in the HEXPANSION_TYPES list which corresponds to unrecognised hexpansion types MUST BE LAST NON-BLANK ENTRY IN THE LIST
+        self.BLANK_HEXPANSION_INDEX = 12        # Index in the HEXPANSION_TYPES list which corresponds to blank EEPROMs
         self.hexpansion_update_required: bool = False # flag from async to main loop
 
         self.hexdrive_port = None

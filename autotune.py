@@ -136,8 +136,8 @@ class PIDAutoTuner:
 
         Parameters
         ----------
-        error : float
-            Normalised line-position error in range [-1, +1].
+        error : int
+            Line-position error in range [-1000, +1000].
             Negative = line is to the left, positive = line is to the right.
         delta : int
             Elapsed time in milliseconds since the last call to update().
