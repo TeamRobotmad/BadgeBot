@@ -284,6 +284,7 @@ class SensorTestMgr:
             #self._count_timer += self._read_timer
             #self._read_timer = 0
         try:
+            self._sensor_mgr.report_interrupt()
             self._sensor_data = self._sensor_mgr.read_current()
             self.sample_count = self.sample_count + 1
         except Exception as e:      # pylint: disable=broad-exception-caught
@@ -359,6 +360,15 @@ class SensorTestMgr:
                     y = int(self._sensor_data["y"])
                     z = int(self._sensor_data["z"])
 
+                    if self._sensor_mgr.current_sensor_name == "OPT4048":
+                        # OPT4048 requires a matrix transform to convert from its raw XYZ to standard CIE1931 XYZ.
+                        x1 = int( 2.3489 * x + 0.4075 * y + 0.9286 * z)
+                        y1 = int(-0.1990 * x + 1.9896 * y - 0.1697 * z)
+                        z1 = int( 0.1281 * x - 0.1588 * y + 6.7402 * z)
+                        x = x1
+                        y = y1
+                        z = z1
+
                     if self._page_selected == _PAGE_DATA:
                         # Look up the colour name based on the chromaticity coordinates and brightness
                         colour_name = self.lookup_color_XYZ(x, y, z)
@@ -375,6 +385,7 @@ class SensorTestMgr:
                     r = int( 3.2406 * x - 1.5372 * y - 0.4986 * z)
                     g = int(-0.9689 * x + 1.8758 * y + 0.0415 * z)
                     b = int( 0.0557 * x - 0.2040 * y + 1.0570 * z)
+
 
                 except Exception as e:    # pylint: disable=broad-exception-caught
                     print(f"S:Colour conversion error: {e}")

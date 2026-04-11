@@ -9,7 +9,7 @@ Measurements:
   - x : CIE1931 X channel (raw ADC code)
   - y : CIE1931 Y channel (raw ADC code)
   - z : CIE1931 Z channel (raw ADC code)
-
+  - w : Clear channel (raw ADC code)
 Datasheet: https://www.ti.com/lit/ds/symlink/opt4048.pdf
 """
 
@@ -92,9 +92,9 @@ _INT_CFG_DISABLED  = 0  # SMBUS alert (effectively disabled for polling)
 class OPT4048(SensorBase):
     I2C_ADDR = 0x44
     NAME = "OPT4048"
-    READ_INTERVAL_MS = 10
+    READ_INTERVAL_MS = 30
     TYPE = "Colour"
-    
+
     def __init__(self):
         super().__init__()
         self._overload = False
@@ -151,7 +151,9 @@ class OPT4048(SensorBase):
         """
         tcfg = self._read_reg16(_REG_THRESH_CFG)
         if enabled:
-            tcfg = (tcfg & ~(0x03 << 2)) | (_INT_CFG_ALL_READY << 2)
+            #tcfg = 0x8011 | (0x03 << 5) | (_INT_CFG_ALL_READY << 2)
+            # ch3, output no end of conversion int, burst mode enabled
+            tcfg = 0x8071
         else:
             tcfg = (tcfg & ~(0x03 << 2)) | (_INT_CFG_DISABLED << 2)
         self._write_reg16(_REG_THRESH_CFG, tcfg)
@@ -170,24 +172,40 @@ class OPT4048(SensorBase):
 
         # Configure for fast continuous reads within ~10 ms budget:
         #   Range       : auto (best dynamic range)
-        #   Conv time   : 1.8 ms per channel → 4 × 1.8 ms ≈ 7.2 ms total
+        #   Conv time   : 6.5 ms per channel → 4 × 6.5 ms ≈ 26 ms total
         #   Mode        : continuous
         #   INT latch   : latched (bit 3 = 1)
-        #   INT polarity: active-high (bit 2 = 1)
+        #   INT polarity: active-low (bit 2 = 0)
         #   Fault count : 1 (bits 1:0 = 0)
-        cfg = (RANGE_AUTO << 10) | (CONV_1_8MS << 6) | (MODE_CONTINUOUS << 4) | 0x0C
+        cfg = (RANGE_AUTO << 10) | (CONV_6_5MS << 6) | (MODE_CONTINUOUS << 4) | 0x08
         self._write_reg16(_REG_CONFIG, cfg)
+
+        # Setup Threshold on W channel
+        #self._write_reg16(_REG_THRESH_LO, 0x8400)  # low threshold
+        #self._write_reg16(_REG_THRESH_HI, 0x8400)  # high threshold
 
         # Enable conversion-ready interrupt so status polling works
         self.set_interrupt_enabled(True)
 
+        #r = self._read_reg16(_REG_THRESH_LO)
+        #print(f"thresh[8]: 0x{r:04X}")
+        #r = self._read_reg16(_REG_THRESH_HI)
+        #print(f"thresh[9]: 0x{r:04X}")
+        #r = self._read_reg16(_REG_CONFIG)
+        #print(f"config[A]: 0x{r:04X}")
+        #r = self._read_reg16(_REG_THRESH_CFG)
+        #print(f"thresh[B]: 0x{r:04X}")
+        #r = self._read_reg16(_REG_STATUS)
+        #print(f"status[C]: 0x{r:04X}")
+
         return True
 
     def _measure(self) -> dict:
-        # Poll status for conversion-ready; timeout after 15 ms
-        deadline = time.ticks_add(time.ticks_ms(), 15)
+        # Poll status for conversion-ready; timeout after 30 ms
+        deadline = time.ticks_add(time.ticks_ms(), self.READ_INTERVAL_MS)
         while True:
             st = self._read_reg16(_REG_STATUS)
+            print(f"OPT4048 status: 0x{st:04X}")
             if st & _FLAG_READY:
                 self._overload = bool(st & _FLAG_OVERLOAD)
                 break
@@ -201,11 +219,12 @@ class OPT4048(SensorBase):
         x = self._decode_channel(raw, 0)
         y = self._decode_channel(raw, 4)
         z = self._decode_channel(raw, 8)
-
+        w = self._decode_channel(raw, 12)
         return {
             "x": str(x),
             "y": str(y),
             "z": str(z),
+            "w": str(w),
         }
 
     @staticmethod

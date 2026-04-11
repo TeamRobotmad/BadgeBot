@@ -109,10 +109,20 @@ class SensorManager:
             config = HexpansionConfig(port)    
             config.ls_pin[_LED_PIN].init(mode=Pin.OUT)
             config.ls_pin[_LED_PIN].value(1)
-            
             config.ls_pin[_INTERRUPT_PIN].init(mode=Pin.IN)
+
         return len(self._sensors) > 0
 
+
+    def report_interrupt(self) -> bool:
+        """Check if the interrupt pin is active (low)."""
+        if self._port is None:
+            return False
+        config = HexpansionConfig(self._port)
+        v = config.ls_pin[_INTERRUPT_PIN].value()
+        print(f"INT pin value: {v}")
+        return v == 0
+    
 
     def close(self):
         """Shutdown all sensors and release the I2C bus."""
