@@ -18,6 +18,7 @@ class SensorBase:
     I2C_ADDR = 0x00
     NAME = "Unknown"
     READ_INTERVAL_MS = 250
+    TYPE = "Generic"
 
     def __init__(self):
         self._i2c = None

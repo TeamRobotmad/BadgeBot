@@ -255,7 +255,7 @@ class AutoDriveMgr:
         button_labels(ctx, cancel_label="Stop")
 
 
-    def background_update(self, delta: int) -> tuple[int, int] | None:      # pylint : disable=unused-argument
+    def background_update(self, delta: int) -> tuple[int, int] | None:      # pylint: disable=unused-argument
         """Feed motors from background loop so the HexDrive watchdog stays happy."""
         if self._mc_task is not None and not self._mc_task.done():
             return self.motor_output

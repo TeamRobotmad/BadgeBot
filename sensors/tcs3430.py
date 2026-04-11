@@ -56,7 +56,8 @@ class TCS3430(SensorBase):
     I2C_ADDR = 0x39 # 00111001b
     NAME = "TCS3430"
     READ_INTERVAL_MS = 10
-
+    TYPE = "Colour"
+    
     _saturation: bool = False
 
     def _cmd_write(self, cmd_reg: int, value: int):
@@ -111,15 +112,7 @@ class TCS3430(SensorBase):
         i   = raw[4] | (raw[5] << 8)
         x   = raw[6] | (raw[7] << 8)
 
-        # convert CIE1931 XYZ to RGB using a simple matrix transform
-        #red   = int( 3.2406 * x - 1.5372 * y - 0.4986 * z)
-        #green = int(-0.9689 * x + 1.8758 * y + 0.0415 * z)
-        #blue  = int( 0.0557 * x - 0.2040 * y + 1.0570 * z)  
-
         return {
-            #"red":   str(red),
-            #"green": str(green),
-            #"blue":  str(blue),
             "x":     str(x),
             "y":     str(y),
             "z":     str(z),

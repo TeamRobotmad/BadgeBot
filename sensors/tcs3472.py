@@ -51,7 +51,9 @@ _GLASS_ATTENUATION = 1.0   # adjust if sensor is behind glass / diffuser
 class TCS3472(SensorBase):
     I2C_ADDR = 0x29
     NAME = "TCS3472"
-
+    READ_INTERVAL_MS = 10
+    TYPE = "Colour"
+    
     # The TCS3472 register addresses already include the command bit,
     # so we don't use the base _read_reg / _write_reg helpers directly.
 

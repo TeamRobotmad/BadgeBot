@@ -50,6 +50,8 @@ _ALS_TIMEOUT_MS   = 250   # > integration period (100 ms) + margin
 class VL6180X(SensorBase):
     I2C_ADDR = 0x29
     NAME = "VL6180X"
+    READ_INTERVAL_MS = 100
+    TYPE = "Distance"
 
     # The VL6180X uses 16-bit register addresses, so we override the helpers.
     def _write_reg16(self, reg: int, data: bytes):
@@ -139,13 +141,13 @@ class VL6180X(SensorBase):
         if self._poll_status(_INT_NEW_SAMPLE_RANGE, _RANGE_TIMEOUT_MS):
             status = self._read_u8_16(_RESULT_RANGE_STATUS) >> 4  # upper nibble = error code
             if status == 0:
-                range_mm = self._read_u8_16(_RESULT_RANGE_VAL)
-                result["range_mm"] = f"{range_mm}mm"
+                dist_mm = self._read_u8_16(_RESULT_RANGE_VAL)
+                result["dist_mm"] = f"{dist_mm}mm"
             else:
                 # Non-zero = measurement error (e.g. 0x0B = no target detected)
-                result["range_mm"] = "error"
+                result["dist_mm"] = "error"
         else:
-            result["range_mm"] = "timeout"
+            result["dist_mm"] = "timeout"
 
         self._write_u8_16(_SYSTEM_INTERRUPT_CLEAR, 0x07)
 
