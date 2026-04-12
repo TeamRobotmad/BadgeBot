@@ -107,6 +107,7 @@ This repo contains lots of files that you don't need on your badge to use a HexD
 + sensors/vl6180x.mpy
 + sensors/tcs3472.mpy
 + sensors/tcs3430.mpy
++ sensors/opt4048.mpy
 
 
 ### Hexpansion Recovery ###

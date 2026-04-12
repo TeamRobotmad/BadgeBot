@@ -11,12 +11,13 @@ Usage (lazy import pattern to conserve badge RAM):
     mgr.close()
 """
 
-import machine
+from machine import I2C, Pin
 from .sensors import ALL_SENSOR_CLASSES
 from system.hexpansion.config import HexpansionConfig
 
 #HexSense LED pin
-_LED_PIN = 1
+_LED_PIN = 1        # LED to illumiinate area under colour sensor to mmeasure reflected light from surface below.
+_INTERRUPT_PIN = 2  # Not currently used, but we can set it up as an input for future interrupt-based drivers
 
 
 class SensorManager:
@@ -28,6 +29,7 @@ class SensorManager:
         self._index: int = 0         # currently selected sensor
         self._last_data = {}
         self._read_interval_ms = 10
+        self._type = "Generic"
         if self.logging:
             print("SensorManager initialised")
 
@@ -45,7 +47,11 @@ class SensorManager:
     @property
     def read_interval(self) -> int:
         return self._read_interval_ms
-    
+
+    @property
+    def type(self) -> str:
+        return self._type    
+
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -58,7 +64,7 @@ class SensorManager:
         self._port = port
 
         try:
-            self._i2c = machine.I2C(port)
+            self._i2c = I2C(port)
         except Exception as e:      # pylint: disable=broad-exception-caught
             if self.logging:
                 print(f"SM:Cannot open I2C port {port}: {e}")
@@ -80,7 +86,7 @@ class SensorManager:
                 if sensor.begin(self._i2c):
                     self._sensors.append(sensor)
                     if self.logging:
-                        print(f"SM:  + {cls.NAME} @ 0x{cls.I2C_ADDR:02X}")
+                        print(f"SM:  + {cls.NAME} @ 0x{cls.I2C_ADDR:02X} {cls.TYPE}")
                 else:
                     if self.logging:
                         print(f"SM:  - {cls.NAME} begin() failed")
@@ -91,17 +97,32 @@ class SensorManager:
         # Set read interval from the first found sensor, or default to 250ms
         if self._sensors:
             self._read_interval_ms = getattr(self._sensors[0], 'READ_INTERVAL_MS', 250)
+            self._type = getattr(self._sensors[0], 'TYPE', 'Generic')
         else:
             self._read_interval_ms = 250
+            self._type = "Generic"
 
         # Enable LED if there is at least one sensor
         if len(self._sensors) > 0:
             if self.logging:
                 print(f"SM:LED On port {port}")
             config = HexpansionConfig(port)    
-            config.ls_pin[_LED_PIN].init(mode=machine.Pin.OUT)
+            config.ls_pin[_LED_PIN].init(mode=Pin.OUT)
             config.ls_pin[_LED_PIN].value(1)
+            config.ls_pin[_INTERRUPT_PIN].init(mode=Pin.IN)
+
         return len(self._sensors) > 0
+
+
+    def report_interrupt(self) -> bool:
+        """Check if the interrupt pin is active (low)."""
+        if self._port is None:
+            return False
+        config = HexpansionConfig(self._port)
+        v = config.ls_pin[_INTERRUPT_PIN].value()
+        print(f"INT pin value: {v}")
+        return v == 0
+    
 
     def close(self):
         """Shutdown all sensors and release the I2C bus."""
@@ -110,17 +131,19 @@ class SensorManager:
                 s.reset()
             except Exception:       # pylint: disable=broad-exception-caught
                 pass
-        if self.logging and self._port is not None:
-            print(f"SM:LED Off port {self._port}")
+        if self._port is not None:
+            if self.logging:
+                print(f"SM:LED Off port {self._port}")
             config = HexpansionConfig(self._port)    
             if config is not None:
                 config.ls_pin[_LED_PIN].value(0)
-                config.ls_pin[_LED_PIN].init(mode=machine.Pin.IN)
+                config.ls_pin[_LED_PIN].init(mode=Pin.IN)
         self._sensors = []
         self._index = 0
         self._last_data = {}
         self._i2c = None
         self._port = None
+
 
     # ------------------------------------------------------------------
     # Sensor selection
@@ -131,23 +154,17 @@ class SensorManager:
             self._index = (self._index + 1) % len(self._sensors)
             self._last_data = {}
             self._read_interval_ms = getattr(self._sensors[self._index], 'READ_INTERVAL_MS', 250)
+            self._type = getattr(self._sensors[self._index], 'TYPE', 'Generic')
+
 
     def prev_sensor(self):
         if self._sensors:
             self._index = (self._index - 1) % len(self._sensors)
             self._last_data = {}
             self._read_interval_ms = getattr(self._sensors[self._index], 'READ_INTERVAL_MS', 250)
-
-    def select_sensor(self, name: str) -> bool:
-        """Select sensor by NAME. Returns True if found."""
-        for idx, sensor in enumerate(self._sensors):
-            if sensor.NAME == name:
-                self._index = idx
-                self._last_data = {}
-                self._read_interval_ms = getattr(sensor, 'READ_INTERVAL_MS', 250)
-                return True
-        return False
-
+            self._type = getattr(self._sensors[self._index], 'TYPE', 'Generic')
+   
+   
     # ------------------------------------------------------------------
     # Reading
     # ------------------------------------------------------------------
@@ -158,6 +175,7 @@ class SensorManager:
             return {"Error": "no sensors"}
         self._last_data = self._sensors[self._index].read()
         return self._last_data
+
 
     # ------------------------------------------------------------------
     # Properties

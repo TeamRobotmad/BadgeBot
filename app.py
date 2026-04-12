@@ -18,11 +18,7 @@ from system.scheduler.events import (RequestForegroundPopEvent,
                                      RequestStopAppEvent)
 from tildagonos import tildagonos
 from machine import Pin
-
 import app
-
-from .utils import draw_logo_animated, parse_version
-from. hexdrive import VERSION as HEXDRIVE_APP_VERSION
 
 # If you could use hard=True in setting up a Pin IRQ hander, which you can't as of BadgeOS V1.10, then it is recommended to
 # allocate the emergency exception buffer to prevent crashes due to OSError: Out of memory when an interrupt occurs and
@@ -30,8 +26,13 @@ from. hexdrive import VERSION as HEXDRIVE_APP_VERSION
 #import micropython
 #micropython.alloc_emergency_exception_buf(100)
 
+from .utils import draw_logo_animated, parse_version
+from. hexdrive import VERSION as HEXDRIVE_APP_VERSION
+
+
 _SETTINGS_NAME_PREFIX = "badgebot."  # Prefix for settings keys in EEPROM
 APP_VERSION = "1.5" # BadgeBot App Version Number
+
 _DIAG_PORT = 2  # Hexpansion port to use for diagnostic timing measurements
 
 # If you change the URL then you will need to regenerate the QR code
@@ -98,11 +99,14 @@ STATE_HEXPANSION = 12     # Hexpansion Management (sub-states managed by Hexpans
 MINIMISE_VALID_STATES = [STATE_MENU, STATE_MESSAGE, STATE_LOGO]
  
 # App states where BadgeBot directly controls the badge LEDs (Motor Moves, Countdown, Message, Logo, Line Follower, AutoTune)
-_LED_CONTROL_STATES    = [STATE_MOTOR_MOVES, STATE_COUNTDOWN, STATE_MESSAGE, STATE_LOGO, STATE_FOLLOWER, STATE_AUTOTUNE, STATE_AUTODRIVE]
+_LED_CONTROL_STATES    = [STATE_MOTOR_MOVES, STATE_COUNTDOWN, STATE_MESSAGE, STATE_LOGO, STATE_FOLLOWER, STATE_AUTOTUNE, STATE_AUTODRIVE, STATE_SENSOR]
 
 #Misceallaneous Settings
 _LOGGING = False
 _IS_SIMULATOR = sys.platform != "esp32"  # True when running in the simulator, not on real badge hardware
+_FWD_DIR_DEFAULT = 0
+_FRONT_FACE_DEFAULT = 0
+
 
 # Main Menu Items
 MAIN_MENU_ITEMS = ["Line Follower","Motor Moves", "Stepper Test", "Servo Test", "PID Auto Tune", "Sensor Test", "Auto Drive", "Hexpansions", "Settings", "About","Exit"]
@@ -118,25 +122,6 @@ MENU_ITEM_SETTINGS = 8
 MENU_ITEM_ABOUT = 9
 MENU_ITEM_EXIT = 10
 
-
-# Front face direction labels (0=BtnA corner between slots 6 & 1, each step = 30° CW)
-_FRONT_FACE_DEFAULT = 0
-_FRONT_FACE_NUM_ORIENTATIONS = 12   
-_FRONT_FACE_LABELS = (
-    "BtnA",   # 0  - corner between slot 6 & slot 1 (default top)
-    "Slot 1", # 1
-    "BtnB",   # 2  - corner between slot 1 & slot 2
-    "Slot 2", # 3
-    "BtnC",   # 4
-    "Slot 3", # 5
-    "BtnD",   # 6  - corner between slot 3 & slot 4 (bottom)
-    "Slot 4", # 7
-    "BtnE",   # 8
-    "Slot 5", # 9
-    "BtnF",   # 10
-    "Slot 6", # 11
-)
-_FWD_DIR_DEFAULT = 0
 
 
 # Import sub-modules after constants are defined so they can safely
@@ -218,7 +203,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             self.settings['logging']       = MySetting(self.settings, _LOGGING, False, True)
             # Direction settings
             self.settings['fwd_dir']       = MySetting(self.settings, _FWD_DIR_DEFAULT, 0, 1)
-            self.settings['front_face']    = MySetting(self.settings, _FRONT_FACE_DEFAULT, 0, _FRONT_FACE_NUM_ORIENTATIONS-1)
+            self.settings['front_face']    = MySetting(self.settings, _FRONT_FACE_DEFAULT, 0, 11)
         
             # Module-specific settings - only initialise modules which are NOT dependent on specific Hexpansion hardware here, as we want to be able to access settings in the HexpansionMgr before we have detected what hardware is present.  For Hexpansion-dependent modules, we will initialise their settings after we have scanned for hardware and know which modules we will be using.
             if _hexpansion_init_settings is not None:
@@ -526,10 +511,17 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
         if self.notification:
             self.notification.update(delta)
-            if self.notification._is_closed():
-                self.notification = None
+            try:
+                # in case access to protected member _is_closed() is not allowed, we catch the exception and 
+                # to prevent crashes - this means that in this case we won't be able to automatically clear 
+                # notifications when they are closed, but at least the app won't crash.
+                if self.notification._is_closed():  # pylint: disable=protected-access
+                    self.notification = None
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                if self.logging:
+                    print(f"Error: checking notification status: {e}")
 
-        # Unfortunately, even though we can track if there is an active  notification that we have triggered, 
+        # Unfortunately, even though we can track if there is an active notification that we have triggered,
         # we don't have a way to track if there are any other notifications active that we
         # didn't trigger, so we need to perform extra display refresh cycles in case.
         # As the draw function is VERY slow, and hence it stalls background updates
@@ -780,7 +772,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         for i in range(1,13):
             tildagonos.leds[i] = (0, 0, 0)
 
-    # todo - merge with motor_controller.apply_fwd_dir if we keep the motor_controller abstraction
+
     def apply_fwd_dir(self, output: tuple) -> tuple:
         """Negate all motor outputs when fwd_dir=1 (HexDrive mounted facing front)."""
         if self.settings['fwd_dir'].v:
@@ -835,10 +827,12 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             ctx.rgb(*colour).move_to(-width//2, y_position).text(text_line)
 
 
-    def return_to_menu(self):
+    def return_to_menu(self, menu_name: str | None = None):
         """Utility function to return to the main menu from any state. This is used when the user cancels out of a submenu or after acknowledging a warning message."""
         if self.logging:
             print("Returning to menu")
+        if menu_name is not None:
+            self.set_menu(menu_name)
         self.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
         self.current_state = STATE_MENU
         self.refresh = True

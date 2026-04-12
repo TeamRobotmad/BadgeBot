@@ -35,7 +35,9 @@ _RANGE_TIMEOUT_MS = 100   # ms to wait for a measurement
 class VL53L0X(SensorBase):
     I2C_ADDR = 0x29
     NAME = "VL53L0X"
-
+    READ_INTERVAL_MS = 100
+    TYPE = "Distance"
+    
     def _init(self) -> bool:
         # Check WHO_AM_I
         who = self._read_u8(_WHO_AM_I_REG)

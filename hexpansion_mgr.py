@@ -25,8 +25,6 @@ from system.hexpansion.util import get_hexpansion_block_devices, detect_eeprom_a
 from system.hexpansion.config import HexpansionConfig
 from system.scheduler import scheduler
 
-import app
-
 _NUM_HEXPANSION_SLOTS = 6
 
 # HexDrive Hexpansion constants
@@ -239,7 +237,7 @@ class HexpansionMgr:
             self._port_selected_header = None
         self._update_detail_page_count()
         # Default to details page if available, otherwise vid/pid
-        self._port_detail_page = 2 if self._port_detail_page_count > 2 else 0
+        self._port_detail_page = self._PAGE_DETAILS if self._port_detail_page_count > 2 else self._PAGE_VID_PID
 
 
     def _update_detail_page_count(self):
@@ -251,14 +249,14 @@ class HexpansionMgr:
             if ht.sub_type or ht.app_name:
                 # Recognised type with sub_type or app_name, so show details page
                 self._port_detail_page_count = 3
-                self._port_detail_page = 2
+                self._port_detail_page = self._PAGE_DETAILS
             elif type_idx == app.BLANK_HEXPANSION_INDEX:
                 # Blank EEPROM - no details to show, so only show the EEPROM page
                 self._port_detail_page_count = 0
             elif type_idx == app.UNRECOGNISED_HEXPANSION_INDEX:
                 # Unrecognised type - show vid/pid page and EEPROM page
                 self._port_detail_page_count = 2
-                self._port_detail_page = 0
+                self._port_detail_page = self._PAGE_VID_PID
         else:
             # Empty
             self._port_detail_page_count = 0
@@ -420,6 +418,11 @@ class HexpansionMgr:
             print(f"H:Erasing EEPROM on port {self._erase_port}")        
         if self._erase_eeprom(self._erase_port, _EEPROM_ADDR):
             app.notification = Notification("Erased", port=self._erase_port)
+            self._hexpansion_type_by_slot[self._erase_port - 1] = app.BLANK_HEXPANSION_INDEX
+            self._ports_with_hexdrive.discard(self._erase_port)
+            self._ports_with_latest_hexdrive.discard(self._erase_port)
+            self._ports_with_hexsense.discard(self._erase_port)
+            self._ports_with_blank_eeprom.add(self._erase_port)
             hexpansion_type = self._type_name_for_port(self._erase_port)
             app.show_message([hexpansion_type, f"in slot {self._erase_port}:", "Erased"], [(1,1,0), (1,1,1), (0,1,0)], "hexpansion")
             self._sub_state = _SUB_DETECTED
@@ -436,14 +439,11 @@ class HexpansionMgr:
             app.motor_controller = None
             if self._logging:
                 print(f"H:HexDrive on port {self._erase_port} erased!")
-            self._ports_with_hexdrive.discard(self._erase_port)
-            self._ports_with_latest_hexdrive.discard(self._erase_port)
 
         if app.hexsense_config is not None and app.hexsense_config.port == self._erase_port:
             app.hexsense_config = None
             if self._logging:
                 print(f"H:HexSense on port {self._erase_port} erased!")
-            self._ports_with_hexsense.discard(self._erase_port)
 
         self._erase_port = None
 
@@ -516,7 +516,6 @@ class HexpansionMgr:
                             # Create the high-level MotorController for IMU-aided driving
                             # (only when the HexDrive has motors)
                             if app.num_motors > 0:
-                                # TODO - move this to when needed rather than here
                                 try:
                                     from .motor_controller import MotorController
                                     app.motor_controller = MotorController(
@@ -551,7 +550,7 @@ class HexpansionMgr:
                         self._sub_state = _SUB_UPGRADE_CONFIRM
                     else:   # end of loop
                         if self._logging:
-                            print(f"H:HexDrive not found, Interactive mode -> port select state")
+                            print("H:HexDrive not found, Interactive mode -> port select state")
                         self._enter_port_select()
                 else:
                     if self._logging:
@@ -618,23 +617,26 @@ class HexpansionMgr:
         elif app.button_states.get(BUTTON_TYPES["CONFIRM"]):
             app.button_states.clear()
             app.refresh = True
-            if self._port_selected in self._ports_with_blank_eeprom:
-                # The selected port has a blank EEPROM, so we can initialise it without erasing first.
-                self._detected_port = self._port_selected
-                app.notification = Notification("Init?", port=self._detected_port)
-                self._sub_state = _SUB_DETECTED
-            elif self._hexpansion_type_by_slot[self._port_selected - 1] is not None:
-                # The selected port has a non-blank EEPROM with a detected hexpansion type, so we need to erase it before we can initialise or upgrade it.
-                self._erase_port = self._port_selected
-                app.notification = Notification("Erase?", port=self._erase_port)
-                self._sub_state = _SUB_ERASE_CONFIRM
+            if self._hexpansion_type_by_slot[self._port_selected - 1] is not None:
+                if self._hexpansion_type_by_slot[self._port_selected - 1] == app.BLANK_HEXPANSION_INDEX:
+                    # The selected port has a blank EEPROM, so we can initialise it without erasing first.
+                    self._detected_port = self._port_selected
+                    app.notification = Notification("Init?", port=self._detected_port)
+                    self._sub_state = _SUB_DETECTED
+                else:    
+                    # The selected port has a non-blank EEPROM with a detected hexpansion type, so we need to erase it before we can initialise or upgrade it.
+                    self._erase_port = self._port_selected
+                    app.notification = Notification("Erase?", port=self._erase_port)
+                    self._sub_state = _SUB_ERASE_CONFIRM
         elif app.button_states.get(BUTTON_TYPES["UP"]):
             app.button_states.clear()
-            self._port_detail_page = (self._port_detail_page - 1) % self._port_detail_page_count
+            if self._port_detail_page_count > 0:
+                self._port_detail_page = (self._port_detail_page - 1) % self._port_detail_page_count
             app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["DOWN"]):
             app.button_states.clear()
-            self._port_detail_page = (self._port_detail_page + 1) % self._port_detail_page_count
+            if self._port_detail_page_count > 0:
+                self._port_detail_page = (self._port_detail_page + 1) % self._port_detail_page_count
             app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["CANCEL"]):
             self._interactive_mode = False
@@ -695,7 +697,12 @@ class HexpansionMgr:
     
     
 
+
+# Hexpansion/EEPROM information pages
     _PAGE_NAMES = ("VID/PID", "EEPROM", "Details")
+    _PAGE_VID_PID = 0
+    _PAGE_EEPROM = 1
+    _PAGE_DETAILS = 2    
 
     def _draw_port_select(self, ctx):
         """Draw the port-select screen with paged details."""
@@ -709,9 +716,9 @@ class HexpansionMgr:
         else:
             # Common header lines for all pages
             page = self._port_detail_page
-            lines = [f"Slot {self._port_selected}-{self._PAGE_NAMES[page]}", hdr.name if hdr is not None else hexpansion_name]
+            lines = [f"Slot {self._port_selected}-{self._PAGE_NAMES[page]}", hdr.friendly_name if hdr is not None else hexpansion_name]
             colours = [(1, 1, 0), (1, 0, 1)]
-            if page == 0:
+            if page == self._PAGE_VID_PID:
                 # VID / PID page
                 if hdr is not None:
                     lines += [f"VID: {hdr.vid:04X}", f"PID: {hdr.pid:04X}"]
@@ -719,7 +726,7 @@ class HexpansionMgr:
                 #else:
                 #    lines = header_lines + ["No header"]
                 #    colours = header_colours + [(1, 0, 0)]
-            elif page == 1:
+            elif page == self._PAGE_EEPROM:
                 # EEPROM parameters page
                 if hdr is not None:
                     lines += [f"Size: {hdr.eeprom_total_size} Bytes", f"Page: {hdr.eeprom_page_size} Bytes"]
@@ -727,7 +734,7 @@ class HexpansionMgr:
                 #else:
                 #    lines = header_lines + ["No header"]
                 #    colours = header_colours + [(1, 0, 0)]
-            else: # page == 2:
+            else: # page == self._PAGE_DETAILS:
                 # Details page (only when page_count == 3)
                 type_idx = self._hexpansion_type_by_slot[self._port_selected - 1]
                 ht = app.HEXPANSION_TYPES[type_idx] if type_idx is not None else None
