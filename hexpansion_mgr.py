@@ -419,6 +419,10 @@ class HexpansionMgr:
         if self._erase_eeprom(self._erase_port, _EEPROM_ADDR):
             app.notification = Notification("Erased", port=self._erase_port)
             self._hexpansion_type_by_slot[self._erase_port - 1] = app.BLANK_HEXPANSION_INDEX
+            self._ports_with_hexdrive.discard(self._erase_port)
+            self._ports_with_latest_hexdrive.discard(self._erase_port)
+            self._ports_with_hexsense.discard(self._erase_port)
+            self._ports_with_blank_eeprom.add(self._erase_port)
             hexpansion_type = self._type_name_for_port(self._erase_port)
             app.show_message([hexpansion_type, f"in slot {self._erase_port}:", "Erased"], [(1,1,0), (1,1,1), (0,1,0)], "hexpansion")
             self._sub_state = _SUB_DETECTED
@@ -435,14 +439,11 @@ class HexpansionMgr:
             app.motor_controller = None
             if self._logging:
                 print(f"H:HexDrive on port {self._erase_port} erased!")
-            self._ports_with_hexdrive.discard(self._erase_port)
-            self._ports_with_latest_hexdrive.discard(self._erase_port)
 
         if app.hexsense_config is not None and app.hexsense_config.port == self._erase_port:
             app.hexsense_config = None
             if self._logging:
                 print(f"H:HexSense on port {self._erase_port} erased!")
-            self._ports_with_hexsense.discard(self._erase_port)
 
         self._erase_port = None
 
