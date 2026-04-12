@@ -512,13 +512,14 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if self.notification:
             self.notification.update(delta)
             try:
-                # in case access to protected member _is_closed() is not allowed, we catch the exception and just set notification to None to prevent crashes - this means that in this case we won't be able to automatically clear notifications when they are closed, but at least the app won't crash.
+                # in case access to protected member _is_closed() is not allowed, we catch the exception and 
+                # to prevent crashes - this means that in this case we won't be able to automatically clear 
+                # notifications when they are closed, but at least the app won't crash.
                 if self.notification._is_closed():  # pylint: disable=protected-access
                     self.notification = None
             except Exception as e:  # pylint: disable=broad-exception-caught
                 if self.logging:
-                    print(f"Error checking notification status: {e}")
-                self.notification = None
+                    print(f"Error: checking notification status: {e}")
 
         # Unfortunately, even though we can track if there is an active notification that we have triggered,
         # we don't have a way to track if there are any other notifications active that we
