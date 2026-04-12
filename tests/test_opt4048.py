@@ -115,7 +115,9 @@ def test_class_attributes(opt4048_module):
     cls = opt4048_module.OPT4048
     assert cls.I2C_ADDR == 0x44
     assert cls.NAME == "OPT4048"
-    assert cls.READ_INTERVAL_MS == 10
+    # check that class constant is between 10 and 100ms, to catch any accidental typos
+    assert 10 <= cls.READ_INTERVAL_MS <= 100
+    assert cls.TYPE == "Colour"
 
 
 def test_sensor_base_interface(opt4048_module):

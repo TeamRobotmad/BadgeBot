@@ -75,6 +75,11 @@ MODE_AUTO_ONE   = 1   # Auto-range one-shot
 MODE_ONE_SHOT   = 2
 MODE_CONTINUOUS = 3
 
+# Interrupt polarity constants
+INT_POL_ACTIVE_LOW = 0
+INT_POL_ACTIVE_HIGH = 1
+
+
 # ── STATUS register (0x0C) flags ─────────────────────────────────────────────
 _FLAG_LOW       = 0x01  # Measurement < low threshold
 _FLAG_HIGH      = 0x02  # Measurement > high threshold
@@ -84,6 +89,8 @@ _FLAG_OVERLOAD  = 0x08  # ADC overflow
 # ── THRESH_CFG register (0x0B) bit layout ────────────────────────────────────
 # Bits 6-5 : threshold channel select (0-3)
 # Bit 4    : interrupt direction (1 = high threshold active)
+_INT_DIR_OUTPUT = 1
+_INT_DIR_INPUT  = 0
 # Bits 3-2 : interrupt config (0=SMBUS, 1=next-channel ready, 3=all-channels ready)
 _INT_CFG_ALL_READY = 3  # Interrupt on all channels ready
 _INT_CFG_DISABLED  = 0  # SMBUS alert (effectively disabled for polling)
@@ -92,7 +99,7 @@ _INT_CFG_DISABLED  = 0  # SMBUS alert (effectively disabled for polling)
 class OPT4048(SensorBase):
     I2C_ADDR = 0x44
     NAME = "OPT4048"
-    READ_INTERVAL_MS = 30
+    READ_INTERVAL_MS = 10
     TYPE = "Colour"
 
     def __init__(self):
@@ -151,9 +158,7 @@ class OPT4048(SensorBase):
         """
         tcfg = self._read_reg16(_REG_THRESH_CFG)
         if enabled:
-            #tcfg = 0x8011 | (0x03 << 5) | (_INT_CFG_ALL_READY << 2)
-            # ch3, output no end of conversion int, burst mode enabled
-            tcfg = 0x8071
+            tcfg = (tcfg & ~(0x03 << 2)) | (_INT_CFG_ALL_READY << 2)
         else:
             tcfg = (tcfg & ~(0x03 << 2)) | (_INT_CFG_DISABLED << 2)
         self._write_reg16(_REG_THRESH_CFG, tcfg)
@@ -161,6 +166,34 @@ class OPT4048(SensorBase):
     def get_interrupt_enabled(self) -> bool:
         """Return True if the conversion-ready interrupt is enabled."""
         return ((self._read_reg16(_REG_THRESH_CFG) >> 2) & 0x03) == _INT_CFG_ALL_READY
+
+
+    def set_latched_interrupt(self, enabled: bool, threshold_ch: int = 3, threshold_low: int = 0x0000, threshold_high: int = 0xFFFF):
+        """Enable or disable threshold Latched interrupt."""
+        if enabled:
+            # Setup Threshold
+            self._write_reg16(_REG_THRESH_LO, threshold_low)   # low threshold
+            self._write_reg16(_REG_THRESH_HI, threshold_high)  # high threshold        
+
+        cfg = self._read_reg16(_REG_CONFIG)
+        if enabled:
+            cfg |= 1 << 3       # INT_LATCH = 1 (latch interrupt until cleared by reading status)
+        else:
+            cfg &= ~(1 << 3)    # INT_LATCH = 0 (non-latched interrupt)
+        self._write_reg16(_REG_CONFIG, cfg)
+
+        tcfg = self._read_reg16(_REG_THRESH_CFG)
+        if enabled:
+            tcfg = (tcfg & 0x8001) | (threshold_ch << 5) | (_INT_DIR_OUTPUT << 4) | (_INT_CFG_DISABLED << 2)
+            # 15-7: 0x80
+            # 6-5 THRESHOLD_CH_SEL: 3 = W channel (Clear)
+            # 4 INT_DIR: Out = 1
+            # 3-2 INT_CFG: SMBUS ALert = 0
+        else:
+            # Make Int Pin an input
+            tcfg = tcfg & ~(1 << 4)
+        self._write_reg16(_REG_THRESH_CFG, tcfg)
+
 
     # ── SensorBase interface ─────────────────────────────────────────────────
 
@@ -172,20 +205,19 @@ class OPT4048(SensorBase):
 
         # Configure for fast continuous reads within ~10 ms budget:
         #   Range       : auto (best dynamic range)
-        #   Conv time   : 6.5 ms per channel → 4 × 6.5 ms ≈ 26 ms total
+        #   Conv time   : 1.8 ms per channel → 4 × 1.8 ms ≈ 7.2 ms total
         #   Mode        : continuous
         #   INT latch   : latched (bit 3 = 1)
         #   INT polarity: active-low (bit 2 = 0)
         #   Fault count : 1 (bits 1:0 = 0)
-        cfg = (RANGE_AUTO << 10) | (CONV_6_5MS << 6) | (MODE_CONTINUOUS << 4) | 0x08
+        cfg = (RANGE_AUTO << 10) | (CONV_1_8MS << 6) | (MODE_CONTINUOUS << 4) | 0x08
         self._write_reg16(_REG_CONFIG, cfg)
 
-        # Setup Threshold on W channel
-        #self._write_reg16(_REG_THRESH_LO, 0x8400)  # low threshold
-        #self._write_reg16(_REG_THRESH_HI, 0x8400)  # high threshold
-
         # Enable conversion-ready interrupt so status polling works
-        self.set_interrupt_enabled(True)
+        #self.set_interrupt_enabled(True)
+        # The conversion ready interrupt is only 1us in duration which is too short for the LS pin to 
+        # reliably capture, so we enable latching mode and poll the status register for the ready flag instead.
+        self.set_latched_interrupt(True, threshold_low = 0x8400, threshold_high = 0x8400)
 
         #r = self._read_reg16(_REG_THRESH_LO)
         #print(f"thresh[8]: 0x{r:04X}")
