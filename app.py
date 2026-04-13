@@ -33,7 +33,7 @@ from. hexdrive import VERSION as HEXDRIVE_APP_VERSION
 _SETTINGS_NAME_PREFIX = "badgebot."  # Prefix for settings keys in EEPROM
 APP_VERSION = "1.5" # BadgeBot App Version Number
 
-_DIAG_PORT = 2  # Hexpansion port to use for diagnostic timing measurements
+_DIAG_PORT = None  # Hexpansion port to use for diagnostic timing measurements
 
 # If you change the URL then you will need to regenerate the QR code
 # using the generate_qr_code.py script, and update the _QR_CODE constant below with the new code generated for your URL
