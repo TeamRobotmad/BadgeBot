@@ -797,10 +797,7 @@ class HexpansionMgr:
             print(f"H:Scan:{i2c.scan()}")  # debug - print all detected I2C addresses
             return None
         # Do we have a header?
-        # Set read address to 0x00
-        addr_bytes = [0] * addr_len
-        i2c.writeto(eeprom_addr, bytes(addr_bytes))
-        header_bytes = i2c.readfrom(eeprom_addr, 32)
+        header_bytes = i2c.readfrom_mem(eeprom_addr, 0x00, 32, addrsize=8*addr_len)
         hexpansion_header = HexpansionHeader.from_bytes(header_bytes)
         print(f"H:Read header on port {port}: {hexpansion_header}")
         return hexpansion_header
