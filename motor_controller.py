@@ -16,6 +16,7 @@ on-board IMU gyroscope for accurate heading changes.
 import asyncio
 import time
 from math import cos, sin, radians
+from typing import Callable
 
 try:
     import imu as _imu
@@ -108,8 +109,8 @@ class MotorController:
         self._hexdrive = hexdrive_app
         self._settings = settings
         self._logging: bool = logging
-        self._front_face: int = front_face_setting
-        self._apply_motor_directions_cb = apply_motor_directions_cb
+        self._front_face = front_face_setting
+        self._apply_motor_directions_cb: Callable[[tuple[int, int]], tuple[int, int]] | None = apply_motor_directions_cb
         self._gyro_axis: int = gyro_axis
         self._gyro_deadband: float = gyro_deadband
         self._accel_axis: int = accel_axis
@@ -547,7 +548,7 @@ class MotorController:
         """Push ``self.motor_output`` to the HexDrive."""
         if self._hexdrive is not None:
             output = self.motor_output
-            if callable(self._apply_motor_directions_cb):
+            if self._apply_motor_directions_cb is not None:
                 output = self._apply_motor_directions_cb(output)
             self._hexdrive.set_motors(output)
 
