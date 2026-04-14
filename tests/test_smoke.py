@@ -93,7 +93,7 @@ def test_new_settings_registered():
     """Verify front_face and fwd_dir base settings are always registered."""
     from sim.apps.BadgeBot import BadgeBotApp
     app_instance = BadgeBotApp()
-    for key in ('fwd_dir', 'front_face'):
+    for key in ('motor1_dir', 'motor2_dir', 'front_face'):
         assert key in app_instance.settings, f"Missing setting: {key}"
 
 

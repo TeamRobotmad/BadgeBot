@@ -22,7 +22,7 @@ try:
 except ImportError:
     _imu = None
 
-from .app import MOTOR_PWM_FREQ
+from .app import apply_motor_directions,MOTOR_PWM_FREQ
 
 # Constants inlined from Sensor_Testing constants.py to avoid splitting
 # application constants into a separate module.
@@ -546,16 +546,8 @@ class MotorController:
     def _send_output(self):
         """Push ``self.motor_output`` to the HexDrive."""
         if self._hexdrive is not None:
-            self._hexdrive.set_motors(self.apply_fwd_dir(self.motor_output))
+            self._hexdrive.set_motors(apply_motor_directions(self.motor_output))
 
-
-
-    def apply_fwd_dir(self, output: tuple) -> tuple:
-        """Negate all motor outputs when fwd_dir=1 (HexDrive mounted facing front)."""
-        if 'fwd_dir' in self._settings and self._settings['fwd_dir'].v:
-            return tuple(-v for v in output)
-        return output
-    
     
     @staticmethod
     def _slew(current, target, step):
