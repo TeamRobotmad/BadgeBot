@@ -185,6 +185,7 @@ class SettingsMgr:
                 app.button_states.clear()
                 if self._logging:
                     print(f"Setting: {self.edit_setting} Cancelled")
+                app.fast_settings_update()  # Update fast access settings which might have been changed
                 app.return_to_menu(MENU_ENTRY_NAME)
             elif app.button_states.get(BUTTON_TYPES["CONFIRM"]):
                 app.button_states.clear()
