@@ -14,14 +14,14 @@ from events.input import BUTTON_TYPES
 from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
 from system.hexpansion.config import HexpansionConfig, ePin
-from machine import Pin, mem32
+from machine import Pin, mem32, disable_irq, enable_irq
 from micropython import const
 from .app import DEFAULT_BACKGROUND_UPDATE_PERIOD, MOTOR_PWM_FREQ
 
 # Temporary - while thre is no EEPROM on the Test Hexpansion
 _ROTATION_RATE_PORT = 2                         # Hexpansion slot used for rotation rate measurement
-_ROTATION_RATE_EMITTER_PIN = 2                  # LS_C pin used to drive the IR emitter for rotation rate testing
-_ROTATION_RATE_SENSOR_PIN = 0                   # HS_F pin used to read the phottransistor for rotation rate testing
+_ROTATION_RATE_EMITTER_PINS = [2, 3]            # LS_C & LS_D pins used to drive the IR emitter for rotation rate testing
+_ROTATION_RATE_SENSOR_PINS = [0, 1]             # HS_F & HS_G pins used to read the phottransistors for rotation rate testing
 _ROTATION_RATE_MEASUREMENT_PERIOD_MS = 2500     # how often to update the displayed rotation rate measurement in ms (tradeoff between display responsiveness and stability of the reading)
 _DEFAULT_ROTATION_RATE_EMITTER_DUTY = 64        # default duty cycle for the IR emitter when doing rate testing, 0-255 (0=off, 255=full on)
 _DEFAULT_SPOKES_PER_ROTATION = 3                # number of times the photodiode will be triggered per full rotation of the wheel
@@ -30,6 +30,11 @@ _DEFAULT_SPOKES_PER_ROTATION = 3                # number of times the photodiode
 _SUB_SELECT_PORT = 0
 _SUB_READING     = 1
 _SUB_MOTOR_TEST  = 2
+
+# Auto scan configuration
+_AUTO_SCAN_STEPS       = 50     # Number of power levels to test during auto scan
+_AUTO_SCAN_SETTLE_MS   = 200    # ms to wait after setting power before discarding counter
+_AUTO_SCAN_MEASURE_MS  = 2000   # ms measurement window per step
 
 
 # Pages of information to show for each sensor (can be switched with up/down buttons)
@@ -94,20 +99,30 @@ class SensorTestMgr:
 
         self._rotation_rate_emitter_duty: int = _DEFAULT_ROTATION_RATE_EMITTER_DUTY # duty cycle for the IR emitter when doing rate testing, 0-255 (0=off, 255=full on)
         self._rotation_rate_sensor_pin: int | None = None           # pin used to read the photodiode for rate testing
-        self._rotation_rate_counter: Counter | None = None          # hardware counter used to count photodiode pulses for rate testing
+        self._rotation_rate_counters: list[Counter | None] = []     # hardware counter used to count photodiode pulses for rate testing
         self._rotation_rate_rpm: int | None = None                  # current value of the hardware counter (for diagnostics, should increase as the photodiode detects pulses when the emitter is on)
         self._rotation_rate_measurement_period_elapsed: int = 0     # ticks since last rate check, used to compute pulse rate in Hz based on the change in the counter value
         self._rotation_rate_motor_power: int = 0                    # Power applied to motors in TEST mode
         self._rotation_rate_spokes: int = _DEFAULT_SPOKES_PER_ROTATION
         self._rotation_rate_rounding: int = ((_ROTATION_RATE_MEASUREMENT_PERIOD_MS * self._rotation_rate_spokes) // 2)
 
+        # Auto scan state
+        self._auto_mode: bool = False             # True = auto scanning, False = manual
+        self._auto_step: int = 0                  # current step index (0.._AUTO_SCAN_STEPS-1)
+        self._auto_timer: int = 0                 # elapsed ms within current phase
+        self._auto_settling: bool = True          # True = in settle phase, False = in measure phase
+        self._auto_results: list = []             # list of (power, rpm) tuples
+        self._auto_max_rpm: int = 0               # max rpm seen during scan
+        self._auto_done: bool = False             # True = scan complete
+
         # Use HS pins on a spare Hexpansion to measure rotation rate
         self._test_support_hexpansion_config: HexpansionConfig | None = None
         if _ROTATION_RATE_PORT is not None:
             self._test_support_hexpansion_config = HexpansionConfig(_ROTATION_RATE_PORT)    # Create a config instance to access the LED pin for diagnostics
-            # HS_F for photodiode input, LS_C for IR emitter output (only enabled when on)
-            self._test_support_hexpansion_config.ls_pin[_ROTATION_RATE_EMITTER_PIN].init(mode=ePin.IN)  # LS_C
-            self._test_support_hexpansion_config.pin[_ROTATION_RATE_SENSOR_PIN].init(mode=Pin.IN)       # HS_F
+            for pin_num in _ROTATION_RATE_EMITTER_PINS:
+                self._test_support_hexpansion_config.ls_pin[pin_num].init(mode=Pin.OUT)   # Set LS pins to output mode to drive the IR emitters (only enabled when on)
+            for pin_num in _ROTATION_RATE_SENSOR_PINS:
+                self._test_support_hexpansion_config.pin[pin_num].init(mode=Pin.IN)       # Set HS pins to input mode to read the phototransistors for rotation rate measurement
 
         if self._logging:
             print("SensorTestMgr initialised")
@@ -221,7 +236,8 @@ class SensorTestMgr:
     def rotation_rate_emitter_duty(self, value: int):
         self._rotation_rate_emitter_duty = value
         if self._test_support_hexpansion_config is not None:
-            self._test_support_hexpansion_config.ls_pin[_ROTATION_RATE_EMITTER_PIN].duty(self._rotation_rate_emitter_duty)
+            for pin_num in _ROTATION_RATE_EMITTER_PINS:
+                self._test_support_hexpansion_config.ls_pin[pin_num].duty(self._rotation_rate_emitter_duty)
 
 
     @staticmethod
@@ -345,6 +361,42 @@ class SensorTestMgr:
                 self.sample_count = 0
                 self._new_sample = True
         elif self._sub_state == _SUB_MOTOR_TEST:
+            if self._auto_mode and not self._auto_done:
+                self._auto_timer += delta
+                if self._auto_settling:
+                    if self._auto_timer >= _AUTO_SCAN_SETTLE_MS:
+                        # Settle phase done — discard counter and start measuring
+                        for counter in self._rotation_rate_counters:
+                             if counter is not None:
+                                counter.value(0)  # read-and-reset to discard
+                        self._auto_timer = 0
+                        self._auto_settling = False
+                else:
+                    if self._auto_timer >= _AUTO_SCAN_MEASURE_MS:
+                        # Measure phase done — read counter and record result
+                        rounding = ((_AUTO_SCAN_MEASURE_MS * self._rotation_rate_spokes) // 2)
+                        rate = [0] * len(self._rotation_rate_counters)
+                        for index, counter in enumerate(self._rotation_rate_counters):
+                             if counter is not None:
+                                count = counter.value(0)
+                                rpm = ((60000 * count) + rounding) // (_AUTO_SCAN_MEASURE_MS * self._rotation_rate_spokes)
+                                if rpm > self._auto_max_rpm:
+                                    self._auto_max_rpm = rpm
+                                rate[index] = rpm
+                        power = self._rotation_rate_motor_power
+                        self._auto_results.append((power, rate))
+
+                        self._auto_step += 1
+                        self._app.refresh = True
+                        if self._auto_step >= _AUTO_SCAN_STEPS:
+                            # Scan complete — stop motors
+                            self._auto_done = True
+                            self._rotation_rate_motor_power = 0
+                        else:
+                            # Advance to next power level
+                            self._rotation_rate_motor_power = (65535 * self._auto_step) // (_AUTO_SCAN_STEPS - 1)
+                            self._auto_timer = 0
+                            self._auto_settling = True
             return (self._rotation_rate_motor_power, self._rotation_rate_motor_power)
 
         return None
@@ -365,48 +417,95 @@ class SensorTestMgr:
 
 
     def _update_motor_test_mode(self, delta: int):   # pylint: disable=unused-argument
-        # use UP and DOWN to adjust the _rotation_rate_emitter_duty, which controls the brightness of the IR emitter when doing rate testing
         app = self._app
+
+        # CANCEL always exits motor test mode
+        if app.button_states.get(BUTTON_TYPES["CANCEL"]):
+            app.button_states.clear()
+            if self.logging:
+                print("Exiting Test mode")
+            self._auto_mode = False
+            self._auto_done = False
+            
+            if app.hexdrive_app is not None:
+                app.hexdrive_app.set_power(False)
+            
+            for counter in self._rotation_rate_counters:
+                 if counter is not None:
+                    counter.deinit()
+            self._rotation_rate_counters = []
+
+            app.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
+            for pin_num in _ROTATION_RATE_EMITTER_PINS:
+                 self._test_support_hexpansion_config.ls_pin[pin_num].init(mode=Pin.IN)   # Set LS pins to input mode to turn off the IR emitters
+            self._rotation_rate_motor_power = 0
+            self._sub_state = _SUB_SELECT_PORT
+            app.refresh = True
+            return
+
+        # CONFIRM toggles between manual and auto mode
+        if app.button_states.get(BUTTON_TYPES["CONFIRM"]):
+            app.button_states.clear()
+            if self._auto_mode:
+                # Switch back to manual
+                self._auto_mode = False
+                self._auto_done = False
+                self._rotation_rate_motor_power = 0
+                self._rotation_rate_measurement_period_elapsed = 0
+                for counter in self._rotation_rate_counters:
+                     if counter is not None:
+                        counter.value(0)      # reset counter
+            else:
+                # Start auto scan
+                self._auto_mode = True
+                self._auto_done = False
+                self._auto_step = 0
+                self._auto_timer = 0
+                self._auto_settling = True
+                self._auto_results = []
+                self._auto_max_rpm = 0
+                self._rotation_rate_motor_power = 0  # first step is power 0
+                for counter in self._rotation_rate_counters:
+                     if counter is not None:
+                        counter.value(0)  # reset counter before starting
+            app.refresh = True
+            return
+
+        if self._auto_mode:
+            # In auto mode, no manual button control for power/IR
+            return
+
+        # Manual mode button handling
         if app.button_states.get(BUTTON_TYPES["UP"]):
             app.button_states.clear()
-            self.rotation_rate_emitter_duty = min(255, self.rotation_rate_emitter_duty + 8)  # increase duty cycle by 8 (about 3.125%) up to a maximum of 255
+            self.rotation_rate_emitter_duty = min(255, self.rotation_rate_emitter_duty + 8)
             if self.logging:
                 print(f"S:IR+Emitter Duty: {self._rotation_rate_emitter_duty}")
         elif app.button_states.get(BUTTON_TYPES["DOWN"]):
             app.button_states.clear()
-            self.rotation_rate_emitter_duty = max(0, self.rotation_rate_emitter_duty - 8)  # decrease duty cycle by 8 (about 3.125%) down to a minimum of 0
+            self.rotation_rate_emitter_duty = max(0, self.rotation_rate_emitter_duty - 8)
             if self.logging:
                 print(f"S:IR-Emitter Duty: {self._rotation_rate_emitter_duty}")
-        # use left and rigth to adjust the _rotation_rate_motor_power, which is returned from background_update to allow testing the motors with different power levels in TEST mode
         elif app.button_states.get(BUTTON_TYPES["RIGHT"]):
             app.button_states.clear()
-            self._rotation_rate_motor_power = min(65535, self._rotation_rate_motor_power + 1000)  # increase power by 1000 up to a maximum of 65535
+            self._rotation_rate_motor_power = min(65535, self._rotation_rate_motor_power + 1000)
             if self.logging:
                 print(f"S:Motor+Power: {self._rotation_rate_motor_power}")
         elif app.button_states.get(BUTTON_TYPES["LEFT"]):
             app.button_states.clear()
-            self._rotation_rate_motor_power = max(0, self._rotation_rate_motor_power - 1000)  # decrease power by 1000 down to a minimum of 0
+            self._rotation_rate_motor_power = max(0, self._rotation_rate_motor_power - 1000)
             if self.logging:
                 print(f"S:Motor-Power: {self._rotation_rate_motor_power}")
-        elif app.button_states.get(BUTTON_TYPES["CANCEL"]):
-            app.button_states.clear()
-            if self.logging:
-                print("Exiting Test mode")
-            if app.hexdrive_app is not None:
-                app.hexdrive_app.set_power(False)
-            app.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
-            self._test_support_hexpansion_config.ls_pin[_ROTATION_RATE_EMITTER_PIN].init(mode=Pin.IN)    # Set the IR Emitter pin to input mode to turn it off
-            self._rotation_rate_motor_power = 0
-            self._sub_state = _SUB_SELECT_PORT
-            app.refresh = True
 
         self._rotation_rate_measurement_period_elapsed += delta
-        if self._rotation_rate_measurement_period_elapsed >= _ROTATION_RATE_MEASUREMENT_PERIOD_MS:  # update the display values every 2500ms
-            count = self._rotation_rate_counter.value()
-            self._rotation_rate_rpm = ((60000 * count) + self._rotation_rate_rounding) // (self._rotation_rate_measurement_period_elapsed * self._rotation_rate_spokes)
+        if self._rotation_rate_measurement_period_elapsed >= _ROTATION_RATE_MEASUREMENT_PERIOD_MS:
+            for index, counter in enumerate(self._rotation_rate_counters):
+                if counter is not None:
+                    count = counter.value(0)  # read-and-reset to get the count for the elapsed period
+                    self._rotation_rate_rpm[index] = ((60000 * count) + self._rotation_rate_rounding) // (self._rotation_rate_measurement_period_elapsed * self._rotation_rate_spokes)
             self._rotation_rate_measurement_period_elapsed = 0
             if self.logging:
-                print(f"S:Count {count} = Rotation Rate: {self._rotation_rate_rpm}")
+                print(f"S:Count {count} = Rotation Rates: {self._rotation_rate_rpm}")
 
 
     def _update_select_port(self, delta: int):   # pylint: disable=unused-argument
@@ -451,7 +550,8 @@ class SensorTestMgr:
             if self._sensor_mgr is not None:
                 self._sensor_mgr.close()
                 if self._test_support_hexpansion_config is not None:
-                    self._test_support_hexpansion_config.ls_pin[_ROTATION_RATE_EMITTER_PIN].init(mode=Pin.IN)    # Set the IR Emitter pin to input mode
+                    for pin_num in _ROTATION_RATE_EMITTER_PINS:
+                         self._test_support_hexpansion_config.ls_pin[pin_num].init(mode=Pin.IN)   # Set LS pins to input mode to turn off the IR emitters
             app.return_to_menu()
 
 
@@ -604,17 +704,27 @@ class SensorTestMgr:
                 # Enable the IR emitter for measuring wheel rotation rate
                 if self.logging:
                     print("S:IR Emitter On")
-                self._test_support_hexpansion_config.ls_pin[_ROTATION_RATE_EMITTER_PIN].init(mode=ePin.PWM)     # Set the IR Emitter pin to PWM mode so we can control the brightness
-                self._test_support_hexpansion_config.ls_pin[_ROTATION_RATE_EMITTER_PIN].duty(self._rotation_rate_emitter_duty)  # Set the IR Emitter to the configured duty cycle
+                for pin_num in _ROTATION_RATE_EMITTER_PINS:    
+                    self._test_support_hexpansion_config.ls_pin[pin_num].init(mode=ePin.PWM)     # Set the IR Emitter pin to PWM mode so we can control the brightness
+                    self._test_support_hexpansion_config.ls_pin[pin_num].duty(self._rotation_rate_emitter_duty)  # Set the IR Emitter to the configured duty cycle
 
                 # Enable the phototransistor input for measuring wheel rotation rate
-                self._rotation_rate_sensor_pin = self._test_support_hexpansion_config.pin[_ROTATION_RATE_SENSOR_PIN]           # HS_F
-                self._rotation_rate_sensor_pin.init(mode=Pin.IN)
-                # configure the ESP32S3 hardware to count pulses on the HS_F pin and make the count available as a regular GPIO input that we can read in software.  This allows us to do high-speed counting of photodiode pulses without needing to do it in software with interrupts or tight loops, which would be unreliable due to the cooperative multitasking nature of the app.
-                # Counter not yet available in this Micropython port so we have created our own...
-                self._rotation_rate_counter = Counter(unit=0, pin=self._rotation_rate_sensor_pin)     # create Counter and begin counting
+                for index, pin_num in enumerate(_ROTATION_RATE_SENSOR_PINS):
+                    self._rotation_rate_sensor_pin = self._test_support_hexpansion_config.pin[pin_num]           # HS_F
+                    self._rotation_rate_sensor_pin.init(mode=Pin.IN)
+                    # configure the ESP32S3 hardware to count pulses on the HS_F pin and make the count available as a regular GPIO input that we can read in software.  This allows us to do high-speed counting of photodiode pulses without needing to do it in software with interrupts or tight loops, which would be unreliable due to the cooperative multitasking nature of the app.
+                    # Counter not yet available in this Micropython port so we have created our own...
+                    gpio_num = _HS_PIN_TO_GPIO[_ROTATION_RATE_PORT][pin_num]
+                    self._rotation_rate_counters[index] = Counter(None, gpio_num, filter_ns=1000000, logging=self.logging)     # auto-select PCNT unit
+
+                    if self._rotation_rate_counters[index].unit is None:
+                        if self.logging:
+                            print("S:Failed to allocate PCNT counter")
+                        app.notification = Notification("PCNT Init Failed")
+                        # deinit???
+                        return False
                 if self.logging:
-                    print(f"S:Rate counter {self._rotation_rate_counter}")
+                    print(f"S:Rate counter {self._rotation_rate_counters}")
                 self._rotation_rate_measurement_period_elapsed = 0
                 self._rotation_rate_rpm = 0
                 app.update_period = 250  # update every 250ms to give a responsive display without overwhelming the CPU with updates
@@ -644,17 +754,68 @@ class SensorTestMgr:
     
 
     def _draw_motor_test_mode(self, ctx):
-        # show the current emitter duty cycle as a percentage in the label, and show the current photodiode reading and rate counter value in the display data
+        if self._auto_mode:
+            self._draw_auto_scan(ctx)
+            return
+        # Manual mode: show the current emitter duty cycle as a percentage in the label, and show the current photodiode reading and rate counter value in the display data
         lines = [f"IR:{int(self.rotation_rate_emitter_duty * 100 // 255)}%"]
         colours = [(1, 1, 0)]
         # Show power
         lines += [f"Pwr:{self._rotation_rate_motor_power}"]
         colours += [(0, 1, 1)]
-        if self._rotation_rate_counter is not None:
-            lines += [f"{self._rotation_rate_rpm}rpm"]
-            colours += [(1, 0, 1)]
+        for index, rpm in enumerate(self._rotation_rate_rpm):
+            if rpm is not None:
+                lines += [f"{index}: {rpm}rpm"]
+                colours += [(1, 0, 1)]
         self._app.draw_message(ctx, lines, colours, label_font_size)
-        button_labels(ctx, up_label="IR+", down_label="IR-", cancel_label="Back", left_label="Pwr-", right_label="Pwr+")
+        button_labels(ctx, up_label="IR+", down_label="IR-", cancel_label="Back",
+                      left_label="Pwr-", right_label="Pwr+", confirm_label="Auto")
+
+
+    def _draw_auto_scan(self, ctx):
+        """Draw a chart of power vs RPM from the auto scan results."""
+        # Chart area within the 240x240 circular display (origin at centre)
+        chart_left = -90
+        chart_right = 90
+        chart_top = -65
+        chart_bottom = 65
+        chart_w = chart_right - chart_left
+        chart_h = chart_bottom - chart_top
+
+        # Background
+        ctx.rgb(0.05, 0.05, 0.05).rectangle(chart_left - 5, chart_top - 5, chart_w + 10, chart_h + 10).fill()
+
+        # Axes
+        ctx.rgb(0.4, 0.4, 0.4)
+        ctx.move_to(chart_left, chart_bottom).line_to(chart_right, chart_bottom).stroke()  # X axis
+        ctx.move_to(chart_left, chart_bottom).line_to(chart_left, chart_top).stroke()      # Y axis
+
+        n = len(self._auto_results)
+        max_rpm = self._auto_max_rpm if self._auto_max_rpm > 0 else 1
+
+        if n > 1:
+            # Plot data points as small bars
+            bar_w = max(1, chart_w // _AUTO_SCAN_STEPS)
+            for i in range(n):
+                power, rpm = self._auto_results[i]
+                x = chart_left + (power * chart_w) // 65535
+                h = (rpm * chart_h) // max_rpm
+                if h > 0:
+                    ctx.rgb(0.0, 1.0, 0.5).rectangle(x, chart_bottom - h, bar_w, h).fill()
+
+        # Title and max RPM label
+        ctx.rgb(1, 1, 0)
+        ctx.font_size = label_font_size
+        if self._auto_done:
+            ctx.move_to(-55, chart_top - 5).text("Complete")
+        else:
+            progress = (self._auto_step * 100) // _AUTO_SCAN_STEPS
+            ctx.move_to(-55, chart_top - 5).text(f"Scan {progress}%")
+
+        ctx.rgb(0, 1, 1)
+        ctx.move_to(-60, chart_bottom + label_font_size + 2).text(f"Max:{max_rpm}rpm")
+
+        button_labels(ctx, cancel_label="Back", confirm_label="Manual")
 
 
     def _draw_select_port(self, ctx):
@@ -713,138 +874,280 @@ class SensorTestMgr:
 
 #------------------------------------------------------------------
 # ESP32S3 PCNT (Pulse Counter) hardware register definitions and bit masks
+# Supports all 4 PCNT units (0-3) on the ESP32-S3.
 #-------------------------------------------------------------------
 
 _SYSTEM_BASE      = const(0x600C0000)
 _GPIO_BASE        = const(0x60004000)
 _PCNT_BASE        = const(0x60017000)
 
+_PCNT_NUM_UNITS   = 4   # ESP32-S3 has 4 PCNT units
+
 _PCNT_CLK_BIT     = const(1 << 10)  # SYSTEM_PCNT_CLK_EN / SYSTEM_PCNT_RST (bit 10)
 
-# System/Clock Base
+# System/Clock registers
 _CLK_EN0_REG      = const(_SYSTEM_BASE + 0x0018)
 _RST_EN0_REG      = const(_SYSTEM_BASE + 0x0020)
 
 # GPIO Matrix Base
 _GPIO_FUNC_IN_SEL_CFG_BASE = const(_GPIO_BASE + 0x0154)
-_U0_PULSE_SIG_IDX = 33  # PCNT_SIG_CH0_IN0_IDX  — Unit 0, Ch 0, Pulse signal
-_U0_CTRL_SIG_IDX  = 35  # PCNT_CTRL_CH0_IN0_IDX — Unit 0, Ch 0, Control signal
 _SIG_IN_SEL_BIT   = const(1 << 6) # Enable routing via GPIO Matrix
 
-# PCNT registers (ESP32-S3 layout from pcnt_reg.h)
-_PCNT_U0_CONF0_REG      = const(_PCNT_BASE + 0x0000)
-_PCNT_PULSE_CNT_U0_REG  = const(_PCNT_BASE + 0x0030)  # PCNT_PULSE_CNT_U0_REG
-_PCNT_CTRL_REG          = const(_PCNT_BASE + 0x0060)  # PCNT_CTRL_REG
+# PCNT register offsets (per-unit, relative to _PCNT_BASE)
+#   CONF0: _PCNT_BASE + unit * 0x0C
+#   CONF1: _PCNT_BASE + unit * 0x0C + 0x04
+#   CONF2: _PCNT_BASE + unit * 0x0C + 0x08
+#   CNT:   _PCNT_BASE + 0x30 + unit * 4
+#   STATUS:_PCNT_BASE + 0x50 + unit * 4
+_PCNT_CTRL_REG    = const(_PCNT_BASE + 0x0060)
 
-# _PCNT_PULSE_CNT_U0_REG bits
-_PCNT_PULSE_CNT_RST_U0 = const(1 << 0)
+# _PCNT_CTRL_REG bits — per-unit reset and pause at (unit * 2) and (unit * 2 + 1)
+_PCNT_CTRL_CLK_EN = const(1 << 16)  # Register clock gate — must be 1 for register access
 
-# _PCNT_CTRL_REG bits
-_PCNT_CTRL_CLK_EN   = const(1 << 16)  # Register clock gate — must be 1 for register access
-_PCNT_CTRL_RST_U0   = const(1 << 0)   # Counter reset for unit 0 (default 1 = held in reset)
-
-# _PCNT_U0_CONF0_REG bit layout (ESP32-S3):
-#   [9:0]   FILTER_THRES        [17:16] CH0_NEG_MODE (0=none,1=inc,2=dec)
-#   [10]    FILTER_EN           [19:18] CH0_POS_MODE (0=none,1=inc,2=dec)
-#   [11]    THR_ZERO_EN         [21:20] CH0_HCTRL_MODE
-#   [12]    THR_H_LIM_EN        [23:22] CH0_LCTRL_MODE
-#   [13]    THR_L_LIM_EN        [25:24] CH1_NEG_MODE
-#   [14]    THR_THRES0_EN       [27:26] CH1_POS_MODE
-#   [15]    THR_THRES1_EN       [29:28] CH1_HCTRL_MODE
+# CONF0 bit layout (same layout for all units)
 _CONF0_FILTER_THRES_M  = const(0x3FF)   # bits [9:0]
 _CONF0_FILTER_EN       = const(1 << 10)
-_CONF0_CH0_NEG_MODE_S  = const(16)      # bits [17:16]
 _CONF0_CH0_POS_MODE_S  = const(18)      # bits [19:18]
 
+# GPIO signal index base for PCNT: Unit N, CH0 pulse = 33 + N*4, CH0 ctrl = 35 + N*4
+_PCNT_SIG_BASE    = 33
+
+# APB clock frequency for filter calculation (Hz)
+_APB_CLK_HZ       = const(80_000_000)
+
+# Badge hexpansion HS pin to ESP32-S3 GPIO number mapping
+# HexpansionConfig(port).pin[i] is Pin(gpio) where gpio = _HS_PIN_TO_GPIO[port][i]
+_HS_PIN_TO_GPIO = {
+    1: (39, 40, 41, 42),
+    2: (35, 36, 37, 38),
+    3: (34, 33, 47, 48),
+    4: (11, 14, 13, 12),
+    5: (18, 16, 15, 17),
+    6: ( 3,  4,  5,  6),
+}
+
+# Reverse lookup: GPIO number -> (port, pin_index) for diagnostics
+_GPIO_TO_HS = {}
+for _port, _gpios in _HS_PIN_TO_GPIO.items():
+    for _idx, _gpio in enumerate(_gpios):
+        _GPIO_TO_HS[_gpio] = (_port, _idx)
+
 class Counter:
-    """Simple wrapper for ESP32S3 pulse counting hardware, which counts the number of rising
-    edges on a given pin. __init__() initializes the counter on a given pin, and value() returns the current count."""                              
+    """Wrapper around ESP32-S3 PCNT hardware for counting rising edges.
 
-    def __init__(self, unit: int | None = 0, pin: Pin = None):
-        self.unit = unit
-        # unable to find a way to get at the pin number from the Pin object, so just hardcoding it for now since we only need it for one pin in this app
-        self.pin = 35
+    Parameters
+    ----------
+    src : int
+        The ESP32-S3 GPIO number to count pulses on.
+        Use ``_HS_PIN_TO_GPIO[port][index]`` to convert from a badge HS pin.
+    id : int | None
+        PCNT unit to use (0-3).  If ``None``, the first available (unused) unit
+        is auto-selected.  If the requested unit is already in use, ``__init__``
+        sets ``self.unit = None`` to signal failure.
+    filter_ns : int
+        Minimum pulse width in nanoseconds.  Pulses shorter than this are
+        rejected by the hardware glitch filter.  Set to 0 to disable filtering.
+    logging : bool
+        Print diagnostic messages to the console.
 
-        if not self.configure():
-            return None
+    CURRENTLY ONLY COUNTS UP ON RISING EDGES    
+    """
+
+    def __init__(self, unit: int | None, src: int, filter_ns: int = 0, logging: bool = False):
+        self.logging = logging
+        self._configured = False
+
+        if unit is not None:
+            if unit < 0 or unit >= _PCNT_NUM_UNITS:
+                if self.logging:
+                    print(f"PCNT: unit {unit} out of range (0-{_PCNT_NUM_UNITS - 1})")
+                self.unit = None
+                return
+            if self._unit_in_use(unit):
+                self.unit = None
+                return
+            self.unit = unit
+        else:
+            # Auto-select first available unit
+            self.unit = None
+            for u in range(_PCNT_NUM_UNITS):
+                if not self._unit_in_use(u):
+                    self.unit = u
+                    break
+            if self.unit is None:
+                if self.logging:
+                    print("PCNT: all units in use, no free unit available")
+                return
+
+        if not self.init(src, filter_ns):
+            if self.logging:
+                print(f"PCNT: failed to configure unit {self.unit}")
+            self.unit = None
 
 
-    def __str__(self):
-        # method called by printing the Counter object
-        count = self.value()
-        return f"Counter(unit={self.unit}, pin={self.pin}, count={count})"
+    def _unit_in_use(self, unit: int) -> bool:
+        """Check whether a PCNT unit appears to already be in use.
 
-
-    def configure(self) -> bool:
-        """Configure the ESP32S3 PCNT hardware to count rising edges on the specified pin."""
-        # print the current state of the relevant registers for debugging
-        print(f"Initial CLK_EN0_REG[{hex(_CLK_EN0_REG)}]: {mem32[_CLK_EN0_REG]:032b}")
-        print(f"Initial RST_EN0_REG[{hex(_RST_EN0_REG)}]: {mem32[_RST_EN0_REG]:032b}")
-        print(f"Initial PCNT_CTRL_REG[{hex(_PCNT_CTRL_REG)}]: {mem32[_PCNT_CTRL_REG]:032b}")
-
-        try:    
-            # --- 1. ENABLE PERIPHERAL CLOCK ---
-            # Enable PCNT clock and clear reset bit
-            mem32[_CLK_EN0_REG] |= _PCNT_CLK_BIT
-            mem32[_RST_EN0_REG] &= ~_PCNT_CLK_BIT
-
-            # --- 2. ENABLE PCNT REGISTER CLOCK GATE ---
-            # The PCNT module has an internal register clock gate (PCNT_CTRL_REG bit 16).
-            # Registers cannot be read or written until this bit is set.
-            # Also hold counter in reset (bit 0 = 1) while configuring.
-            mem32[_PCNT_CTRL_REG] = _PCNT_CTRL_CLK_EN | _PCNT_CTRL_RST_U0
-
-            print(f"PCNT_CTRL_REG after gate enable[{hex(_PCNT_CTRL_REG)}]: {mem32[_PCNT_CTRL_REG]:032b}")
-            print(f"U0_CONF0_REG after gate enable[{hex(_PCNT_U0_CONF0_REG)}]: {mem32[_PCNT_U0_CONF0_REG]:032b}")
-
-            # --- 3. ROUTE GPIO TO PCNT SIGNAL ---
-            # GPIO Matrix: Route physical GPIO pin to Signal 39 (U0_PULSE_CH0_IN)
-            mem32[_GPIO_FUNC_IN_SEL_CFG_BASE + (_U0_PULSE_SIG_IDX * 4)] = _SIG_IN_SEL_BIT | self.pin
-
-            # Route constant "1" (0x38) to Control Signal so it's always high
-            mem32[_GPIO_FUNC_IN_SEL_CFG_BASE + (_U0_CTRL_SIG_IDX * 4)] = _SIG_IN_SEL_BIT | 0x38
-
-            # --- 4. CONFIGURE PCNT COUNTING ---
-            # U0_CONF0_REG layout (ESP32-S3):
-            #   [9:0]   FILTER_THRES    [17:16] CH0_NEG_MODE
-            #   [10]    FILTER_EN       [19:18] CH0_POS_MODE (1=inc on rising)
-            FILTER_VAL = 1023   # 1023 = ~12.8 microsecond filter at 80MHz APB clock
-            config = 0
-            config |= (FILTER_VAL & _CONF0_FILTER_THRES_M)  # Filter threshold in bits [9:0]
-            config |= _CONF0_FILTER_EN                       # Enable filter (bit 10)
-            config |= (1 << _CONF0_CH0_POS_MODE_S)           # POS_MODE = 1: Inc on rising edge
-            # NEG_MODE = 0 (default): No effect on falling edge
-            mem32[_PCNT_U0_CONF0_REG] = config
-
-            # --- 5. RELEASE COUNTER FROM RESET ---
-            # Clear RST bit (bit 0) to start counting, keep CLK_EN (bit 16)
-            mem32[_PCNT_CTRL_REG] = _PCNT_CTRL_CLK_EN
-
-        except Exception as e:          # pylint: disable=broad-exception-caught
-            print(f"S:Error configuring PCNT: {e}")
+        A unit is considered in use if:
+        - The peripheral clock is enabled AND
+        - The register clock gate is enabled AND
+        - The unit is NOT held in reset AND
+        - CONF0 is non-zero (has been configured)
+        """
+        # Check peripheral clock
+        clk_on = (mem32[_CLK_EN0_REG] & _PCNT_CLK_BIT) != 0
+        if not clk_on:
+            if self.logging:
+                print(f"PCNT: unit {unit} - peripheral clock off, unit free")
             return False
 
-        print(f"CLK_EN0_REG[{hex(_CLK_EN0_REG)}]: {mem32[_CLK_EN0_REG]:032b}")
-        print(f"RST_EN0_REG[{hex(_RST_EN0_REG)}]: {mem32[_RST_EN0_REG]:032b}")
-        print(f"PCNT_CTRL_REG[{hex(_PCNT_CTRL_REG)}]: {mem32[_PCNT_CTRL_REG]:032b}")
-        print(f"GPIO_FUNC_IN_SEL_CFG for Pulse Signal {_U0_PULSE_SIG_IDX}[{hex(_GPIO_FUNC_IN_SEL_CFG_BASE + (_U0_PULSE_SIG_IDX * 4))}]: {mem32[_GPIO_FUNC_IN_SEL_CFG_BASE + (_U0_PULSE_SIG_IDX * 4)]:032b}")
-        print(f"GPIO_FUNC_IN_SEL_CFG for Control Signal {_U0_CTRL_SIG_IDX}[{hex(_GPIO_FUNC_IN_SEL_CFG_BASE + (_U0_CTRL_SIG_IDX * 4))}]: {mem32[_GPIO_FUNC_IN_SEL_CFG_BASE + (_U0_CTRL_SIG_IDX * 4)]:032b}")
-        print(f"U0_CONF0_REG[{hex(_PCNT_U0_CONF0_REG)}]: {mem32[_PCNT_U0_CONF0_REG]:032b}")
-        print(f"U0_CNT_REG[{hex(_PCNT_PULSE_CNT_U0_REG)}]: {mem32[_PCNT_PULSE_CNT_U0_REG]:032b}")
-        
+        ctrl = mem32[_PCNT_CTRL_REG]
+
+        # Check register clock gate
+        if not (ctrl & _PCNT_CTRL_CLK_EN):
+            if self.logging:
+                print(f"PCNT: unit {unit} - register clock gate off, unit free")
+            return False
+
+        # Check if held in reset (reset bit = unit * 2)
+        rst_bit = 1 << (unit * 2)
+        if ctrl & rst_bit:
+            if self.logging:
+                print(f"PCNT: unit {unit} - held in reset, unit free")
+            return False
+
+        # Check CONF0 register
+        conf0_addr = _PCNT_BASE + unit * 0x0C
+        conf0 = mem32[conf0_addr]
+        if conf0 == 0x3C10: # a slightly odd reset state 
+            if self.logging:
+                print(f"PCNT: unit {unit} - CONF0=0x3C10 (unconfigured), unit free")
+            return False
+
+        # Unit appears to be actively configured and running
+        if self.logging:
+            cnt_addr = _PCNT_BASE + 0x30 + unit * 4
+            cnt = mem32[cnt_addr] & 0xFFFF
+            pulse_sig = _PCNT_SIG_BASE + unit * 4
+            gpio_route = mem32[_GPIO_FUNC_IN_SEL_CFG_BASE + pulse_sig * 4]
+            routed_gpio = gpio_route & 0x3F
+            print(f"PCNT: unit {unit} - IN USE: CONF0=0x{conf0:08X}, "
+                  f"count={cnt}, routed to GPIO {routed_gpio}")
         return True
 
 
-    def value(self) -> int:
-        """Read the current count value and reset the counter to zero."""
+    def __str__(self):
+        if self.unit is None:
+            return "Counter(not configured)"
+        count = self.value()
+        return f"Counter(unit={self.unit}, GPIO={self.pin}, count={count})"
+
+
+    def init(self, src: int, filter_ns: int | None = None) -> bool:
+        """Configure a PCNT unit to count rising edges on the GPIO pin specified by src."""
+        self.pin = src
+
+        unit = self.unit
+        conf0_addr = _PCNT_BASE + unit * 0x0C
+        cnt_addr = _PCNT_BASE + 0x30 + unit * 4
+        rst_bit = 1 << (unit * 2)
+        pulse_sig = _PCNT_SIG_BASE + unit * 4       # PCNT_SIG_CH0_INn
+        ctrl_sig = _PCNT_SIG_BASE + unit * 4 + 2    # PCNT_CTRL_CH0_INn
+
+        if self.logging:
+            hs = _GPIO_TO_HS.get(self.pin)
+            hs_str = f" port {hs[0]} HS pin {hs[1]})" if hs else ""
+            print(f"PCNT U{unit}: on GPIO {self.pin}{hs_str}, filter_ns={filter_ns}ns")
+            print(f"  CONF0 addr=0x{conf0_addr:08X}, CNT addr=0x{cnt_addr:08X}")
+            print(f"  pulse_sig={pulse_sig}, ctrl_sig={ctrl_sig}")
+
         try:
-            # Read the 16-bit counter value
-            count = mem32[_PCNT_PULSE_CNT_U0_REG] & 0xFFFF
-            mem32[_PCNT_CTRL_REG] |= _PCNT_PULSE_CNT_RST_U0  # Write to the reset register to reset the count to zero
-            mem32[_PCNT_CTRL_REG] &= ~_PCNT_PULSE_CNT_RST_U0 # Clear the reset bit to allow counting to resume
+            # --- 1. ENABLE PERIPHERAL CLOCK ---
+            mem32[_CLK_EN0_REG] |= _PCNT_CLK_BIT
+            mem32[_RST_EN0_REG] &= ~_PCNT_CLK_BIT
+
+            # --- 2. ENABLE REGISTER CLOCK GATE, HOLD THIS UNIT IN RESET ---
+            # Read-modify-write to preserve other units' state
+            ctrl = mem32[_PCNT_CTRL_REG]
+            ctrl |= _PCNT_CTRL_CLK_EN | rst_bit
+            mem32[_PCNT_CTRL_REG] = ctrl
+
+            # --- 3. ROUTE GPIO VIA MATRIX ---
+            mem32[_GPIO_FUNC_IN_SEL_CFG_BASE + (pulse_sig * 4)] = _SIG_IN_SEL_BIT | self.pin
+            # Route constant high (0x38) to control signal
+            mem32[_GPIO_FUNC_IN_SEL_CFG_BASE + (ctrl_sig * 4)] = _SIG_IN_SEL_BIT | 0x38
+
+            # --- 4. CONFIGURE COUNTING ---
+            # Calculate filter threshold from min pulse width
+            if filter_ns is not None and filter_ns > 0:
+                filter_val = (_APB_CLK_HZ * filter_ns) // 1_000_000_000
+                if filter_val > 1023:
+                    filter_val = 1023
+                config = (filter_val & _CONF0_FILTER_THRES_M) | _CONF0_FILTER_EN
+            else:
+                config = 0
+            config |= (1 << _CONF0_CH0_POS_MODE_S)  # Inc on rising edge
+            mem32[conf0_addr] = config
+
+            # --- 5. RELEASE FROM RESET ---
+            ctrl = mem32[_PCNT_CTRL_REG]
+            ctrl &= ~rst_bit
+            mem32[_PCNT_CTRL_REG] = ctrl
+
+            self._configured = True
+
         except Exception as e:          # pylint: disable=broad-exception-caught
-            print(f"S:Error reading PCNT count: {e}")
+            print(f"PCNT U{unit}: error configuring: {e}")
+            return False
+
+        if self.logging:
+            print(f"PCNT U{unit}: configured OK, "
+                  f"CONF0=0x{mem32[conf0_addr]:08X}, "
+                  f"CTRL=0x{mem32[_PCNT_CTRL_REG]:08X}, "
+                  f"CNT={mem32[cnt_addr] & 0xFFFF}")
+        return True
+
+
+    def value(self, value: int | None = None) -> int:
+        """Read the current count and optionally reset the counter to zero.
+          DOES NOT SUPPORT SETTING THE COUNTER TO AN ARBITRARY VALUE, ONLY RESETTING TO ZERO."""
+        if not self._configured:
             return 0
-        
-        return count
+        unit = self.unit
+        rst_bit = 1 << (unit * 2)
+        cnt_addr = _PCNT_BASE + 0x30 + unit * 4
+        if value is not None and value == 0:
+            irq_state = disable_irq()
+            count = mem32[cnt_addr] & 0xFFFF
+            mem32[_PCNT_CTRL_REG] |= rst_bit
+            mem32[_PCNT_CTRL_REG] &= ~rst_bit
+            enable_irq(irq_state)
+        else:
+            count = mem32[cnt_addr] & 0xFFFF
+        return count    
+
+
+
+    def deinit(self):
+        """Release the PCNT unit: hold it in reset and clear its CONF0."""
+        if not self._configured or self.unit is None:
+            return
+        unit = self.unit
+        conf0_addr = _PCNT_BASE + unit * 0x0C
+        rst_bit = 1 << (unit * 2)
+        mem32[_PCNT_CTRL_REG] |= rst_bit   # hold in reset
+        mem32[conf0_addr] = 0               # clear config so unit appears free
+        self._configured = False
+
+        if self.logging:
+            print(f"PCNT U{unit}: released")
+
+        # disable the peripheral clock if no units are in use to save power
+        if not any(self._unit_in_use(u) for u in range(_PCNT_NUM_UNITS)):
+            mem32[_CLK_EN0_REG] &= ~_PCNT_CLK_BIT
+            mem32[_RST_EN0_REG] |= _PCNT_CLK_BIT
+            if self.logging:
+                print("PCNT: all units released, peripheral clock disabled")
+
+
 
