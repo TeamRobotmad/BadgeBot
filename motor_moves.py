@@ -108,9 +108,11 @@ class Instruction:
 
 
     def make_power_plan(self, mysettings):
+        """Convert the instruction's duration and direction into a power plan, which is a list of (power_tuple, duration) pairs."""
         curr_power = 0
         ramp_up = []
         max_ramp_up_ticks = ((self.directional_duration(mysettings) * self._duration) // (2 * _TICK_MS)) - 1
+        i = None
         for i in range(max_ramp_up_ticks):
             curr_power += mysettings['acceleration'].v
             if curr_power >= mysettings['max_power'].v:
@@ -120,9 +122,10 @@ class Instruction:
                 ramp_up.append((self.directional_power_tuple(curr_power), _TICK_MS))
         power_durations = ramp_up.copy()
         # period of constant power after ramp-up, before ramp-down
-        user_power_duration = (self.directional_duration(mysettings) * self._duration) - (2 * i * _TICK_MS)
-        if user_power_duration > 0:
-            power_durations.append((self.directional_power_tuple(curr_power), user_power_duration))
+        if i is not None:
+            user_power_duration = (self.directional_duration(mysettings) * self._duration) - (2 * i * _TICK_MS)
+            if user_power_duration > 0:
+                power_durations.append((self.directional_power_tuple(curr_power), user_power_duration))
         ramp_down = ramp_up.copy()
         ramp_down.reverse()
         power_durations.extend(ramp_down)
@@ -318,9 +321,11 @@ class MotorMovesMgr:
         elif app.button_states.get(BUTTON_TYPES["DOWN"]):
             # reset the instructions list on DOWN press in the help screen, for convenience
             app.button_states.clear()
-            self.instructions = []
-            # Notification that list cleared
-            app.notification = Notification("Instructions Cleared")
+            if 0 < len(self.instructions) or self.current_instruction is not None:
+                self.instructions = []
+                self.current_instruction = None
+                # Notification that list cleared
+                app.notification = Notification("Instructions Cleared")
         else:
             app.animation_counter += delta
             if app.animation_counter > 10000:
@@ -339,6 +344,13 @@ class MotorMovesMgr:
                     app.animation_counter = 0
                     self._sub_state = _SUB_HELP
                 else:
+                    # if there are No instructions then warn the user and return to help, otherwise start the countdown to run the instructions
+                    if len(self.instructions) == 0 and self.current_instruction is None:
+                        app.notification = Notification("No instructions entered")
+                        app.scroll_mode_enable(False)                
+                        app.animation_counter = 0
+                        self._sub_state = _SUB_HELP
+                        return
                     self.finalize_instruction()
                     app.countdown_next_state = STATE_MOTOR_MOVES
                     app.run_countdown_elapsed_ms = 0
