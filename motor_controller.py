@@ -69,7 +69,8 @@ class MotorController:
         regardless of how the motors are mounted.
     apply_motor_directions_cb : Callable[[MotorOutputTuple], MotorOutputTuple] | None
         Callback that applies per-motor direction settings to an output
-        tuple before values are sent to HexDrive.
+        tuple before values are sent to HexDrive. If ``None``, outputs
+        are sent unchanged.
     gyro_axis : int
         Index into ``imu.gyro_read()`` for the yaw axis (default 2).
     gyro_deadband : float
@@ -554,7 +555,9 @@ class MotorController:
         if self._hexdrive is not None:
             output = self.motor_output
             if self._apply_motor_directions_cb is not None:
-                output = self._apply_motor_directions_cb(output)
+                mapped = self._apply_motor_directions_cb(output)
+                if isinstance(mapped, tuple) and len(mapped) == len(output):
+                    output = mapped
             self._hexdrive.set_motors(output)
 
     
