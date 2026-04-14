@@ -110,9 +110,9 @@ def test_autodrive_settings_need_hexpansion():
 
 def test_front_face_labels_complete():
     """Verify _FRONT_FACE_LABELS has one entry for each valid front_face value (0-11)."""
-    import sim.apps.BadgeBot.settings_mgr as BadgeBotSettings
-    assert hasattr(BadgeBotSettings, '_FRONT_FACE_LABELS')
-    assert len(BadgeBotSettings._FRONT_FACE_LABELS) == 12
+    import sim.apps.BadgeBot.app as BadgeBot
+    assert hasattr(BadgeBot, '_FRONT_FACE_LABELS')
+    assert len(BadgeBot._FRONT_FACE_LABELS) == 12
 
 
 def test_menu_items_include_sensor_and_auto():
