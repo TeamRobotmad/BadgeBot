@@ -57,6 +57,7 @@ _MAX_USER_TURN_MS      = 10000
 DRIVE_MODE_TIME     = 0     # exposed for use in autodrive.py
 DRIVE_MODE_DISTANCE = 1     # exposed for use in autodrive.py
 _DEFAULT_DRIVE_MODE  = DRIVE_MODE_DISTANCE
+_DRIVE_MODE_LABELS = ("Time", "Distance")
 
 
 # Local sub-states (internal to Motor Moves)
@@ -144,8 +145,7 @@ def init_settings(s, MySetting: type):
     s['max_power']     = MySetting(s, DEFAULT_MAX_POWER,     _MIN_MAX_POWER,     _MAX_MAX_POWER)
     s['drive_step_ms'] = MySetting(s, _DEFAULT_USER_DRIVE_MS, _MIN_USER_DRIVE_MS, _MAX_USER_DRIVE_MS)
     s['turn_step_ms']  = MySetting(s, _DEFAULT_USER_TURN_MS,  _MIN_USER_TURN_MS,  _MAX_USER_TURN_MS)
-    if 'drive_mode' not in s:
-        s['drive_mode']    = MySetting(s, _DEFAULT_DRIVE_MODE, DRIVE_MODE_TIME, DRIVE_MODE_DISTANCE)
+    s['drive_mode']    = MySetting(s, _DEFAULT_DRIVE_MODE, DRIVE_MODE_TIME, DRIVE_MODE_DISTANCE, labels=_DRIVE_MODE_LABELS)
 
 
 # ---- Motor Moves manager ---------------------------------------------------

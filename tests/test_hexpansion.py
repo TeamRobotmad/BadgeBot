@@ -16,7 +16,7 @@ class TestNoHexpansion:
 
     def test_base_settings_present(self, badgebot_app):
         """Base settings are always registered in __init__."""
-        for key in ('brightness', 'logging', 'fwd_dir', 'front_face'):
+        for key in ('brightness', 'logging', 'motor1_dir', 'motor2_dir', 'front_face'):
             assert key in badgebot_app.settings, f"Missing base setting: {key}"
 
     def test_motor_settings_absent_without_hexpansion(self, badgebot_app):
@@ -315,7 +315,7 @@ class TestFullHexDrive:
         s = badgebot_app_with_hexpansion.settings
         expected = (
             # base
-            'brightness', 'logging', 'fwd_dir', 'front_face',
+            'brightness', 'logging', 'motor1_dir', 'motor2_dir', 'front_face',
             # motor moves
             'acceleration', 'max_power', 'drive_step_ms', 'turn_step_ms',
             # servo test

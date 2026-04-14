@@ -122,7 +122,12 @@ MENU_ITEM_SETTINGS = 8
 MENU_ITEM_ABOUT = 9
 MENU_ITEM_EXIT = 10
 
-
+# Front face direction labels (0=BtnA corner between slots 6 & 1, each step = 30° CW)
+_FRONT_FACE_LABELS = (
+    "BtnA", "Slot 1", "BtnB", "Slot 2", "BtnC", "Slot 3",
+    "BtnD", "Slot 4", "BtnE", "Slot 5", "BtnF", "Slot 6",
+)
+_MOTOR_DIRECTION_LABELS = ("Normal", "Reverse")
 
 # Import sub-modules after constants are defined so they can safely
 # `from .app import STATE_*` without circular-import timing issues.
@@ -195,6 +200,9 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.run_countdown_elapsed_ms: int = 0
         self.countdown_next_state: int = None  # which state to go to after countdown
 
+        self._motor1_reversed: bool = False       # 0 or 1 to control direction of motor 1, set based on settings
+        self._motor2_reversed: bool = False       # 0 or 1 to control direction of motor 2, set based on settings
+
         # Settings - common settings first, then each module registers its own later
         self.settings: dict = {}
         if MySetting is not None:
@@ -202,14 +210,16 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             self.settings['brightness']    = MySetting(self.settings, _BRIGHTNESS, 0.1, 1.0)
             self.settings['logging']       = MySetting(self.settings, _LOGGING, False, True)
             # Direction settings
-            self.settings['fwd_dir']       = MySetting(self.settings, _FWD_DIR_DEFAULT, 0, 1)
-            self.settings['front_face']    = MySetting(self.settings, _FRONT_FACE_DEFAULT, 0, 11)
+            self.settings['motor1_dir']    = MySetting(self.settings, _FWD_DIR_DEFAULT, 0, 1, labels=_MOTOR_DIRECTION_LABELS)
+            self.settings['motor2_dir']    = MySetting(self.settings, _FWD_DIR_DEFAULT, 0, 1, labels=_MOTOR_DIRECTION_LABELS)
+            self.settings['front_face']    = MySetting(self.settings, _FRONT_FACE_DEFAULT, 0, 11, labels=_FRONT_FACE_LABELS)
         
             # Module-specific settings - only initialise modules which are NOT dependent on specific Hexpansion hardware here, as we want to be able to access settings in the HexpansionMgr before we have detected what hardware is present.  For Hexpansion-dependent modules, we will initialise their settings after we have scanned for hardware and know which modules we will be using.
             if _hexpansion_init_settings is not None:
                 _hexpansion_init_settings(self.settings, MySetting)
 
             self.update_settings()
+            self.fast_settings_update()
 
         # Check what version of the Badge s/w we are running on
         try:
@@ -230,7 +240,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                                   'right': "\u25B6" }   # right arrow
         else:
             self.special_chars = {'up': "^", 'left': "<", 'right': ">"}
-
 
 
         # Hexpansion related
@@ -422,7 +431,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if bg_fn is not None:
             output = bg_fn(delta)
             if output is not None and self.hexdrive_app is not None:
-                self.hexdrive_app.set_motors(self.apply_fwd_dir(output))
+                self.hexdrive_app.set_motors(self.apply_motor_directions(output))
 
 
     @property
@@ -478,6 +487,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if self.enable_autodrive and _autodrive_init_settings is not None:
             _autodrive_init_settings(self.settings, MySetting)
         self.update_settings()  # Load settings from EEPROM after initialisation
+        self.fast_settings_update()  # Update fast access settings
         
 
     def update_settings(self):
@@ -488,6 +498,12 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             self.settings[s].v = settings.get(f"{_SETTINGS_NAME_PREFIX}{s}", self.settings[s].d)
             if self.logging:
                 print(f"Setting {s} = {self.settings[s].v}")
+
+
+    def fast_settings_update(self):
+        # for fast access in background_update
+        self._motor1_reversed: bool = self.settings['motor1_dir'].v != 0
+        self._motor2_reversed: bool = self.settings['motor2_dir'].v != 0
 
 
     def _pattern_management(self):        
@@ -773,17 +789,17 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             tildagonos.leds[i] = (0, 0, 0)
 
 
-    def apply_fwd_dir(self, output: tuple) -> tuple:
-        """Negate all motor outputs when fwd_dir=1 (HexDrive mounted facing front)."""
-        if self.settings['fwd_dir'].v:
-            return tuple(-v for v in output)
+    def apply_motor_directions(self, output: tuple) -> tuple:
+        """Negate individual motor outputs as per settings."""
+        output1, output2 = output
+        output = (-output1 if self._motor1_reversed else output1, -output2 if self._motor2_reversed else output2)
         return output
 
 
     def set_direction_leds(self, direction: Button):
         """LED positions rotate based on 'front_face' (0-11, each step = 30° CW).
         Each position p maps to LED pair: (p if p>0 else 12) and (p+1).
-        This is independent of motor direction (fwd_dir)."""
+        """
         f = self.front_face
         if direction == BUTTON_TYPES["UP"]:
             pos = f % 12

@@ -18,7 +18,6 @@ try:
 except ImportError:
     _imu = None
 from .app import MOTOR_PWM_FREQ
-from .motor_moves import DRIVE_MODE_DISTANCE, DRIVE_MODE_TIME
 
 
 # Sub-state constants for the auto-drive state machine
@@ -56,8 +55,6 @@ def init_settings(s, MySetting: type):
     """Register auto-drive-specific settings in the shared settings dict."""
     s['auto_speed']    = MySetting(s, _AUTO_DRIVE_SPEED, 1000, 65535)
     s['auto_obstacle'] = MySetting(s, _AUTO_OBSTACLE_MM, 20, 500)
-    if 'drive_mode' not in s:
-        s['drive_mode']    = MySetting(s, DRIVE_MODE_DISTANCE, DRIVE_MODE_TIME, DRIVE_MODE_DISTANCE)
 
 # ---- Auto Drive manager ----------------------------------------------------
 
@@ -111,13 +108,6 @@ class AutoDriveMgr:
     @logging.setter
     def logging(self, value: bool):
         self._logging = value
-
-
-    @property
-    def drive_mode(self) -> int:
-        """Helper to read the current drive mode setting."""
-        return self._app.settings['drive_mode'].v
-
 
     # ------------------------------------------------------------------
     # Entry point from menu
