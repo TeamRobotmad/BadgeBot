@@ -109,7 +109,7 @@ class MotorController:
         self._hexdrive = hexdrive_app
         self._settings = settings
         self._logging: bool = logging
-        self._front_face_setting = front_face_setting
+        self._front_face_setting: object | None = front_face_setting
         self._apply_motor_directions_cb: Callable[[tuple[int, ...]], tuple[int, ...]] | None = apply_motor_directions_cb
         self._gyro_axis: int = gyro_axis
         self._gyro_deadband: float = gyro_deadband
