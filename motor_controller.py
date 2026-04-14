@@ -22,7 +22,7 @@ try:
 except ImportError:
     _imu = None
 
-from .app import apply_motor_directions,MOTOR_PWM_FREQ
+from .app import MOTOR_PWM_FREQ
 
 # Constants inlined from Sensor_Testing constants.py to avoid splitting
 # application constants into a separate module.
@@ -55,15 +55,15 @@ class MotorController:
         The low-level HexDrive interface (``set_motors``, ``set_power``).
     settings : dict[str, MySetting]
         The shared BadgeBot settings dict (needs ``max_power``,
-        ``acceleration``, ``fwd_dir``).
-    fwd_dir_setting : MySetting | None
-        If provided, motor outputs are negated when its value is truthy
-        (HexDrive mounted facing front).
+        ``acceleration``).
     front_face_setting : MySetting | None
         The ``front_face`` setting (0-11).  Each step is 30° CW around
         the badge.  The accelerometer X/Y axes are rotated by this
         amount so that the forward acceleration is measured correctly
         regardless of how the motors are mounted.
+    apply_motor_directions_cb : Callable[[tuple[int, int]], tuple[int, int]] | None
+        Callback that applies per-motor direction settings to an output
+        tuple before values are sent to HexDrive.
     gyro_axis : int
         Index into ``imu.gyro_read()`` for the yaw axis (default 2).
     gyro_deadband : float
@@ -92,8 +92,8 @@ class MotorController:
         settings,
         *,
         logging=False,
-        fwd_dir_setting=None,
         front_face_setting=None,
+        apply_motor_directions_cb=None,
         gyro_axis=_AUTO_GYRO_AXIS,
         gyro_deadband=_AUTO_GYRO_DEADBAND_DPS,
         accel_axis=_AUTO_ACCEL_AXIS,
@@ -108,8 +108,8 @@ class MotorController:
         self._hexdrive = hexdrive_app
         self._settings = settings
         self._logging: bool = logging
-        self._fwd_dir: int = fwd_dir_setting
         self._front_face: int = front_face_setting
+        self._apply_motor_directions_cb = apply_motor_directions_cb
         self._gyro_axis: int = gyro_axis
         self._gyro_deadband: float = gyro_deadband
         self._accel_axis: int = accel_axis
@@ -546,7 +546,10 @@ class MotorController:
     def _send_output(self):
         """Push ``self.motor_output`` to the HexDrive."""
         if self._hexdrive is not None:
-            self._hexdrive.set_motors(apply_motor_directions(self.motor_output))
+            output = self.motor_output
+            if callable(self._apply_motor_directions_cb):
+                output = self._apply_motor_directions_cb(output)
+            self._hexdrive.set_motors(output)
 
     
     @staticmethod

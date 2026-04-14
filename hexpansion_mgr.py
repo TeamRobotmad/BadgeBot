@@ -521,8 +521,8 @@ class HexpansionMgr:
                                     app.motor_controller = MotorController(
                                         hexdrive_app, app.settings, 
                                         logging=self._logging,
-                                        fwd_dir_setting=app.settings.get('fwd_dir'),
                                         front_face_setting=app.settings.get('front_face'),
+                                        apply_motor_directions_cb=app.apply_motor_directions,
                                     )
                                 except Exception as e:      # pylint: disable=broad-except
                                     print(f"H:MotorController init failed: {e}")
