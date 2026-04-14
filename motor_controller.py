@@ -16,7 +16,10 @@ on-board IMU gyroscope for accurate heading changes.
 import asyncio
 import time
 from math import cos, sin, radians
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
+
+if TYPE_CHECKING:
+    from .settings_mgr import MySetting
 
 try:
     import imu as _imu
@@ -46,6 +49,8 @@ _DEFAULT_DRIVE_TIMEOUT_MS = _AUTO_DRIVE_TIMEOUT_MS  # safety cap on distance dri
 _DEFAULT_UPDATE_MS = 10             # how often the control loop ticks
 _DEFAULT_SETTLE_MS = 50             # brief pause after stopping motors
 
+MotorOutputTuple = tuple[int, ...]
+
 
 class MotorController:
     """High-level, async-friendly motor controller.
@@ -62,7 +67,7 @@ class MotorController:
         the badge.  The accelerometer X/Y axes are rotated by this
         amount so that the forward acceleration is measured correctly
         regardless of how the motors are mounted.
-    apply_motor_directions_cb : Callable[[tuple[int, ...]], tuple[int, ...]] | None
+    apply_motor_directions_cb : Callable[[MotorOutputTuple], MotorOutputTuple] | None
         Callback that applies per-motor direction settings to an output
         tuple before values are sent to HexDrive.
     gyro_axis : int
@@ -109,8 +114,8 @@ class MotorController:
         self._hexdrive = hexdrive_app
         self._settings = settings
         self._logging: bool = logging
-        self._front_face_setting: object | None = front_face_setting
-        self._apply_motor_directions_cb: Callable[[tuple[int, ...]], tuple[int, ...]] | None = apply_motor_directions_cb
+        self._front_face_setting: "MySetting | None" = front_face_setting
+        self._apply_motor_directions_cb: Callable[[MotorOutputTuple], MotorOutputTuple] | None = apply_motor_directions_cb
         self._gyro_axis: int = gyro_axis
         self._gyro_deadband: float = gyro_deadband
         self._accel_axis: int = accel_axis
