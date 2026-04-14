@@ -62,7 +62,7 @@ class MotorController:
         the badge.  The accelerometer X/Y axes are rotated by this
         amount so that the forward acceleration is measured correctly
         regardless of how the motors are mounted.
-    apply_motor_directions_cb : Callable[[tuple[int, int]], tuple[int, int]] | None
+    apply_motor_directions_cb : Callable[[tuple[int, ...]], tuple[int, ...]] | None
         Callback that applies per-motor direction settings to an output
         tuple before values are sent to HexDrive.
     gyro_axis : int
@@ -109,8 +109,8 @@ class MotorController:
         self._hexdrive = hexdrive_app
         self._settings = settings
         self._logging: bool = logging
-        self._front_face = front_face_setting
-        self._apply_motor_directions_cb: Callable[[tuple[int, int]], tuple[int, int]] | None = apply_motor_directions_cb
+        self._front_face_setting = front_face_setting
+        self._apply_motor_directions_cb: Callable[[tuple[int, ...]], tuple[int, ...]] | None = apply_motor_directions_cb
         self._gyro_axis: int = gyro_axis
         self._gyro_deadband: float = gyro_deadband
         self._accel_axis: int = accel_axis
@@ -484,9 +484,9 @@ class MotorController:
         the angle because we need to *undo* the rotation to project
         the accelerometer reading back into the robot’s forward axis.
         """
-        if self._front_face is None:
+        if self._front_face_setting is None:
             return 0.0
-        return radians(-(int(self._front_face.v) * 30))
+        return radians(-(int(self._front_face_setting.v) * 30))
 
     async def _calibrate_accel(self):
         """Sample the accelerometer while stationary to estimate bias.
@@ -686,8 +686,8 @@ class MotorController:
             print("[MC-DIAG]   lpf_alpha=%s  deadband=%s" % (self._accel_lpf_alpha, self._accel_deadband))
             print("[MC-DIAG]   motor_target=%s  timeout=%d ms" % (str(target), timeout))
             theta_deg = 0.0
-            if self._front_face is not None:
-                theta_deg = -(int(self._front_face.v) * 30)
+            if self._front_face_setting is not None:
+                theta_deg = -(int(self._front_face_setting.v) * 30)
             print("[MC-DIAG]   front_face_angle=%d deg" % theta_deg)
 
         try:
