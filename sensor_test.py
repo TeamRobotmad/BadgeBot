@@ -367,7 +367,7 @@ class SensorTestMgr:
                     if self._auto_timer >= _AUTO_SCAN_SETTLE_MS:
                         # Settle phase done — discard counter and start measuring
                         for counter in self._rotation_rate_counters:
-                             if counter is not None:
+                            if counter is not None:
                                 counter.value(0)  # read-and-reset to discard
                         self._auto_timer = 0
                         self._auto_settling = False
@@ -377,7 +377,7 @@ class SensorTestMgr:
                         rounding = ((_AUTO_SCAN_MEASURE_MS * self._rotation_rate_spokes) // 2)
                         rate = [0] * len(self._rotation_rate_counters)
                         for index, counter in enumerate(self._rotation_rate_counters):
-                             if counter is not None:
+                            if counter is not None:
                                 count = counter.value(0)
                                 rpm = ((60000 * count) + rounding) // (_AUTO_SCAN_MEASURE_MS * self._rotation_rate_spokes)
                                 if rpm > self._auto_max_rpm:
@@ -431,13 +431,13 @@ class SensorTestMgr:
                 app.hexdrive_app.set_power(False)
             
             for counter in self._rotation_rate_counters:
-                 if counter is not None:
+                if counter is not None:
                     counter.deinit()
             self._rotation_rate_counters = []
 
             app.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
             for pin_num in _ROTATION_RATE_EMITTER_PINS:
-                 self._test_support_hexpansion_config.ls_pin[pin_num].init(mode=Pin.IN)   # Set LS pins to input mode to turn off the IR emitters
+                self._test_support_hexpansion_config.ls_pin[pin_num].init(mode=Pin.IN)   # Set LS pins to input mode to turn off the IR emitters
             self._rotation_rate_motor_power = 0
             self._sub_state = _SUB_SELECT_PORT
             app.refresh = True
@@ -453,7 +453,7 @@ class SensorTestMgr:
                 self._rotation_rate_motor_power = 0
                 self._rotation_rate_measurement_period_elapsed = 0
                 for counter in self._rotation_rate_counters:
-                     if counter is not None:
+                    if counter is not None:
                         counter.value(0)      # reset counter
             else:
                 # Start auto scan
@@ -466,7 +466,7 @@ class SensorTestMgr:
                 self._auto_max_rpm = 0
                 self._rotation_rate_motor_power = 0  # first step is power 0
                 for counter in self._rotation_rate_counters:
-                     if counter is not None:
+                    if counter is not None:
                         counter.value(0)  # reset counter before starting
             app.refresh = True
             return
@@ -551,7 +551,7 @@ class SensorTestMgr:
                 self._sensor_mgr.close()
                 if self._test_support_hexpansion_config is not None:
                     for pin_num in _ROTATION_RATE_EMITTER_PINS:
-                         self._test_support_hexpansion_config.ls_pin[pin_num].init(mode=Pin.IN)   # Set LS pins to input mode to turn off the IR emitters
+                        self._test_support_hexpansion_config.ls_pin[pin_num].init(mode=Pin.IN)   # Set LS pins to input mode to turn off the IR emitters
             app.return_to_menu()
 
 
@@ -1148,6 +1148,3 @@ class Counter:
             mem32[_RST_EN0_REG] |= _PCNT_CLK_BIT
             if self.logging:
                 print("PCNT: all units released, peripheral clock disabled")
-
-
-
