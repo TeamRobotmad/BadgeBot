@@ -113,20 +113,18 @@ class Instruction:
         curr_power = 0
         ramp_up = []
         max_ramp_up_ticks = ((self.directional_duration(mysettings) * self._duration) // (2 * _TICK_MS)) - 1
-        i = None
         for i in range(max_ramp_up_ticks):
             curr_power += mysettings['acceleration'].v
             if curr_power >= mysettings['max_power'].v:
                 curr_power = mysettings['max_power'].v
                 break
-            else:    
+            else:
                 ramp_up.append((self.directional_power_tuple(curr_power), _TICK_MS))
         power_durations = ramp_up.copy()
         # period of constant power after ramp-up, before ramp-down
-        if i is not None:
-            user_power_duration = (self.directional_duration(mysettings) * self._duration) - (2 * i * _TICK_MS)
-            if user_power_duration > 0:
-                power_durations.append((self.directional_power_tuple(curr_power), user_power_duration))
+        user_power_duration = (self.directional_duration(mysettings) * self._duration) - (2 * len(ramp_up) * _TICK_MS)
+        if user_power_duration > 0:
+            power_durations.append((self.directional_power_tuple(curr_power), user_power_duration))
         ramp_down = ramp_up.copy()
         ramp_down.reverse()
         power_durations.extend(ramp_down)

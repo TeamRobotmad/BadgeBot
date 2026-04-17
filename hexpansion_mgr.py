@@ -228,9 +228,9 @@ class HexpansionMgr:
         app.refresh = True
         app.auto_repeat_clear()
         self._interactive_mode = True
-        self._sub_state = _SUB_CHECK
         if self._logging:
             print("Entered Hexpansion Management mode")
+        self._enter_port_select()
         return True
     
 
@@ -291,9 +291,10 @@ class HexpansionMgr:
             if self._scan_ports():
                 self._port_selected = 0
                 self._sub_state = _SUB_CHECK
-                if (len(app.hexdrive_ports) == 0) and (len(self._ports_to_initialise) == 0):
-                    # no HexDrive and no hexpansion with blank EEPROM which could be initialised as a HexDrive.
-                    app.show_message(_HEXDRIVE_REQUIRED_MESSAGE, _HEXDRIVE_REQUIRED_MESSAGE_COLOURS, "warning")
+                #if (len(app.hexdrive_ports) == 0) and (len(self._ports_to_initialise) == 0):
+                #    # no HexDrive and no hexpansion with blank EEPROM which could be initialised as a HexDrive.
+                #    self._report_hexpansion_states()
+                #    app.show_message(_HEXDRIVE_REQUIRED_MESSAGE, _HEXDRIVE_REQUIRED_MESSAGE_COLOURS, "warning")
         elif app.hexpansion_update_required:
             # This flag is set when a hexpansion-related event occurs that should trigger an update of the hexpansion management state machine (e.g. insertion/removal of a hexpansion).
             app.hexpansion_update_required = False
@@ -312,7 +313,7 @@ class HexpansionMgr:
         elif self._sub_state == _SUB_UPGRADE_CONFIRM:
             self._update_state_upgrade(delta)
         elif self._sub_state == _SUB_PROGRAMMING:
-            self._update_state_programming(delta)            
+            self._update_state_programming(delta)  
         elif self._check_ports_to_initialise(delta):
             pass
         elif self._check_ports_to_upgrade(delta):
@@ -470,9 +471,11 @@ class HexpansionMgr:
             self._sub_state = _SUB_CHECK        
         self._reboop_required = True
         
-        if self._erase_port in app.hexdrive_ports:
-            app.hexdrive_ports.remove(self._erase_port)
-            #app.hexdrive_apps.remove = None
+        if self._erase_port is not None and self._erase_port in app.hexdrive_ports:
+            hexdrive_index = app.hexdrive_ports.index(self._erase_port)
+            del app.hexdrive_ports[hexdrive_index]
+            if hexdrive_index < len(app.hexdrive_apps):
+                del app.hexdrive_apps[hexdrive_index]
             app.motor_controller = None
             if self._logging:
                 print(f"H:HexDrive on port {self._erase_port} erased!")
@@ -514,13 +517,10 @@ class HexpansionMgr:
             self._hexpansion_state_by_slot[self._upgrade_port - 1] = _HEXPANSION_STATE_RECOGNISED_OLD_APP
             self._upgrade_port = None
             self._sub_state = _SUB_CHECK
-
-
-    def _get_hexpansion_by_type(self, hexpansion_type) -> int | None:
-        """ Return the port number of a hexpansion of the given type, or None if no such hexpansion is currently detected."""
+        """ Return the 1-based port number of a hexpansion of the given type, or None if no such hexpansion is currently detected."""
         for port in range(0, _NUM_HEXPANSION_SLOTS):
             if self._hexpansion_type_by_slot[port] == hexpansion_type:
-                return port
+                return port+1
         return None
 
 
@@ -532,7 +532,14 @@ class HexpansionMgr:
             type_name = app.HEXPANSION_TYPES[type_idx].name if type_idx is not None else "None"
             state_name = _HEXPANSION_STATE_NAMES[self._hexpansion_state_by_slot[port]]
             print(f"Port {port+1}: Type={type_name}, State={state_name}")
-
+        # _ports_to_initialise and _ports_to_check_app are also useful to report as they indicate hexpansions that have been detected but not yet fully processed, which can help with debugging issues around hexpansion detection and initialisation.
+        print(f"Ports to initialise: {self._ports_to_initialise}")
+        print(f"Ports to check app: {self._ports_to_check_app}")
+        print(f"hexsense_port:{app.hexsense_port}")
+        print(f"hextest_port:{app.hextest_port}")
+        print(f"hexgps_port:{app.hexgps_port}")
+        print(f"hexdiag_port:{app.hexdiag_port}")
+        print(f"hexdrive_ports:{app.hexdrive_ports}")
 
     def _check_hexpansion(self, port: int | None, type_index: int) -> tuple[int | None, object | None]:
         """ Check if the currently configured hexpansion of the given type is still present, and
@@ -550,37 +557,28 @@ class HexpansionMgr:
             if new_port is not None:
                 if hexpansion_was_present:
                     if self._logging:
-                        print(f"Check: {name} moved from port {old_port} to port {new_port}")
+                        print(f"H:{name} moved from port {old_port} to port {new_port}")
                     app.show_message([f"{name} moved", f"to port {new_port}"], [(1,1,0),(1,1,1)])
                 else:
                     if self._logging:
-                        print(f"Check: {name} found on port {new_port}")
-                    app.show_message([f"{name}", f"on port {new_port}"], [(1,1,0),(1,1,1)])
+                        print(f"H:{name} found on port {new_port}")
+                    #app.show_message([f"{name}", f"on port {new_port}"], [(1,1,0),(1,1,1)])
                 port = new_port
             elif hexpansion_was_present:            
                 if self._logging:
-                    print(f"Check: {name} on port {old_port} lost")
+                    print(f"H:{name} on port {old_port} lost")
                 if not self._interactive_mode:    
                     app.show_message([f"{name}","removed.","Please reinsert"], [(1,1,0),(1,1,1),(1,1,1)], "error")
             # if the hexpansion type has an app then we need to find it
-            if port is not None:
-                if app.HEXPANSION_TYPES[type_index].app_name is not None:
-                    hexpansion_app = self._find_hexpansion_app(port)
-                    if hexpansion_app is not None:
-                        # get version number from app and compare to expected version for this hexpansion type, and if it doesn't match, treat it as if the app is not present (i.e. show "App not found" message and prompt to reboop)
-                        if hexpansion_app.version != app.HEXPANSION_TYPES[type_index].app_version:
+                        actual_version = hexpansion_app.get_version()
+                        expected_version = app.HEXPANSION_TYPES[type_index].app_mpy_version
+                        if actual_version != expected_version:
                             if self._logging:
-                                print(f"Check: {app.HEXPANSION_TYPES[type_index].name} app on port {port} has version {hexpansion_app.version}, expected {app.HEXPANSION_TYPES[type_index].app_version}")
-                            hexpansion_app = None
-                            self._hexpansion_state_by_slot[port - 1] = _HEXPANSION_STATE_RECOGNISED_OLD_APP
-                        else:
-                            self._hexpansion_state_by_slot[port - 1] = _HEXPANSION_STATE_RECOGNISED_APP_OK
-                        if self._logging:
-                            print(f"Check: {app.HEXPANSION_TYPES[type_index].name} app found on port {port}")
-                    else:
-                        self._hexpansion_state_by_slot[port - 1] = _HEXPANSION_STATE_RECOGNISED
-                        # it may have an App but just not yet started up
-                        self._ports_to_check_app.add(port)
+                                print(f"Check: {app.HEXPANSION_TYPES[type_index].name} app on port {port} has version {actual_version}, expected {expected_version}")
+                # shouldn't be needed self._hexpansion_type_by_slot[port - 1] = type_index
+                self._hexpansion_state_by_slot[port - 1] = _HEXPANSION_STATE_RECOGNISED
+                if app.HEXPANSION_TYPES[type_index].app_name is not None:
+                    hexpansion_app = self._check_hexpansion_app_on_port(port, type_index)
                 else:
                     self._hexpansion_state_by_slot[port - 1] = _HEXPANSION_STATE_RECOGNISED_NO_APP
 
@@ -590,6 +588,9 @@ class HexpansionMgr:
     def _update_state_check(self, delta):       # pylint: disable=unused-argument
         """ Check for HexDrive & HexSense presence and update app state accordingly."""
         app = self._app
+
+        self._report_hexpansion_states()
+
         hexdiag_port = app.hexdiag_port
         hextest_port = app.hextest_port
 
@@ -600,29 +601,42 @@ class HexpansionMgr:
 
         if hexdiag_port != app.hexdiag_port:
             # Update the diagnostics app reference if the HexDiag has moved or been removed/added
-            app.diagnostics_setup() 
+            app._sensor_test_mgr.hextest_setup(app.hexdiag_port) 
 
         if hextest_port != app.hextest_port and app._sensor_test_mgr is not None:
             # Update the test app reference if the HexTest has moved or been removed/added
-            app._sensor_test_mgr.hextest_setup() 
+            app._sensor_test_mgr.hextest_setup(app.hextest_port) 
 
-        # HexDrive is more complex as we track multiple instacnes rather than just the first one.
+        # HexDrive is more complex as we track multiple instances rather than just the first one.
         hexdrive_ports = app.hexdrive_ports.copy()
         hexdrive_apps = app.hexdrive_apps.copy()
-
-        for current_port, current_app in zip(hexdrive_ports, hexdrive_apps):
-            hexdrive_port, hexdrive_app = self._check_hexpansion(current_port, app.HEXDRIVE_HEXPANSION_INDEX)
+        hexdrive_types = [self._hexpansion_type_by_slot[port - 1] for port in hexdrive_ports]
+        # have any of the currently tracked HexDrives been removed or changed to a different type? (e.g. due to user reinserting them, or a new hexpansion being detected on the same port)
+        for current_port, current_app, hexdrive_type in zip(hexdrive_ports, hexdrive_apps, hexdrive_types):
+            hexdrive_port, hexdrive_app = self._check_hexpansion(current_port, hexdrive_type)
             if current_port != hexdrive_port:
                 # The HexDrive that was previously on this port has been removed or is no longer recognised as a HexDrive, so remove it
+                if self._logging:
+                    print(f"H:HexDrive on port {current_port} removed from list")
                 app.hexdrive_ports.remove(current_port)
                 app.hexdrive_apps.remove(current_app)
                 app.motor_controller = None
-            if hexdrive_port is not None and hexdrive_port not in app.hexdrive_ports:
-                app.hexdrive_ports.append(hexdrive_port) 
-            if hexdrive_app is not None and hexdrive_app not in app.hexdrive_apps:
-                app.hexdrive_apps.append(hexdrive_app)
 
-        if len(app.hexdrive_ports) > 0 and len(app.hexdrive_apps) > 0:             
+        # Now check if there are any new HexDrives that we haven't added to the list yet
+        # check for each type of hexpansion that can be a HexDrive
+        for type_index in app.hexdrive_hexpansion_types:
+            print(f"H:Checking for HexDrive type index {type_index}")
+            current_port, current_app = self._check_hexpansion(None, type_index)
+            if current_port is not None and current_port not in app.hexdrive_ports:
+                if self._logging:
+                    print(f"H:HexDrive on port {current_port} added to list")
+                app.hexdrive_ports.append(current_port)
+            if current_app is not None and current_app not in app.hexdrive_apps:
+                if self._logging:
+                    print(f"H:HexDrive App on port {current_port} added to list")
+                app.hexdrive_apps.append(current_app)
+
+        if len(app.hexdrive_ports) > 0 and len(app.hexdrive_apps) > 0:
             hexdrive_type_idx = self._hexpansion_type_by_slot[app.hexdrive_ports[0] - 1]
             app.num_motors = app.HEXPANSION_TYPES[hexdrive_type_idx].motors
             app.num_servos = app.HEXPANSION_TYPES[hexdrive_type_idx].servos
@@ -630,11 +644,11 @@ class HexpansionMgr:
 
             # Create the high-level MotorController for IMU-aided driving
             # (only when the HexDrive has motors)
-            if app.num_motors > 0 and app.motor_controller is None:
+            if app.num_motors > 1 and app.motor_controller is None:
                 try:
                     from .motor_controller import MotorController
                     app.motor_controller = MotorController(
-                        app.hexdrive_apps[0], app.settings, 
+                        app.hexdrive_apps[0], app.settings,
                         logging=self._logging,
                         front_face_setting=app.settings.get('front_face'),
                         apply_motor_directions_callback=app.apply_motor_directions,
@@ -649,7 +663,6 @@ class HexpansionMgr:
                 # In non-interactive mode, if we have a HexDrive and its app is running, we can proceed straight to the main menu
                 self._sub_state = _SUB_DONE
         elif self._interactive_mode:
-            self._port_iterator = None
             self._enter_port_select()
         elif self._reboop_required:
             app.show_message(["Please", "reboop"], [(1,1,1),(1,1,1)], "reboop")        
@@ -920,7 +933,7 @@ class HexpansionMgr:
                     print(f"H:Found {hexpansion_type.name} {hexpansion_type.sub_type if hexpansion_type.sub_type else ''} on port {port}")
                 if hexpansion_type.app_name is not None:
                     # This hexpansion should have an app, but do we have it and is it the right version?
-                    self._ports_to_check_app.add(port)    
+                    self._check_hexpansion_app_on_port(port, index)
                     return True
                 elif index == app.HEXSENSE_HEXPANSION_INDEX and app.hexsense_port is None:
                     return True
@@ -939,6 +952,31 @@ class HexpansionMgr:
         self._hexpansion_state_by_slot[port - 1] = _HEXPANSION_STATE_UNRECOGNISED
         return False
 
+
+
+    def _check_hexpansion_app_on_port(self, port: int, type_index: int) -> object | None:
+        """Check if the app for the hexpansion on the given port is present and correct"""
+        app = self._app
+        hexpansion_app = self._find_hexpansion_app(port)
+        if hexpansion_app is not None:
+            # get version number from app and compare to expected version for this hexpansion type, and if it doesn't match, treat it as if the app is not present (i.e. show "App not found" message and prompt to reboop)
+            try:
+                version = hexpansion_app.get_version()
+            except Exception as e:      # pylint: disable=broad-except
+                print(f"H:Error getting app version for hexpansion on port {port}: {e}")
+                version = None
+            if version != app.HEXPANSION_TYPES[type_index].app_mpy_version:
+                if self._logging:
+                    print(f"H:{app.HEXPANSION_TYPES[type_index].name} app on port {port} has version {hexpansion_app.version}, expected {app.HEXPANSION_TYPES[type_index].app_mpy_version}")
+                self._hexpansion_state_by_slot[port - 1] = _HEXPANSION_STATE_RECOGNISED_OLD_APP
+                # add to upgrade list if not already there
+                if port not in self._ports_to_check_app:
+                    self._ports_to_check_app.add(port)
+            else:
+                self._hexpansion_state_by_slot[port - 1] = _HEXPANSION_STATE_RECOGNISED_APP_OK
+            if self._logging:
+                print(f"H:{app.HEXPANSION_TYPES[type_index].name} app found on port {port}")
+        return hexpansion_app
 
     # ------------------------------------------------------------------
     # EEPROM operations
@@ -1131,7 +1169,7 @@ class HexpansionMgr:
             i2c = I2C(port)
             for page in range(eeprom_total_size // eeprom_page_size):
                 mem_addr = page * eeprom_page_size
-                mem_addr_mask = 1 << (addr_len * 8) - 1
+                mem_addr_mask = (1 << (addr_len * 8)) - 1
                 i2c.writeto_mem((addr | (mem_addr >> (8 * addr_len))), (mem_addr & mem_addr_mask), bytes([0xFF] * eeprom_page_size), addrsize=(8 * addr_len))
                 while True:
                     try:
@@ -1151,10 +1189,18 @@ class HexpansionMgr:
     # HEXPANSION operations
     # ------------------------------------------------------------------
 
-    def _find_hexpansion_app(self, port) -> object | None:
+    def _find_hexpansion_app(self, port: int) -> object | None:
         """Find the app instance running from the hexpansion on the given port, if any.  Returns the app instance if found, None otherwise."""
+
+        print(f"H:Looking for app for hexpansion on port {port} in Scheduler...")
+        self._report_hexpansion_states()
+
         app = self._app
-        expected_app_name = app.HEXPANSION_TYPES[self._hexpansion_type_by_slot[port - 1]].app_name
+        hexpansion_type = self._hexpansion_type_by_slot[port - 1]
+        if hexpansion_type is None or hexpansion_type >= len(app.HEXPANSION_TYPES):
+            return None
+        expected_app_name = app.HEXPANSION_TYPES[hexpansion_type].app_name
+        print(f"H:Expecting app {expected_app_name} for hexpansion type {app.HEXPANSION_TYPES[hexpansion_type].name} on port {port}")
         for an_app in scheduler.apps:
             if type(an_app).__name__ == expected_app_name:
                 if hasattr(an_app, "config") and hasattr(an_app.config, "port") and an_app.config.port == port:

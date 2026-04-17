@@ -16,10 +16,7 @@ on-board IMU gyroscope for accurate heading changes.
 import asyncio
 import time
 from math import cos, sin, radians
-from typing import TYPE_CHECKING, Callable
-
-if TYPE_CHECKING:
-    from .settings_mgr import MySetting
+from .settings_mgr import MySetting
 
 try:
     import imu as _imu
@@ -49,7 +46,7 @@ _DEFAULT_DRIVE_TIMEOUT_MS = _AUTO_DRIVE_TIMEOUT_MS  # safety cap on distance dri
 _DEFAULT_UPDATE_MS = 10             # how often the control loop ticks
 _DEFAULT_SETTLE_MS = 50             # brief pause after stopping motors
 
-MotorOutputTuple = tuple[int, ...]
+MotorOutputTuple = tuple
 
 
 class MotorController:

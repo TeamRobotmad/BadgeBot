@@ -103,7 +103,7 @@ class SensorTestMgr:
         self._rotation_rate_emitter_duty: int = _DEFAULT_ROTATION_RATE_EMITTER_DUTY # duty cycle for the IR emitter when doing rate testing, 0-255 (0=off, 255=full on)
         self._rotation_rate_sensor_pin: int | None = None           # pin used to read the photodiode for rate testing
         self._rotation_rate_counters: list[Counter | None] = []     # hardware counter used to count photodiode pulses for rate testing
-        self._rotation_rate_rpm: int | None = None                  # current value of the hardware counter (for diagnostics, should increase as the photodiode detects pulses when the emitter is on)
+        self._rotation_rate_rpms: list[int | None] = []             # current value of the hardware counters (for diagnostics, should increase as the photodiode detects pulses when the emitter is on)
         self._rotation_rate_measurement_period_elapsed: int = 0     # ticks since last rate check, used to compute pulse rate in Hz based on the change in the counter value
         self._rotation_rate_motor_power: int = 0                    # Power applied to motors in TEST mode
         self._rotation_rate_spokes: int = _DEFAULT_SPOKES_PER_ROTATION
@@ -518,7 +518,7 @@ class SensorTestMgr:
             for index, counter in enumerate(self._rotation_rate_counters):
                 if counter is not None:
                     count = counter.value(0)  # read-and-reset to get the count for the elapsed period
-                    self._rotation_rate_rpm[index] = ((60000 * count) + self._rotation_rate_rounding) // (self._rotation_rate_measurement_period_elapsed * self._rotation_rate_spokes)
+                    self._rotation_rate_rpms[index] = ((60000 * count) + self._rotation_rate_rounding) // (self._rotation_rate_measurement_period_elapsed * self._rotation_rate_spokes)
             self._rotation_rate_measurement_period_elapsed = 0
             if self.logging:
                 print(f"S:Count {count} = Rotation Rates: {self._rotation_rate_rpm}")
@@ -747,7 +747,7 @@ class SensorTestMgr:
                 if self.logging:
                     print(f"S:Rate counter {self._rotation_rate_counters}")
                 self._rotation_rate_measurement_period_elapsed = 0
-                self._rotation_rate_rpm = 0
+                self._rotation_rate_rpms = [0] * len(self._rotation_rate_counters)
                 app.update_period = _MOTOR_TEST_BACKGROUND_UPDATE_PERIOD  # update every 1000ms to give a responsive display without overwhelming the CPU with updates
                 return True
         if self.logging:
@@ -784,7 +784,7 @@ class SensorTestMgr:
         # Show power
         lines += [f"Pwr:{self._rotation_rate_motor_power}"]
         colours += [(0, 1, 1)]
-        for index, rpm in enumerate(self._rotation_rate_rpm):
+        for index, rpm in enumerate(self._rotation_rate_rpms):
             if rpm is not None:
                 lines += [f"{index}: {rpm}rpm"]
                 colours += [(1, 0, 1)]
@@ -815,14 +815,23 @@ class SensorTestMgr:
         max_rpm = self._auto_max_rpm if self._auto_max_rpm > 0 else 1
 
         if n > 1:
-            # Plot data points as small bars
+            # Plot data points as small bars.
+            # Auto-scan results may contain either a scalar RPM or a list/tuple
+            # of per-counter RPMs. Reduce multi-counter readings to a single
+            # scalar for this chart by using the maximum measured RPM.
             bar_w = max(1, chart_w // _AUTO_SCAN_STEPS)
             for i in range(n):
-                power, rpm = self._auto_results[i]
+                power, rpms = self._auto_results[i]
                 x = chart_left + (power * chart_w) // 65535
-                h = (rpm * chart_h) // max_rpm
-                if h > 0:
-                    ctx.rgb(0.0, 1.0, 0.5).rectangle(x, chart_bottom - h, bar_w, h).fill()
+                for index, rpm in enumerate(rpms):
+                    h = (rpm * chart_h) // max_rpm
+                    if h > 0:
+                        # colour by index to differentiate multiple counters if present
+                        if index == 0:
+                            ctx.rgb(0.0, 1.0, 0.5)
+                        else:
+                            ctx.rgb(1.0, 0.5, 0.0)
+                        ctx.rectangle(x, chart_bottom - h, bar_w, h).fill()
 
         # Title and max RPM label
         ctx.rgb(1, 1, 0)
