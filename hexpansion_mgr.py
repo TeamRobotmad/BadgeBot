@@ -563,21 +563,14 @@ class HexpansionMgr:
                         print(f"H:{name} found on port {new_port}")
                     #app.show_message([f"{name}", f"on port {new_port}"], [(1,1,0),(1,1,1)])
                 port = new_port
-            elif hexpansion_was_present:            
+            elif hexpansion_was_present:
                 if self._logging:
                     print(f"H:{name} on port {old_port} lost")
                 if not self._interactive_mode:    
                     app.show_message([f"{name}","removed.","Please reinsert"], [(1,1,0),(1,1,1),(1,1,1)], "error")
-            # if the hexpansion type has an app then we need to find it
-                        actual_version = hexpansion_app.get_version()
-                        expected_version = app.HEXPANSION_TYPES[type_index].app_mpy_version
-                        if actual_version != expected_version:
-                            if self._logging:
-                                print(f"Check: {app.HEXPANSION_TYPES[type_index].name} app on port {port} has version {actual_version}, expected {expected_version}")
-                # shouldn't be needed self._hexpansion_type_by_slot[port - 1] = type_index
                 self._hexpansion_state_by_slot[port - 1] = _HEXPANSION_STATE_RECOGNISED
                 if app.HEXPANSION_TYPES[type_index].app_name is not None:
-                    hexpansion_app = self._check_hexpansion_app_on_port(port, type_index)
+                    hexpansion_app = self._check_hexpansion_app_on_port(port, type_index)                  
                 else:
                     self._hexpansion_state_by_slot[port - 1] = _HEXPANSION_STATE_RECOGNISED_NO_APP
 
@@ -962,8 +955,11 @@ class HexpansionMgr:
             try:
                 version = hexpansion_app.get_version()
             except Exception as e:      # pylint: disable=broad-except
-                print(f"H:Error getting app version for hexpansion on port {port}: {e}")
-                version = None
+                try:
+                    version = hexpansion_app.version
+                except Exception as ee:  # pylint: disable=broad-except
+                    print(f"H:Error getting app version for hexpansion on port {port}: {e}, {ee}")
+                    version = None
             if version != app.HEXPANSION_TYPES[type_index].app_mpy_version:
                 if self._logging:
                     print(f"H:{app.HEXPANSION_TYPES[type_index].name} app on port {port} has version {hexpansion_app.version}, expected {app.HEXPANSION_TYPES[type_index].app_mpy_version}")
@@ -1190,16 +1186,11 @@ class HexpansionMgr:
 
     def _find_hexpansion_app(self, port: int) -> object | None:
         """Find the app instance running from the hexpansion on the given port, if any.  Returns the app instance if found, None otherwise."""
-
-        print(f"H:Looking for app for hexpansion on port {port} in Scheduler...")
-        self._report_hexpansion_states()
-
         app = self._app
         hexpansion_type = self._hexpansion_type_by_slot[port - 1]
         if hexpansion_type is None or hexpansion_type >= len(app.HEXPANSION_TYPES):
             return None
         expected_app_name = app.HEXPANSION_TYPES[hexpansion_type].app_name
-        print(f"H:Expecting app {expected_app_name} for hexpansion type {app.HEXPANSION_TYPES[hexpansion_type].name} on port {port}")
         for an_app in scheduler.apps:
             if type(an_app).__name__ == expected_app_name:
                 if hasattr(an_app, "config") and hasattr(an_app.config, "port") and an_app.config.port == port:
