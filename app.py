@@ -245,38 +245,54 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         # Hexpansion related
         #                                       pid      name         vid          eeprom total size        eeprom page size      app mpy name                 app mpy version                       app name                motors    servos    sensors    sub_type            
         self.HEXPANSION_TYPES = [HexpansionType(0xCBCB, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2, servos=4, steppers=1, sub_type="Uncommitted" ),
-                                 HexpansionType(0xCBCA, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2,                               sub_type="2 Motor" ),
-                                 HexpansionType(0xCBCC, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp",           servos=4,               sub_type="4 Servo" ),
-                                 HexpansionType(0xCBCD, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=1, servos=2,               sub_type="1 Mot 2 Srvo" ),
-                                 HexpansionType(0xCBCE, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp",                      steppers=1, sub_type="1 Stepper" ),
-                                 HexpansionType(0x0100, "Prototype",   vid=0xCBCB, eeprom_total_size=65536, eeprom_page_size=128,                                                                                                                sensors=2, sub_type="2 Line Sensors"),
-                                 HexpansionType(0x0200, "HexDriveV2",  vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2, servos=2,            sub_type="Uncommitted" ),
-                                 HexpansionType(0x0201, "HexDriveV2",  vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2,                      sub_type="2 Motor" ),
-                                 HexpansionType(0x0202, "HexDriveV2",  vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp",           servos=2,            sub_type="2 Servo" ),
-                                 HexpansionType(0xD15C, "Flopagon",                eeprom_total_size= 2048, eeprom_page_size= 16, app_mpy_name="flopagon.mpy", app_name="FlopagonApp"),
-                                 HexpansionType(0xCAF0, "Club Mate",               eeprom_total_size= 8192, eeprom_page_size= 32, app_mpy_name="caffeine.mpy", app_name="CaffeineJitter"),
+                                 HexpansionType(0xCBCA, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2,                       sub_type="2 Motor" ),
+                                 HexpansionType(0xCBCC, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp",           servos=4,             sub_type="4 Servo" ),
+                                 HexpansionType(0xCBCD, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=1, servos=2,             sub_type="1 Mot 2 Srvo" ),
+                                 HexpansionType(0xCBCE, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp",                     steppers=1, sub_type="1 Stepper" ),
+                                 HexpansionType(0x0100, "HexSense",    vid=0xCBCB, eeprom_total_size=65536, eeprom_page_size=128,                                                                                                                sensors=2,  sub_type="2 Line Sensors"),
+                                 HexpansionType(0x0200, "HexDriveV2",  vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2, servos=2,             sub_type="Uncommitted" ),
+                                 HexpansionType(0x0201, "HexDriveV2",  vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2,                       sub_type="2 Motor" ),
+                                 HexpansionType(0x0202, "HexDriveV2",  vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp",           servos=2,             sub_type="2 Servo" ),
+                                 HexpansionType(0x0300, "HexTest",     vid=0xCBCB, eeprom_total_size=65536, eeprom_page_size=128),
+                                 HexpansionType(0x0400, "HexDiag",     vid=0xCBCB, eeprom_total_size=65536, eeprom_page_size=128),
+                                 HexpansionType(0x1234, "GPS",                     eeprom_total_size= 2048, eeprom_page_size= 16),
+                                 HexpansionType(0xD15C, "Flopagon",                eeprom_total_size= 2048, eeprom_page_size= 16), # EEPROM too small for the app
+                                 HexpansionType(0xCAFF, "Club Mate",               eeprom_total_size= 8192, eeprom_page_size= 32, app_mpy_name="caffeine.mpy", app_name="CaffeineJitter"),
 
                                  HexpansionType(0x0000, "Unknown",   sub_type=""),       # Virtual type to represent unrecognised hexpansions
-                                 HexpansionType(0xFFFF, "Blank",     sub_type="")]       # Virtual type to represent blank EEPROMs 
+                                 HexpansionType(0xFFFF, "Blank",     sub_type="")]       # Virtual type to represent blank EEPROMs
 
         self.HEXDRIVE_HEXPANSION_INDEX = 0      # Index in the HEXPANSION_TYPES list which corresponds to the basic HexDrive type
-        self.HEXSENSE_HEXPANSION_INDEX = 5      # Index in the HEXPANSION_TYPES list which corresponds to the basic HexSense type 
-        self.UNRECOGNISED_HEXPANSION_INDEX = 11 # Index in the HEXPANSION_TYPES list which corresponds to unrecognised hexpansion types MUST BE LAST NON-BLANK ENTRY IN THE LIST
-        self.BLANK_HEXPANSION_INDEX = 12        # Index in the HEXPANSION_TYPES list which corresponds to blank EEPROMs
+        self.HEXDRIVE_V2_HEXPANSION_INDEX = 6   # Index in the HEXPANSION_TYPES list which corresponds to the basic HexDrive V2 type
+        self.HEXSENSE_HEXPANSION_INDEX = 5      # Index in the HEXPANSION_TYPES list which corresponds to the HexSense type
+        self.HEXTEST_HEXPANSION_INDEX = 9       # Index in the HEXPANSION_TYPES list which corresponds to the HexTest type
+        self.HEXDIAG_HEXPANSION_INDEX = 10      # Index in the HEXPANSION_TYPES list which corresponds to the HexDiag type
+        self.HEXGPS_HEXPANSION_INDEX = 11       # Index in the HEXPANSION_TYPES list which corresponds to the HexGPS type
+
+        self.UNRECOGNISED_HEXPANSION_INDEX = len(self.HEXPANSION_TYPES) - 2 # Index in the HEXPANSION_TYPES list which corresponds to unrecognised hexpansion types MUST BE LAST NON-BLANK ENTRY IN THE LIST
+        self.BLANK_HEXPANSION_INDEX = len(self.HEXPANSION_TYPES) - 1        # Index in the HEXPANSION_TYPES list which corresponds to blank EEPROMs
         self.hexpansion_update_required: bool = False # flag from async to main loop
 
-        self.hexdrive_port = None
-        self.hexdrive_app = None
-        
-        self.hexsense_config  = None            # Store the HexpansionConfig of the HexSense that is providing the line sensors
-        self.hexsense_app = None
+        self.hexdrive_hexpansion_types = [0,1,2,3,4,6,7,8] # indices in the HEXPANSION_TYPES list which correspond to HexDrive variants - used to check if a detected hexpansion is a HexDrive and to set up the motor and servo counts accordingly
 
-        # Use HS pins on a spare Hexpansion to make diagnostic timing measurements
+        # HexDrive hexpansion - has an app which we use to control the motors and servos
+        self.hexdrive_ports = []
+        self.hexdrive_apps = []
+        
+        # HexSense hexpansion - only a prototype at present
+        self.hexsense_port  = None            # Store the HexpansionConfig of the HexSense that is providing the line sensors
+
+        # HexTest hexpansion - a prototype hexpansion with phototransistors and IR LEDs that we use for testing and diagnostics
+        # including timing measurements for the rotation rate measurement feature in the Sensor Test
+        self.hextest_port = None
+
+        # GPS hexpansion
+        self.hexgps_port = None
+
+        # Diagnostics hexpansion
+        self.hexdiag_port = _DIAG_PORT
         self._diag_config = None
-        if _DIAG_PORT is not None and not _IS_SIMULATOR:
-            self._diag_config = HexpansionConfig(_DIAG_PORT)  # Create a config instance to access the LED pin for diagnostics
-            for i in range(4):
-                self._diag_config.pin[i].init(mode=Pin.OUT)
+        self.diagnostics_setup()
 
         # High-level motor controller (created when HexDrive is found)
         self.motor_controller = None
@@ -413,11 +429,9 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         while True:
             cur_time = time.ticks_ms()
             delta_ticks = time.ticks_diff(cur_time, last_time)
-            if self._diag_config is not None:
-                self._diag_config.pin[0].value(1)                # real time timing diagnostics        
+            self.diagnostics_output(0, 1)
             self.background_update(delta_ticks)
-            if self._diag_config is not None:
-                self._diag_config.pin[0].value(0)                # real time timing diagnostics    
+            self.diagnostics_output(0, 0)
             await asyncio.sleep_ms(max (1, self.update_period - (time.ticks_ms() - cur_time)))  # sleep for the remainder of the update period, accounting for time taken by background_update
             last_time = cur_time
 
@@ -430,8 +444,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         bg_fn = self._state_background_dispatch.get(self.current_state)
         if bg_fn is not None:
             output = bg_fn(delta)
-            if output is not None and self.hexdrive_app is not None:
-                self.hexdrive_app.set_motors(self.apply_motor_directions(output))
+            if output is not None and len(self.hexdrive_apps) > 0:
+                self.hexdrive_apps[0].set_motors(self.apply_motor_directions(output))
 
 
     @property
@@ -506,6 +520,23 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self._motor2_reversed: bool = self.settings['motor2_dir'].v != 0
 
 
+    def diagnostics_setup(self):
+        # Use HS pins on a spare Hexpansion to make diagnostic timing measurements
+        if self._diag_config is not None and self.hexdiag_port != self._diag_config.port:
+            for i in range(4):
+                self._diag_config.pin[i].init(mode=Pin.IN)
+            self._diag_config = None        
+        if self.hexdiag_port is not None and self._diag_config is None:
+            self._diag_config = HexpansionConfig(self.hexdiag_port)
+            for i in range(4):
+                self._diag_config.pin[i].init(mode=Pin.OUT)
+
+
+    def diagnostics_output(self, index: int, value: int):
+        if self._diag_config is not None and 0 <= index < 4:
+            self._diag_config.pin[index].value(value)
+
+
     def _pattern_management(self):        
         if self.current_state in _LED_CONTROL_STATES:
             if self.pattern_status:
@@ -522,8 +553,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
     def update(self, delta: int):
         """Main update function called from the main loop. Handles state transitions, user input, and delegates to functional area managers."""
-        if self._diag_config is not None:
-            self._diag_config.pin[1].value(1)                # real time timing diagnostics        
+        self.diagnostics_output(1, 1)
 
         if self.notification:
             self.notification.update(delta)
@@ -583,8 +613,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 except OSError as e:
                     if self.logging:
                         print(f"Error writing to LEDs: {e}")
-        if self._diag_config is not None:
-            self._diag_config.pin[1].value(0)            # real time timing diagnostics    
+        self.diagnostics_output(1, 0)
 
 
 
@@ -723,8 +752,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
     def draw(self, ctx):
         """Main draw function called from the main loop. Handles drawing the current state, including any notifications."""
-        if self._diag_config is not None:
-            self._diag_config.pin[2].value(1)                # real time timing diagnostics                
+        self.diagnostics_output(2, 1)
 
         if self.current_state == STATE_MENU and self.menu is not None:
             # These need to be drawn every frame as they contain animations
@@ -777,8 +805,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if self.notification:
             self.notification.draw(ctx)
         
-        if self._diag_config is not None:
-            self._diag_config.pin[2].value(0)               # real time timing diagnostics    
+        self.diagnostics_output(2, 0)
            
 
 

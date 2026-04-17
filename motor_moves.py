@@ -228,9 +228,9 @@ class MotorMovesMgr:
         else:
             # Fallback: old power-plan iterator
             self.power_plan_iter = chain(*(instr.power_plan for instr in self.instructions))
-            if app.hexdrive_app is not None:
-                if app.hexdrive_app.initialise() and app.hexdrive_app.set_power(True) and app.hexdrive_app.set_freq(MOTOR_PWM_FREQ):
-                    app.hexdrive_app.set_logging(False)
+            if len(app.hexdrive_apps) > 0:
+                if app.hexdrive_apps[0].initialise() and app.hexdrive_apps[0].set_power(True) and app.hexdrive_apps[0].set_freq(MOTOR_PWM_FREQ):
+                    app.hexdrive_apps[0].set_logging(False)
                 else:
                     if self.logging:
                         print("H:Failed to initialise HexDrive for motor moves")
@@ -455,8 +455,8 @@ class MotorMovesMgr:
         self.current_power_duration = ((0, 0), 0)
         if self.logging:
             print("Robot reset")
-        if app.hexdrive_app is not None:
-            app.hexdrive_app.set_power(False)        
+        if len(app.hexdrive_apps) > 0:
+            app.hexdrive_apps[0].set_power(False)        
 
 
     def reset_instructions(self):

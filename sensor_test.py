@@ -18,13 +18,16 @@ from machine import Pin, mem32, disable_irq, enable_irq
 from micropython import const
 from .app import DEFAULT_BACKGROUND_UPDATE_PERIOD, MOTOR_PWM_FREQ
 
-# Temporary - while thre is no EEPROM on the Test Hexpansion
-_ROTATION_RATE_PORT = 2                         # Hexpansion slot used for rotation rate measurement
-_ROTATION_RATE_EMITTER_PINS = [2, 3]            # LS_C & LS_D pins used to drive the IR emitter for rotation rate testing
-_ROTATION_RATE_SENSOR_PINS = [0, 1]             # HS_F & HS_G pins used to read the phottransistors for rotation rate testing
+
+# Constants for rotation rate measurement and motor test mode.
 _ROTATION_RATE_MEASUREMENT_PERIOD_MS = 2500     # how often to update the displayed rotation rate measurement in ms (tradeoff between display responsiveness and stability of the reading)
 _DEFAULT_ROTATION_RATE_EMITTER_DUTY = 64        # default duty cycle for the IR emitter when doing rate testing, 0-255 (0=off, 255=full on)
 _DEFAULT_SPOKES_PER_ROTATION = 3                # number of times the photodiode will be triggered per full rotation of the wheel
+_MOTOR_TEST_BACKGROUND_UPDATE_PERIOD = 1000     # background update period in ms to use during motor test mode (tradeoff between display responsiveness and CPU load)
+_ROTATION_RATE_EMITTER_PINS = [2, 3]            # LS_C & LS_D pins used to drive the IR emitter for rotation rate testing
+_ROTATION_RATE_SENSOR_PINS = [0, 1]             # HS_F & HS_G pins used to read the phottransistors for rotation rate testing
+# Temporary - while there is no EEPROM on the Test Hexpansion
+_ROTATION_RATE_PORT = 2                         # Hexpansion slot used for rotation rate measurement
 
 # Local sub-states (internal to Sensor Test)
 _SUB_SELECT_PORT = 0
@@ -80,7 +83,7 @@ class SensorTestMgr:
         Reference to the main application instance.
     """
 
-    def __init__(self, app, logging: bool = False):
+    def __init__(self, app, hextest_port: int | None = _ROTATION_RATE_PORT, logging: bool = False):
         self._app = app
         self._sub_state = _SUB_SELECT_PORT
         self._sensor_mgr = None          # SensorManager instance (lazy-imported)
@@ -117,12 +120,7 @@ class SensorTestMgr:
 
         # Use HS pins on a spare Hexpansion to measure rotation rate
         self._test_support_hexpansion_config: HexpansionConfig | None = None
-        if _ROTATION_RATE_PORT is not None:
-            self._test_support_hexpansion_config = HexpansionConfig(_ROTATION_RATE_PORT)    # Create a config instance to access the LED pin for diagnostics
-            for pin_num in _ROTATION_RATE_EMITTER_PINS:
-                self._test_support_hexpansion_config.ls_pin[pin_num].init(mode=Pin.OUT)   # Set LS pins to output mode to drive the IR emitters (only enabled when on)
-            for pin_num in _ROTATION_RATE_SENSOR_PINS:
-                self._test_support_hexpansion_config.pin[pin_num].init(mode=Pin.IN)       # Set HS pins to input mode to read the phototransistors for rotation rate measurement
+        self.hextest_setup(hextest_port)
 
         if self._logging:
             print("SensorTestMgr initialised")
@@ -151,6 +149,21 @@ class SensorTestMgr:
     def sample_count(self, value: int):
         self._sample_count = value
 
+
+    def hextest_setup(self, port: int | None):
+        """Use HS pins on a spare Hexpansion to make rotation rate measurements."""
+        if self._test_support_hexpansion_config is not None and port != self._test_support_hexpansion_config.port:
+            for i in range(4):
+                self._test_support_hexpansion_config.pin[i].init(mode=Pin.IN)
+            self._test_support_hexpansion_config = None        
+        if port is not None and self._test_support_hexpansion_config is None:
+            self._test_support_hexpansion_config = HexpansionConfig(port)
+            for pin_num in _ROTATION_RATE_EMITTER_PINS:
+                self._test_support_hexpansion_config.ls_pin[pin_num].init(mode=Pin.OUT)   # Set LS pins to output mode to drive the IR emitters (only enabled when on)
+            for pin_num in _ROTATION_RATE_SENSOR_PINS:
+                self._test_support_hexpansion_config.pin[pin_num].init(mode=Pin.IN)       # Set HS pins to input mode to read the phototransistors for rotation rate measurement
+    
+
     # ------------------------------------------------------------------
     # Entry point from menu
     # ------------------------------------------------------------------
@@ -166,13 +179,16 @@ class SensorTestMgr:
         self._ensure_sensor_mgr()
         self.colour = (1.0, 1.0, 0.0)  # reset to yellow when starting sensor test
         # If a HexDrive is present, try its port first
-        if app.hexdrive_port is not None and self._sensor_mgr.open(app.hexdrive_port):
-            self._port_selected = app.hexdrive_port
-            app.update_period = self._sensor_mgr.read_interval
-            self._sub_state = _SUB_READING
+        if app.hexdrive_ports is not None:
+            for port in app.hexdrive_ports:
+                if self._sensor_mgr.open(port):
+                    self._port_selected = port
+                    app.update_period = self._sensor_mgr.read_interval
+                    self._sub_state = _SUB_READING
+                    break
         # If no HexDrive, but a HexSense is present, try its port next
-        elif app.hexsense_config is not None and app.hexsense_config.port is not None and self._sensor_mgr.open(app.hexsense_config.port):
-            self._port_selected = app.hexsense_config.port
+        elif app.hexsense_port is not None and self._sensor_mgr.open(app.hexsense_port):
+            self._port_selected = app.hexsense_port
             app.update_period = self._sensor_mgr.read_interval
             self._sub_state = _SUB_READING
         # Otherwise, start in port selection mode
@@ -427,12 +443,12 @@ class SensorTestMgr:
             self._auto_mode = False
             self._auto_done = False
             
-            if app.hexdrive_app is not None:
-                app.hexdrive_app.set_power(False)
+            if len(app.hexdrive_apps) > 0:
+                app.hexdrive_apps[0].set_power(False)
             
-            for counter in self._rotation_rate_counters:
-                if counter is not None:
-                    counter.deinit()
+            for c in self._rotation_rate_counters:
+                if c is not None:
+                    c.deinit()
             self._rotation_rate_counters = []
 
             app.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
@@ -698,9 +714,9 @@ class SensorTestMgr:
     def _start_motor_test_mode(self) -> bool:
         # enable HexDrive power
         app = self._app
-        if app.hexdrive_app is not None and self._test_support_hexpansion_config is not None:
-            app.hexdrive_app.set_logging(True)
-            if app.hexdrive_app.initialise() and app.hexdrive_app.set_power(True) and app.hexdrive_app.set_freq(MOTOR_PWM_FREQ):
+        if len(app.hexdrive_apps) > 0 and self._test_support_hexpansion_config is not None:
+            app.hexdrive_apps[0].set_logging(True)
+            if app.hexdrive_apps[0].initialise() and app.hexdrive_apps[0].set_power(True) and app.hexdrive_apps[0].set_freq(MOTOR_PWM_FREQ):
                 # Enable the IR emitter for measuring wheel rotation rate
                 if self.logging:
                     print("S:IR Emitter On")
@@ -709,25 +725,30 @@ class SensorTestMgr:
                     self._test_support_hexpansion_config.ls_pin[pin_num].duty(self._rotation_rate_emitter_duty)  # Set the IR Emitter to the configured duty cycle
 
                 # Enable the phototransistor input for measuring wheel rotation rate
-                for index, pin_num in enumerate(_ROTATION_RATE_SENSOR_PINS):
+                for pin_num in _ROTATION_RATE_SENSOR_PINS:
                     self._rotation_rate_sensor_pin = self._test_support_hexpansion_config.pin[pin_num]           # HS_F
                     self._rotation_rate_sensor_pin.init(mode=Pin.IN)
                     # configure the ESP32S3 hardware to count pulses on the HS_F pin and make the count available as a regular GPIO input that we can read in software.  This allows us to do high-speed counting of photodiode pulses without needing to do it in software with interrupts or tight loops, which would be unreliable due to the cooperative multitasking nature of the app.
                     # Counter not yet available in this Micropython port so we have created our own...
                     gpio_num = _HS_PIN_TO_GPIO[_ROTATION_RATE_PORT][pin_num]
-                    self._rotation_rate_counters[index] = Counter(None, gpio_num, filter_ns=1000000, logging=self.logging)     # auto-select PCNT unit
-
-                    if self._rotation_rate_counters[index].unit is None:
+                    counter = Counter(None, gpio_num, filter_ns=1000000, logging=self.logging)     # auto-select PCNT unit
+                    if counter is not None and counter.unit is not None:
+                        self._rotation_rate_counters.append(counter)
+                    else:
                         if self.logging:
-                            print("S:Failed to allocate PCNT counter")
+                            print(f"S:Failed to allocate PCNT counter for pin {pin_num} (GPIO {gpio_num})")
                         app.notification = Notification("PCNT Init Failed")
-                        # deinit???
+                        # deinit any counters we did manage to create before returning
+                        for c in self._rotation_rate_counters:
+                            if c is not None:
+                                c.deinit()
+                        self._rotation_rate_counters = []  
                         return False
                 if self.logging:
                     print(f"S:Rate counter {self._rotation_rate_counters}")
                 self._rotation_rate_measurement_period_elapsed = 0
                 self._rotation_rate_rpm = 0
-                app.update_period = 250  # update every 250ms to give a responsive display without overwhelming the CPU with updates
+                app.update_period = _MOTOR_TEST_BACKGROUND_UPDATE_PERIOD  # update every 1000ms to give a responsive display without overwhelming the CPU with updates
                 return True
         if self.logging:
             print("H:Failed to initialise HexDrive for motor moves")
