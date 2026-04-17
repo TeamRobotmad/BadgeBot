@@ -169,8 +169,7 @@ class HexpansionMgr:
         self._hexpansion_state_by_slot[event.port - 1] = _HEXPANSION_STATE_EMPTY
         if event.port in self._ports_to_initialise:
             self._ports_to_initialise.remove(event.port)
-        if event.port in self._ports_to_check_app:
-            self._ports_to_check_app.remove(event.app)    
+        self._ports_to_check_app.discard(event.port)
 
         if self._detected_port is not None  and event.port == self._detected_port:
             # The hexpansion that is currently being initialised has been removed, so reset the state machine to wait for a new hexpansion to be detected.
