@@ -103,9 +103,9 @@ class Instruction:
 
     def directional_duration(self, mysettings) -> int:
         if self._press_type == BUTTON_TYPES["UP"] or self._press_type == BUTTON_TYPES["DOWN"]:
-            return (mysettings['drive_step_ms'].v)
+            return (mysettings['drive_step_ms'].v if 'drive_step_ms' in mysettings else _DEFAULT_USER_DRIVE_MS)
         elif self._press_type == BUTTON_TYPES["LEFT"] or self._press_type == BUTTON_TYPES["RIGHT"]:
-            return (mysettings['turn_step_ms'].v)
+            return (mysettings['turn_step_ms'].v if 'turn_step_ms' in mysettings else _DEFAULT_USER_TURN_MS)
 
 
     def make_power_plan(self, mysettings):
@@ -295,6 +295,7 @@ class MotorMovesMgr:
         #else:
         # Legacy power-plan path
         if self._sub_state == _SUB_RUN:
+            print("Running motor moves with power plan iterator")
             output = self._get_current_power_level(delta)
         else:
             output = None
@@ -391,6 +392,7 @@ class MotorMovesMgr:
         app = self._app
         app.clear_leds()
         # Run is primarily managed in the background update - but we allow CANCEL here as well to stop immediately
+        app.refresh = True # TODO not every cycle, just when we need to update the screen (e.g. for power level display)
         if app.button_states.get(BUTTON_TYPES["CANCEL"]):
             app.button_states.clear()
             self.reset_robot()
@@ -465,10 +467,10 @@ class MotorMovesMgr:
         if self.logging:
             print("Instructions reset")
         # Initialise a simple power_plan for use in testing - 10 steps forward then 10 steps reverse, all repated 10 times:
-        for _ in range(50):
-            for _ in range(40):
+        for _ in range(10):
+            for _ in range(10):
                 self._handle_instruction_press(BUTTON_TYPES["UP"])
-            for _ in range(40):
+            for _ in range(10):
                 self._handle_instruction_press(BUTTON_TYPES["DOWN"])
 
 

@@ -383,13 +383,10 @@ class HexpansionMgr:
                 if self._mode == _MODE_UPDATE:
                     app.hexpansion_update_required = False
                     self._mode = _MODE_IDLE
-                elif self._mode == _MODE_INIT:
-                    app.initialise_settings()
-                    self._sub_state = _SUB_EXIT
-                elif self._mode == _MODE_IDLE:
-                    # when user acknowledges a hexpansion message
+                else:
                     self._sub_state = _SUB_EXIT
         if self._sub_state == _SUB_EXIT:
+            app.initialise_settings()
             app.return_to_menu()
             self._mode = _MODE_IDLE
 
