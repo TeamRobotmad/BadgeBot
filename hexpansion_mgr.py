@@ -43,6 +43,7 @@ _SUB_UPGRADE_CONFIRM = 5           # Hexpansion ready for App upgrade
 _SUB_PROGRAMMING     = 6           # Hexpansion EEPROM programming (Initialsation or Upgrade) in progress
 _SUB_PORT_SELECT     = 7           # User selecting which hexpansion to erase (if multiple) in order to free up a slot for initialisation or upgrade    
 _SUB_DONE            = 8           # Final state after successful initialisation or upgrade, before returning to menu
+_SUB_EXIT            = 9           # State for exiting from interactive mode back to menu)
 
 # Hexpansion states
 # unknown, blank, unrecognised, recognised but no app, recognised with app
@@ -78,6 +79,19 @@ _APP_EEPROM_RESULT_SUCCESSFUL_WRITE = 2
 _HEXDRIVE_REQUIRED_MESSAGE = ["Requires:","RobotMad HexDrive","github.com","/TeamRobotmad","/BadgeBot"]
 _HEXDRIVE_REQUIRED_MESSAGE_COLOURS = [(1,1,0),(1,1,0),(0,1,1),(0,1,1),(0,1,1)]
 
+# Modes
+_MODE_INIT = 0          # Initial mode on app startup to do first scan of all ports
+_MODE_IDLE = 1          # Idle mode with no hexpansion-related activity, waiting for events
+_MODE_UPDATE = 2        # Normal mode for responding to hexpansion-related events (insertion/removal)
+_MODE_INTERACTIVE = 3   # Interactive mode for user interactions for initialisation/upgrade/erasure of hexpansions
+
+_SINGLE_PORT_HEXPANSION_REFS = (
+    ("hexsense_port", "HexSense", "HEXSENSE_HEXPANSION_INDEX"),
+    ("hextest_port", "HexTest", "HEXTEST_HEXPANSION_INDEX"),
+    ("hexdiag_port", "HexDiag", "HEXDIAG_HEXPANSION_INDEX"),
+    ("hexgps_port", "HexGPS", "HEXGPS_HEXPANSION_INDEX"),
+)
+
 # ---- Settings initialisation -----------------------------------------------
 
 def init_settings(s, MySetting):        # pylint: disable=unused-argument
@@ -104,9 +118,9 @@ class HexpansionMgr:
     def __init__(self, app, logging: bool = False):
         self._app = app
         self._logging: bool = logging
+        self._mode: int = _MODE_INIT
         self._sub_state: int = _SUB_INIT
         self._prev_state: int = _SUB_INIT
-        self._interactive_mode: bool = False
         self._port_selected: int = 0
         self._port_selected_header = None            # HexpansionHeader for selected port
         self._port_detail_page: int = 0              # 0=vid/pid, 1=eeprom, 2=details (conditional)
@@ -125,7 +139,6 @@ class HexpansionMgr:
         self._ports_to_check_app: set[int] = set()  # ports with recognised hexpansion type which should be checked for the correct app before being used
         self._reboop_required: bool = False
         self._hexpansion_serial_number: int | None = None
-        self._initialisation_phase: bool = True
 
         if self._logging:
             print("HexpansionMgr initialised")
@@ -161,6 +174,56 @@ class HexpansionMgr:
         self._logging = value
 
 
+    def _clear_single_port_hexpansion_refs(self, port: int | None):
+        """Clear app references for single-port hexpansions assigned to *port*."""
+        if port is None:
+            return
+
+        app = self._app
+        for attr_name, display_name, _ in _SINGLE_PORT_HEXPANSION_REFS:
+            if getattr(app, attr_name, None) == port:
+                setattr(app, attr_name, None)
+                if self._logging:
+                    print(f"H:{display_name} on port {port} erased!")
+
+
+    def _has_single_port_hexpansion_on_port(self, port: int) -> bool:
+        """Return True when a tracked single-port hexpansion is assigned to *port*."""
+        app = self._app
+        for attr_name, _, _ in _SINGLE_PORT_HEXPANSION_REFS:
+            if getattr(app, attr_name, None) == port:
+                return True
+        return False
+
+
+    def _refresh_single_port_hexpansion_assignments(self):
+        """Update tracked single-port hexpansion ports and refresh dependent state."""
+        app = self._app
+        previous_ports = {}
+
+        for attr_name, _, type_index_attr in _SINGLE_PORT_HEXPANSION_REFS:
+            previous_port = getattr(app, attr_name, None)
+            previous_ports[attr_name] = previous_port
+            type_index = getattr(app, type_index_attr)
+            current_port, _ = self._check_hexpansion(previous_port, type_index)
+            setattr(app, attr_name, current_port)
+
+        if previous_ports["hexdiag_port"] != app.hexdiag_port:
+            app.hexdiag_setup()
+
+        if previous_ports["hextest_port"] != app.hextest_port and app.sensor_test_mgr is not None:
+            app.sensor_test_mgr.hextest_setup(app.hextest_port)
+
+
+    def _should_claim_single_port_hexpansion(self, type_index: int) -> bool:
+        """Return True if a detected single-port hexpansion type is not yet assigned."""
+        app = self._app
+        for attr_name, _, type_index_attr in _SINGLE_PORT_HEXPANSION_REFS:
+            if type_index == getattr(app, type_index_attr):
+                return getattr(app, attr_name, None) is None
+        return False
+
+
     # ------------------------------------------------------------------
     # Async event handlers (registered directly on eventbus)
     # ------------------------------------------------------------------
@@ -173,49 +236,26 @@ class HexpansionMgr:
             self._ports_to_initialise.remove(event.port)
         self._ports_to_check_app.discard(event.port)
 
-        if self._detected_port is not None  and event.port == self._detected_port:
-            # The hexpansion that is currently being initialised has been removed, so reset the state machine to wait for a new hexpansion to be detected.
+        if (self._detected_port     is not None and event.port == self._detected_port) or \
+            (self._upgrade_port     is not None and event.port == self._upgrade_port) or \
+            (self._waiting_app_port is not None and event.port == self._waiting_app_port) or \
+            (self._erase_port       is not None and event.port == self._erase_port) or \
+            (self._port_selected != 0           and event.port == self._port_selected) or \
+            (event.port in app.hexdrive_ports) or \
+            self._has_single_port_hexpansion_on_port(event.port):
+            # The port from which a hexpansion has been removed is significant
             app.hexpansion_update_required = True
-        elif self._upgrade_port is not None and event.port == self._upgrade_port:
-            # The hexpansion that is currently being upgraded has been removed, so reset the state machine to wait for a new hexpansion to be detected.
-            app.hexpansion_update_required = True
-        elif self._waiting_app_port is not None and event.port == self._waiting_app_port:
-            # The hexpansion that is currently waiting for its app to start has been removed, so reset the state machine to wait for a new hexpansion to be detected.
-            app.hexpansion_update_required = True
-        elif self._erase_port is not None and event.port == self._erase_port:
-            # The hexpansion that is currently waiting to be erased has been removed, so reset the state machine to wait for a new hexpansion to be detected.
-            app.hexpansion_update_required = True            
-        elif event.port in app.hexdrive_ports:
-            # The HexDrive that is currently in use has been removed, so update the app state accordingly (which may trigger a fallback to a different HexDrive if available, or a warning if no HexDrive is available).
-            app.hexpansion_update_required = True
-        elif app.hexsense_port is not None and event.port == app.hexsense_port:
-            # The HexSense that is currently in use has been removed, so update the app state accordingly (which may trigger a warning if sensors are required for the current mode).
-            app.hexpansion_update_required = True
-        elif app.hextest_port is not None and event.port == app.hextest_port:
-            # The HexTest that is currently in use has been removed, so update the app state accordingly (which may trigger a warning if the HexTest is required for the current mode).
-            app.hexpansion_update_required = True
-        elif app.hexdiag_port is not None and event.port == app.hexdiag_port:
-            # The HexDiag that is currently in use has been removed, so update the app state accordingly (which may trigger a warning if the HexDiag is required for the current mode).
-            app.hexpansion_update_required = True
-        elif app.hexgps_port is not None and event.port == app.hexgps_port:
-            # The HexGPS that is currently in use has been removed, so update the app state accordingly (which may trigger a warning if the HexGPS is required for the current mode).
-            app.hexpansion_update_required = True
-        elif self._port_selected != 0 and event.port == self._port_selected:
-            # The port that the user is currently selecting a hexpansion for has been removed
-            app.hexpansion_update_required = True
-
-        if app.hexpansion_update_required and self._logging:
-            print(f"H:Hexpansion removed from port {event.port}")
+            if self._logging:
+                print(f"H:Hexpansion removed from port {event.port}")
 
 
     async def _handle_insertion(self, event):
-        if self._logging:
-            print(f"H:Hexpansion inserted into port {event.port}")
         if self._check_port_for_known_hexpansions(event.port) or event.port == self._port_selected:
             # A known hexpansion type has been detected on the inserted port, so trigger an update of the hexpansion management state machine to handle it.
             # Or the inserted port is the one currently being selected by the user in interactive mode, so we should also trigger an update to check if it's a valid hexpansion and update the UI accordingly.
             self._app.hexpansion_update_required = True
-
+            if self._logging:
+                print(f"H:Hexpansion inserted into port {event.port}")
 
    # ------------------------------------------------------------------
     # Entry point from menu
@@ -228,7 +268,7 @@ class HexpansionMgr:
         app.button_states.clear()
         app.refresh = True
         app.auto_repeat_clear()
-        self._interactive_mode = True
+        self._mode = _MODE_INTERACTIVE
         if self._logging:
             print("Entered Hexpansion Management mode")
         self._enter_port_select()
@@ -294,10 +334,14 @@ class HexpansionMgr:
                 self._sub_state = _SUB_CHECK
         elif app.hexpansion_update_required:
             # This flag is set when a hexpansion-related event occurs that should trigger an update of the hexpansion management state machine (e.g. insertion/removal of a hexpansion).
-            if self._sub_state != _SUB_CHECK:
+            if self._mode == _MODE_IDLE:
+                self._mode = _MODE_UPDATE
                 if self._logging:
-                    print("H:Hexpansion Check")
+                    print("H:Hexpansion update triggered by event")
+                self._sub_state = _SUB_CHECK
                 app.set_menu(None)
+            elif self._mode == _MODE_INTERACTIVE:
+                app.hexpansion_update_required = False
                 self._sub_state = _SUB_CHECK
 
         if self._check_ports_to_upgrade(delta):
@@ -320,10 +364,10 @@ class HexpansionMgr:
             self._update_state_upgrade(delta)
         elif self._sub_state == _SUB_PROGRAMMING:
             self._update_state_programming(delta)  
-        elif self._sub_state == _SUB_CHECK:
-            self._update_state_check(delta)
         elif self._sub_state == _SUB_PORT_SELECT:
             self._update_state_port_select(delta)
+        elif self._sub_state == _SUB_CHECK:
+            self._update_state_check(delta)
 
         if self._sub_state != self._prev_state:
             if self._logging:
@@ -331,16 +375,24 @@ class HexpansionMgr:
             self._prev_state = self._sub_state
 
         if self._sub_state == _SUB_DONE:
-            print(f"H:Hexpansion initialisation/upgrade complete")
-            if app.hexpansion_update_required:
-                app.hexpansion_update_required = False
-            if self._initialisation_phase:
-                self._initialisation_phase = False
-                app.initialise_settings()
-            if len(app.hexdrive_apps) > 0:
-                # If we have a HexDrive and its app is running, we can proceed straight to the main menu
-                app.return_to_menu()
-            self._sub_state = _SUB_CHECK
+            print(f"H:Hexpansion initialisation/change DONE")
+            if self._mode == _MODE_INTERACTIVE:
+                self._enter_port_select()            
+                # Exit from _SUB_DONE to allow user to select another port for management if they wish
+            else:
+                if self._mode == _MODE_UPDATE:
+                    app.hexpansion_update_required = False
+                    self._mode = _MODE_IDLE
+                elif self._mode == _MODE_INIT:
+                    app.initialise_settings()
+                    self._sub_state = _SUB_EXIT
+                elif self._mode == _MODE_IDLE:
+                    # when user acknowledges a hexpansion message
+                    self._sub_state = _SUB_EXIT
+        if self._sub_state == _SUB_EXIT:
+            app.return_to_menu()
+            self._mode = _MODE_IDLE
+
         return True
 
 
@@ -358,7 +410,7 @@ class HexpansionMgr:
             if app.HEXPANSION_TYPES[self._hexpansion_init_type].app_mpy_name is None:
                 app.notification = Notification("No App", port=self._upgrade_port)
                 self._sub_state = _SUB_CHECK
-                app.show_message(["No App", "for this", "Hexpansion"], [(1,0,0),(1,0,0),(1,0,0)])
+                app.show_message(["No App", "for this", "Hexpansion"], [(1,0,0),(1,0,0),(1,0,0)], "hexpansion")
             else:
                 result = self._update_app_in_eeprom(self._upgrade_port)
                 if result == _APP_EEPROM_RESULT_FAILURE:
@@ -386,7 +438,7 @@ class HexpansionMgr:
                     self._hexpansion_state_by_slot[self._detected_port - 1] = _HEXPANSION_STATE_RECOGNISED
                 else:
                     self._sub_state = _SUB_CHECK
-                    app.show_message(["No App", "for this", "Hexpansion"], [(1,1,0),(1,1,1),(1,1,1)])
+                    app.show_message(["No App", "for this", "Hexpansion"], [(1,1,0),(1,1,1),(1,1,1)], "hexpansion")
                     self._hexpansion_state_by_slot[self._detected_port - 1] = _HEXPANSION_STATE_RECOGNISED_NO_APP
             else:
                 app.notification = Notification("Failed", port=self._detected_port)
@@ -397,7 +449,7 @@ class HexpansionMgr:
             self._detected_port = None
         elif self._logging:
             print("H:Error - no port to program")
-            self._sub_state = _SUB_PORT_SELECT if self._interactive_mode else _SUB_CHECK
+            self._sub_state = _SUB_PORT_SELECT if self._mode == _MODE_INTERACTIVE else _SUB_CHECK
 
 
     def _update_state_detected(self, delta):        # pylint: disable=unused-argument
@@ -411,7 +463,7 @@ class HexpansionMgr:
             if self._logging:
                 print("H:Initialise Cancelled")
             self._detected_port = None
-            self._sub_state = _SUB_PORT_SELECT if self._interactive_mode else _SUB_CHECK
+            self._sub_state = _SUB_PORT_SELECT if self._mode == _MODE_INTERACTIVE else _SUB_CHECK
         elif app.button_states.get(BUTTON_TYPES["UP"]):
             app.button_states.clear()
             self._hexpansion_init_type = (self._hexpansion_init_type + 1) % app.UNRECOGNISED_HEXPANSION_INDEX
@@ -445,7 +497,7 @@ class HexpansionMgr:
                 print("H:Erase Cancelled")
             app.button_states.clear()
             self._erase_port = None
-            self._sub_state = _SUB_PORT_SELECT if self._interactive_mode else _SUB_CHECK
+            self._sub_state = _SUB_PORT_SELECT if self._mode == _MODE_INTERACTIVE else _SUB_CHECK
 
 
     def _update_state_erase(self, delta):       # pylint: disable=unused-argument
@@ -473,7 +525,7 @@ class HexpansionMgr:
         else:
             app.notification = Notification("Failed", port=self._erase_port)
             app.show_message(["EEPROM", "erasure", "failed", "Protected?"], [(1,0,0),(1,0,0),(1,0,0),(1,0,0)], "warning")
-            self._sub_state = _SUB_PORT_SELECT if self._interactive_mode else _SUB_CHECK
+            self._sub_state = _SUB_PORT_SELECT if self._mode == _MODE_INTERACTIVE else _SUB_CHECK
         self._reboop_required = True
         
         if self._erase_port is not None and self._erase_port in app.hexdrive_ports:
@@ -485,25 +537,7 @@ class HexpansionMgr:
             if self._logging:
                 print(f"H:HexDrive on port {self._erase_port} erased!")
 
-        if app.hexsense_port is not None and app.hexsense_port == self._erase_port:
-            app.hexsense_port = None
-            if self._logging:
-                print(f"H:HexSense on port {self._erase_port} erased!")
-
-        if app.hextest_port is not None and app.hextest_port == self._erase_port:
-            app.hextest_port = None
-            if self._logging:
-                print(f"H:HexTest on port {self._erase_port} erased!")
-
-        if app.hexdiag_port is not None and app.hexdiag_port == self._erase_port:
-            app.hexdiag_port = None
-            if self._logging:
-                print(f"H:HexDiag on port {self._erase_port} erased!")
-
-        if app.hexgps_port is not None and app.hexgps_port == self._erase_port:
-            app.hexgps_port = None
-            if self._logging:
-                print(f"H:HexGPS on port {self._erase_port} erased!")
+        self._clear_single_port_hexpansion_refs(self._erase_port)
 
         self._erase_port = None
 
@@ -521,7 +555,7 @@ class HexpansionMgr:
             app.button_states.clear()
             self._hexpansion_state_by_slot[self._upgrade_port - 1] = _HEXPANSION_STATE_RECOGNISED_OLD_APP
             self._upgrade_port = None
-            self._sub_state = _SUB_PORT_SELECT if self._interactive_mode else _SUB_CHECK
+            self._sub_state = _SUB_PORT_SELECT if self._mode == _MODE_INTERACTIVE else _SUB_CHECK
 
 
     def _get_hexpansion_by_type(self, hexpansion_type) -> int | None:
@@ -549,6 +583,7 @@ class HexpansionMgr:
         print(f"hexdiag_port:{app.hexdiag_port}")
         print(f"hexdrive_ports:{app.hexdrive_ports}")
         print(f"hexpansion_update_required = {app.hexpansion_update_required}")
+        print(f"mode = {self._mode}")
 
 
 
@@ -569,7 +604,7 @@ class HexpansionMgr:
                 if hexpansion_was_present:
                     if self._logging:
                         print(f"H:{name} moved from port {old_port} to port {new_port}")
-                    app.show_message([f"{name} moved", f"to port {new_port}"], [(1,1,0),(1,1,1)])
+                    app.show_message([f"{name} moved", f"to port {new_port}"], [(1,1,0),(1,1,1)], "hexpansion")
                 else:
                     if self._logging:
                         print(f"H:{name} found on port {new_port}")
@@ -582,7 +617,7 @@ class HexpansionMgr:
             elif hexpansion_was_present:
                 if self._logging:
                     print(f"H:{name} on port {old_port} lost")
-                if not self._interactive_mode:
+                if self._mode == _MODE_UPDATE:
                     app.show_message([f"{name}","removed.","Please reinsert"], [(1,1,0),(1,1,1),(1,1,1)], "error")
 
         return port, hexpansion_app
@@ -594,21 +629,7 @@ class HexpansionMgr:
 
         self._report_hexpansion_states()
 
-        hexdiag_port = app.hexdiag_port
-        hextest_port = app.hextest_port
-
-        app.hexsense_port, _                = self._check_hexpansion(app.hexsense_port, app.HEXSENSE_HEXPANSION_INDEX)
-        app.hextest_port, _                 = self._check_hexpansion(app.hextest_port, app.HEXTEST_HEXPANSION_INDEX)
-        app.hexgps_port, _                  = self._check_hexpansion(app.hexgps_port, app.HEXGPS_HEXPANSION_INDEX)
-        app.hexdiag_port, _                 = self._check_hexpansion(app.hexdiag_port, app.HEXDIAG_HEXPANSION_INDEX)
-
-        if hexdiag_port != app.hexdiag_port:
-            # Update the diagnostics app reference if the HexDiag has moved or been removed/added
-            app.hexdiag_setup()
-
-        if hextest_port != app.hextest_port and app.sensor_test_mgr is not None:
-            # Update the test app reference if the HexTest has moved or been removed/added
-            app.sensor_test_mgr.hextest_setup(app.hextest_port)
+        self._refresh_single_port_hexpansion_assignments()
 
         # Build a new list of ports with HexDrives, based on the currently detected hexpansions and their types, and check if it differs from the current list of HexDrive ports (which may indicate that a HexDrive has been removed or added, or that a different type of hexpansion has been detected on the same port which may affect whether it's a valid HexDrive or not).
         # loop over the ports
@@ -625,14 +646,16 @@ class HexpansionMgr:
             if self._logging:
                 print(f"H:HexDrive ports changed from {app.hexdrive_ports} to {new_hexdrive_ports}")
             if len(new_hexdrive_ports) == len(app.hexdrive_ports):
-                app.show_message(["HexDrive moved", f"to {new_hexdrive_ports}"], [(1,1,0),(1,1,1)])
+                app.show_message(["HexDrive moved", f"to {new_hexdrive_ports}"], [(1,1,0),(1,1,1)], "hexpansion")
             elif len(new_hexdrive_ports) > len(app.hexdrive_ports):
                 added_ports = set(new_hexdrive_ports) - set(app.hexdrive_ports)
-                if not self._initialisation_phase:
-                    app.show_message(["HexDrive inserted", f"on port {added_ports}"], [(0,1,0),(1,1,1)])   
+                if self._mode != _MODE_INIT:
+                    app.show_message(["HexDrive inserted", f"on port {added_ports}"], [(0,1,0),(1,1,1)], "hexpansion")
             else:
                 removed_ports = set(app.hexdrive_ports) - set(new_hexdrive_ports)
-                app.show_message(["HexDrive removed", f"from port {removed_ports}"], [(1,0,0),(1,1,1)])
+                if len(new_hexdrive_ports) > 0:
+                    # no point showing this message if there are no Hexdrives left as user will get the "HexDrive required" message instead
+                    app.show_message(["HexDrive removed", f"from port {removed_ports}"], [(1,0,0),(1,1,1)], "hexpansion")
             app.hexdrive_ports = new_hexdrive_ports
             app.hexdrive_apps = []
 
@@ -691,20 +714,18 @@ class HexpansionMgr:
             # there are outstandind apps to check
             if self._logging:
                 print(f"H:Checking apps on ports: {self._ports_to_check_app}")
-        elif self._interactive_mode:
-            self._enter_port_select()
-        elif self._reboop_required:
-            app.show_message(["Please", "reboop"], [(1,1,1),(1,1,1)], "reboop")
+
+            # Exit from _SUB_CHECK
         else:
-            if self._initialisation_phase:
-                if len(app.hexdrive_apps) == 0:
-                    app.show_message(_HEXDRIVE_REQUIRED_MESSAGE, _HEXDRIVE_REQUIRED_MESSAGE_COLOURS, "warning")
+            if self._reboop_required:
+                app.show_message(["Please", "reboop"], [(1,1,1),(1,1,1)], "reboop")
+            elif len(app.hexdrive_apps) == 0 and self._mode != _MODE_INTERACTIVE:
+                app.show_message(_HEXDRIVE_REQUIRED_MESSAGE, _HEXDRIVE_REQUIRED_MESSAGE_COLOURS, "warning")
             self._sub_state = _SUB_DONE
 
  
     def _update_state_port_select(self, delta: int):   # pylint: disable=unused-argument
-        app = self._app
-      
+        app = self._app      
         if app.button_states.get(BUTTON_TYPES["RIGHT"]):
             app.button_states.clear()
             self._port_selected = (self._port_selected % _NUM_HEXPANSION_SLOTS) + 1
@@ -739,10 +760,8 @@ class HexpansionMgr:
                 self._port_detail_page = (self._port_detail_page + 1) % self._port_detail_page_count
             app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["CANCEL"]):
-            self._interactive_mode = False
-            self._port_selected = 0
             app.button_states.clear()
-            app.return_to_menu()
+            self._sub_state = _SUB_EXIT
 
 
     # ------------------------------------------------------------------
@@ -967,13 +986,7 @@ class HexpansionMgr:
                     # This hexpansion should have an app, but do we have it and is it the right version?
                     self._check_hexpansion_app_on_port(port, index)
                     return True
-                elif index == app.HEXSENSE_HEXPANSION_INDEX and app.hexsense_port is None:
-                    return True
-                elif index == app.HEXTEST_HEXPANSION_INDEX and app.hextest_port is None:
-                    return True
-                elif index == app.HEXGPS_HEXPANSION_INDEX and app.hexgps_port is None:
-                    return True
-                elif index == app.HEXDIAG_HEXPANSION_INDEX and app.hexdiag_port is None:
+                elif self._should_claim_single_port_hexpansion(index):
                     return True
                 return False
         # Unrecognised Hexpansion

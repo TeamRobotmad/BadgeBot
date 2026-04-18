@@ -242,7 +242,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             self.special_chars = {'up': "^", 'left': "<", 'right': ">"}
 
 
-        # Hexpansion related
+        # Hexpansion related - SEE ALSO hexpansion_mgr to update _SINGLE_PORT_HEXPANSION_REFS
         #                                       pid      name         vid          eeprom total size        eeprom page size      app mpy name                 app mpy version                       app name                motors    servos    sensors    sub_type            
         self.HEXPANSION_TYPES = [HexpansionType(0xCBCB, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2, servos=4, steppers=1, sub_type="Uncommitted" ),
                                  HexpansionType(0xCBCA, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2,                       sub_type="2 Motor" ),
@@ -665,8 +665,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 self.button_states.clear()
                 # Reboot has been acknowledged by the user - unfortunately we can't actually reboot the badge from Python.
                 return # leave the message on screen.
-            elif self.message_type == "error" or self.message_type == "hexpansion":
-                # Error message has been acknowledged by the user
+            elif self.message_type == "error" or self.message_type == "warning" or self.message_type == "hexpansion":
+                # Message has been acknowledged by the user
                 self.button_states.clear()
                 # Recheck Hexpansions - in case the issue is resolved
                 self.current_state = STATE_HEXPANSION
