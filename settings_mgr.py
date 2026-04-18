@@ -14,23 +14,16 @@ from events.input import BUTTON_TYPES
 from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
 
-# Front face direction labels (0=BtnA corner between slots 6 & 1, each step = 30° CW)
-_FRONT_FACE_LABELS = (
-    "BtnA", "Slot 1", "BtnB", "Slot 2", "BtnC", "Slot 3",
-    "BtnD", "Slot 4", "BtnE", "Slot 5", "BtnF", "Slot 6",
-)
-_FWD_DIR_LABELS = ("Normal", "Reverse")
-_DRIVE_MODE_LABELS = ("Time", "Distance")
-
 MENU_ENTRY_NAME = "Settings"
 
 class MySetting:
-    def __init__(self, container, default, minimum, maximum):
+    def __init__(self, container, default, minimum, maximum, labels=None):
         self._container = container
         self.d = default
         self.v = default
         self._min = minimum
         self._max = maximum
+        self._labels = labels
 
     def __str__(self):
         return str(self.v)
@@ -40,6 +33,15 @@ class MySetting:
             if v == self:
                 return k
         return None
+
+    def label(self, index: int = None):
+        if index is not None:
+            if self._labels is not None and index < len(self._labels):
+                return self._labels[int(index)]
+            return str(index)
+        if self._labels is not None and self.v is not None and self.v < len(self._labels):
+            return self._labels[int(self.v)]
+        return str(self.v)
 
     @staticmethod
     def _quantize_tenths(value: float) -> float:
@@ -58,7 +60,11 @@ class MySetting:
                 d = 10 ** l
                 v = ((v // d) + 1) * d
             if v > self._max:
-                v = self._max
+                if self._labels is not None:
+                    # settings that are purely label-based wrap around
+                    v = 0
+                else:
+                    v = self._max
         elif isinstance(self.v, float):
             v = self._quantize_tenths(v) + 0.1
             if v > self._max:
@@ -79,7 +85,11 @@ class MySetting:
                 d = 10 ** l
                 v = (((v + (9 * (10 ** (l - 1)))) // d) - 1) * d
             if v < self._min:
-                v = self._min
+                if self._labels is not None:
+                    # settings that are purely label-based wrap around
+                    v = len(self._labels) - 1
+                else:
+                    v = self._min
         elif isinstance(self.v, float):
             v = self._quantize_tenths(v) - 0.1
             if v < self._min:
@@ -175,6 +185,7 @@ class SettingsMgr:
                 app.button_states.clear()
                 if self._logging:
                     print(f"Setting: {self.edit_setting} Cancelled")
+                app.fast_settings_update()  # Update fast access settings which might have been changed
                 app.return_to_menu(MENU_ENTRY_NAME)
             elif app.button_states.get(BUTTON_TYPES["CONFIRM"]):
                 app.button_states.clear()
@@ -194,32 +205,10 @@ class SettingsMgr:
     def draw(self, ctx):
         """Render Settings editing UI.  Returns True if handled."""
         app = self._app
-        disp_val = self._format_setting_value(self.edit_setting, self.edit_setting_value)
+        disp_val = app.settings[self.edit_setting].label(self.edit_setting_value)
         app.draw_message(ctx, ["Edit Setting", f"{self.edit_setting}:", f"{disp_val}"], [(1, 1, 0), (0, 0, 1), (0, 1, 0)], label_font_size)
         button_labels(ctx, up_label="+", down_label="-", confirm_label="Set", cancel_label="Cancel", right_label="Default")
         return True
 
 
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _format_setting_value(key, value):
-        """Return a display-friendly string for the given setting key/value."""
-        if key == 'fwd_dir':
-            try:
-                return _FWD_DIR_LABELS[int(value)]
-            except (IndexError, ValueError, TypeError):
-                pass
-        elif key == 'front_face':
-            try:
-                return _FRONT_FACE_LABELS[int(value)]
-            except (IndexError, ValueError, TypeError):
-                pass
-        elif key == 'drive_mode':
-            try:
-                return _DRIVE_MODE_LABELS[int(value)]
-            except (IndexError, ValueError, TypeError):
-                pass
-        if isinstance(value, float):
-            return f"{value:.1f}"
-        return str(value)
