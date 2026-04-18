@@ -521,7 +521,7 @@ class SensorTestMgr:
                     self._rotation_rate_rpms[index] = ((60000 * count) + self._rotation_rate_rounding) // (self._rotation_rate_measurement_period_elapsed * self._rotation_rate_spokes)
             self._rotation_rate_measurement_period_elapsed = 0
             if self.logging:
-                print(f"S:Count {count} = Rotation Rates: {self._rotation_rate_rpm}")
+                print(f"S:Count {count} = Rotation Rates: {self._rotation_rate_rpms}")
 
 
     def _update_select_port(self, delta: int):   # pylint: disable=unused-argument

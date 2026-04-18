@@ -112,8 +112,8 @@ class MotorController:
         self._hexdrive = hexdrive_app
         self._settings = settings
         self._logging: bool = logging
-        self._front_face_setting: "MySetting | None" = front_face_setting
-        self._apply_motor_directions_callback: "Callable[[MotorOutputTuple], MotorOutputTuple] | None" = apply_motor_directions_callback
+        self._front_face_setting: MySetting | None = front_face_setting
+        self._apply_motor_directions_callback = apply_motor_directions_callback
         self._gyro_axis: int = gyro_axis
         self._gyro_deadband: float = gyro_deadband
         self._accel_axis: int = accel_axis

@@ -125,6 +125,8 @@ class HexpansionMgr:
         self._ports_to_check_app: set[int] = set()  # ports with recognised hexpansion type which should be checked for the correct app before being used
         self._reboop_required: bool = False
         self._hexpansion_serial_number: int | None = None
+        self._initialisation_phase: bool = True
+
         if self._logging:
             print("HexpansionMgr initialised")
 
@@ -290,19 +292,24 @@ class HexpansionMgr:
             if self._scan_ports():
                 self._port_selected = 0
                 self._sub_state = _SUB_CHECK
-                #if (len(app.hexdrive_ports) == 0) and (len(self._ports_to_initialise) == 0):
-                #    # no HexDrive and no hexpansion with blank EEPROM which could be initialised as a HexDrive.
-                #    self._report_hexpansion_states()
-                #    app.show_message(_HEXDRIVE_REQUIRED_MESSAGE, _HEXDRIVE_REQUIRED_MESSAGE_COLOURS, "warning")
         elif app.hexpansion_update_required:
             # This flag is set when a hexpansion-related event occurs that should trigger an update of the hexpansion management state machine (e.g. insertion/removal of a hexpansion).
-            app.hexpansion_update_required = False
             if self._sub_state != _SUB_CHECK:
                 if self._logging:
                     print("H:Hexpansion Check")
                 app.set_menu(None)
                 self._sub_state = _SUB_CHECK
-                # the check will show a message which forces the main App out of the current state.
+
+        if self._check_ports_to_upgrade(delta):
+            # moves to _SUB_UPGRADE_CONFIRM if there are any ports with recognised hexpansion which need upgrading
+            # then to _SUB_PROGRAMMING if the user confirms the upgrade
+            # finally gets to _SUB_CHECK
+            pass
+        elif self._check_ports_to_initialise(delta):
+            # moves to _SUB_DETECTED if there are any ports with blank EEPROM which could be initialised
+            # then to _SUB_PROGRAMMING if the user confirms the initialisation
+            # finally gets to _SUB_CHECK
+            pass
         elif self._sub_state == _SUB_DETECTED:
             self._update_state_detected(delta)
         elif self._sub_state == _SUB_ERASE_CONFIRM:
@@ -313,27 +320,25 @@ class HexpansionMgr:
             self._update_state_upgrade(delta)
         elif self._sub_state == _SUB_PROGRAMMING:
             self._update_state_programming(delta)  
-        elif self._check_ports_to_initialise(delta):
-            pass
-        elif self._check_ports_to_upgrade(delta):
-            pass
         elif self._sub_state == _SUB_CHECK:
             self._update_state_check(delta)
         elif self._sub_state == _SUB_PORT_SELECT:
             self._update_state_port_select(delta)
-
-        #self._report_hexpansion_states()
 
         if self._sub_state != self._prev_state:
             if self._logging:
                 print(f"H:HexpansionMgr State: {self._prev_state} -> {self._sub_state}")
             self._prev_state = self._sub_state
 
-        if self._sub_state == _SUB_DONE:
-            if self._logging:
-                print("H:HexDrive OK")
-            app.initialise_settings()
-            app.return_to_menu()
+        if self._sub_state == _SUB_DONE:         
+            if app.hexpansion_update_required:
+                app.hexpansion_update_required = False
+            if self._initialisation_phase:
+                self._initialisation_phase = False
+                app.initialise_settings()
+                if len(app.hexdrive_apps) > 0:
+                    # If we have a HexDrive and its app is running, we can proceed straight to the main menu
+                    app.return_to_menu()
             self._sub_state = _SUB_CHECK
         return True
 
@@ -352,7 +357,7 @@ class HexpansionMgr:
             if app.HEXPANSION_TYPES[self._hexpansion_init_type].app_mpy_name is None:
                 app.notification = Notification("No App", port=self._upgrade_port)
                 self._sub_state = _SUB_CHECK
-                app.show_message(["No App", "for this", "Hexpansion"], [(1,1,0),(1,1,1),(1,0,0)])
+                app.show_message(["No App", "for this", "Hexpansion"], [(1,0,0),(1,0,0),(1,0,0)])
             else:
                 result = self._update_app_in_eeprom(self._upgrade_port)
                 if result == _APP_EEPROM_RESULT_FAILURE:
@@ -391,7 +396,7 @@ class HexpansionMgr:
             self._detected_port = None
         elif self._logging:
             print("H:Error - no port to program")
-            self._sub_state = _SUB_CHECK
+            self._sub_state = _SUB_PORT_SELECT if self._interactive_mode else _SUB_CHECK
 
 
     def _update_state_detected(self, delta):        # pylint: disable=unused-argument
@@ -405,7 +410,7 @@ class HexpansionMgr:
             if self._logging:
                 print("H:Initialise Cancelled")
             self._detected_port = None
-            self._sub_state = _SUB_CHECK
+            self._sub_state = _SUB_PORT_SELECT if self._interactive_mode else _SUB_CHECK
         elif app.button_states.get(BUTTON_TYPES["UP"]):
             app.button_states.clear()
             self._hexpansion_init_type = (self._hexpansion_init_type + 1) % app.UNRECOGNISED_HEXPANSION_INDEX
@@ -439,7 +444,7 @@ class HexpansionMgr:
                 print("H:Erase Cancelled")
             app.button_states.clear()
             self._erase_port = None
-            self._sub_state = _SUB_CHECK
+            self._sub_state = _SUB_CHECK if not self._interactive_mode else _SUB_PORT_SELECT
 
 
     def _update_state_erase(self, delta):       # pylint: disable=unused-argument
@@ -467,7 +472,7 @@ class HexpansionMgr:
         else:
             app.notification = Notification("Failed", port=self._erase_port)
             app.show_message(["EEPROM", "erasure", "failed", "Protected?"], [(1,0,0),(1,0,0),(1,0,0),(1,0,0)], "warning")
-            self._sub_state = _SUB_CHECK        
+            self._sub_state = _SUB_CHECK if not self._interactive_mode else _SUB_PORT_SELECT
         self._reboop_required = True
         
         if self._erase_port is not None and self._erase_port in app.hexdrive_ports:
@@ -515,8 +520,11 @@ class HexpansionMgr:
             app.button_states.clear()
             self._hexpansion_state_by_slot[self._upgrade_port - 1] = _HEXPANSION_STATE_RECOGNISED_OLD_APP
             self._upgrade_port = None
-            self._sub_state = _SUB_CHECK
-        """ Return the 1-based port number of a hexpansion of the given type, or None if no such hexpansion is currently detected."""
+            self._sub_state = _SUB_PORT_SELECT if self._interactive_mode else _SUB_CHECK
+
+
+    def _get_hexpansion_by_type(self, hexpansion_type) -> int | None:
+        """ Return the port number of a hexpansion of the given type, or None if no such hexpansion is currently detected."""
         for port in range(0, _NUM_HEXPANSION_SLOTS):
             if self._hexpansion_type_by_slot[port] == hexpansion_type:
                 return port+1
@@ -540,11 +548,12 @@ class HexpansionMgr:
         print(f"hexdiag_port:{app.hexdiag_port}")
         print(f"hexdrive_ports:{app.hexdrive_ports}")
 
+
     def _check_hexpansion(self, port: int | None, type_index: int) -> tuple[int | None, object | None]:
         """ Check if the currently configured hexpansion of the given type is still present, and
             if not, check if there is another hexpansion of the same type that can be switched to, or if the hexpansion has been removed entirely."""
         app = self._app
-        hexpansion_app = None   
+        hexpansion_app = None
         hexpansion_was_present = port is not None
         if hexpansion_was_present:
             if self._hexpansion_type_by_slot[port - 1] != type_index:
@@ -561,18 +570,17 @@ class HexpansionMgr:
                 else:
                     if self._logging:
                         print(f"H:{name} found on port {new_port}")
-                    #app.show_message([f"{name}", f"on port {new_port}"], [(1,1,0),(1,1,1)])
                 port = new_port
+                if app.HEXPANSION_TYPES[type_index].app_name is not None:
+                    self._hexpansion_state_by_slot[port - 1] = _HEXPANSION_STATE_RECOGNISED # may be updated to _RECOGNISED_APP_OK or _RECOGNISED_OLD_APP after checking for the correct app
+                    hexpansion_app = self._check_hexpansion_app_on_port(port, type_index)
+                else:
+                    self._hexpansion_state_by_slot[port - 1] = _HEXPANSION_STATE_RECOGNISED_NO_APP
             elif hexpansion_was_present:
                 if self._logging:
                     print(f"H:{name} on port {old_port} lost")
-                if not self._interactive_mode:    
+                if not self._interactive_mode:
                     app.show_message([f"{name}","removed.","Please reinsert"], [(1,1,0),(1,1,1),(1,1,1)], "error")
-                self._hexpansion_state_by_slot[port - 1] = _HEXPANSION_STATE_RECOGNISED
-                if app.HEXPANSION_TYPES[type_index].app_name is not None:
-                    hexpansion_app = self._check_hexpansion_app_on_port(port, type_index)                  
-                else:
-                    self._hexpansion_state_by_slot[port - 1] = _HEXPANSION_STATE_RECOGNISED_NO_APP
 
         return port, hexpansion_app
 
@@ -593,73 +601,101 @@ class HexpansionMgr:
 
         if hexdiag_port != app.hexdiag_port:
             # Update the diagnostics app reference if the HexDiag has moved or been removed/added
-            app._sensor_test_mgr.hextest_setup(app.hexdiag_port) 
+            app.hexdiag_setup()
 
-        if hextest_port != app.hextest_port and app._sensor_test_mgr is not None:
+        if hextest_port != app.hextest_port and app.sensor_test_mgr is not None:
             # Update the test app reference if the HexTest has moved or been removed/added
-            app._sensor_test_mgr.hextest_setup(app.hextest_port) 
+            app.sensor_test_mgr.hextest_setup(app.hextest_port)
 
-        # HexDrive is more complex as we track multiple instances rather than just the first one.
-        hexdrive_ports = app.hexdrive_ports.copy()
-        hexdrive_apps = app.hexdrive_apps.copy()
-        hexdrive_types = [self._hexpansion_type_by_slot[port - 1] for port in hexdrive_ports]
-        # have any of the currently tracked HexDrives been removed or changed to a different type? (e.g. due to user reinserting them, or a new hexpansion being detected on the same port)
-        for current_port, current_app, hexdrive_type in zip(hexdrive_ports, hexdrive_apps, hexdrive_types):
-            hexdrive_port, hexdrive_app = self._check_hexpansion(current_port, hexdrive_type)
-            if current_port != hexdrive_port:
-                # The HexDrive that was previously on this port has been removed or is no longer recognised as a HexDrive, so remove it
+        # Build a new list of ports with HexDrives, based on the currently detected hexpansions and their types, and check if it differs from the current list of HexDrive ports (which may indicate that a HexDrive has been removed or added, or that a different type of hexpansion has been detected on the same port which may affect whether it's a valid HexDrive or not).
+        # loop over the ports
+        new_hexdrive_ports = []
+        for port in range(1, _NUM_HEXPANSION_SLOTS + 1):
+            # check if there is a hexpansion of a type that can be a HexDrive on this port
+            type_idx = self._hexpansion_type_by_slot[port-1]
+            if type_idx is not None and type_idx in app.hexdrive_hexpansion_types:
                 if self._logging:
-                    print(f"H:HexDrive on port {current_port} removed from list")
-                app.hexdrive_ports.remove(current_port)
-                app.hexdrive_apps.remove(current_app)
+                    print(f"H:HexDrive on port {port} added to list")
+                new_hexdrive_ports.append(port)
+
+        if set(new_hexdrive_ports) != set(app.hexdrive_ports):
+            if self._logging:
+                print(f"H:HexDrive ports changed from {app.hexdrive_ports} to {new_hexdrive_ports}")
+            if len(new_hexdrive_ports) == len(app.hexdrive_ports):
+                app.show_message(["HexDrive moved", f"to {new_hexdrive_ports}"], [(1,1,0),(1,1,1)])
+            elif len(new_hexdrive_ports) > len(app.hexdrive_ports):
+                added_ports = set(new_hexdrive_ports) - set(app.hexdrive_ports)
+                if not self._initialisation_phase:
+                    app.show_message(["HexDrive inserted", f"on port {added_ports}"], [(0,1,0),(1,1,1)])   
+            else:
+                removed_ports = set(app.hexdrive_ports) - set(new_hexdrive_ports)
+                app.show_message(["HexDrive removed", f"from port {removed_ports}"], [(1,0,0),(1,1,1)])
+            app.hexdrive_ports = new_hexdrive_ports
+            app.hexdrive_apps = []
+
+            app.num_motors = 0
+            app.num_servos = 0
+            app.num_steppers = 0
+            for port in app.hexdrive_ports:
+                hexdrive_type_idx = self._hexpansion_type_by_slot[port - 1]
+                if hexdrive_type_idx is not None and 0 <= hexdrive_type_idx < len(app.HEXPANSION_TYPES):
+                    app.num_motors   += app.HEXPANSION_TYPES[hexdrive_type_idx].motors
+                    app.num_servos   += app.HEXPANSION_TYPES[hexdrive_type_idx].servos
+                    app.num_steppers += app.HEXPANSION_TYPES[hexdrive_type_idx].steppers
+
+        if len(app.hexdrive_ports) != len (app.hexdrive_apps):
+            hexdrive_apps = []
+            for port in app.hexdrive_ports:
+                print(f"H:Checking HexDrive app on port {port}, current state: {_HEXPANSION_STATE_NAMES[self._hexpansion_state_by_slot[port - 1]]}")
+                if self._hexpansion_state_by_slot[port - 1] == _HEXPANSION_STATE_RECOGNISED_APP_OK:
+                    # already checked and app is OK, so just add it to the list
+                    hexdrive_app = self._find_hexpansion_app(port)
+                    if hexdrive_app is not None and hexdrive_app not in app.hexdrive_apps:
+                        hexdrive_apps.append(hexdrive_app)
+                elif self._hexpansion_state_by_slot[port - 1] == _HEXPANSION_STATE_RECOGNISED:
+                    # should this port have an app
+                    type_idx = self._hexpansion_type_by_slot[port - 1]
+                    if app.HEXPANSION_TYPES[type_idx].app_name is not None:
+                        # Yes this port should have an app, but we haven't checked it yet, so check if the correct app is running on this port
+                        print(f"H:Request Check for {app.HEXPANSION_TYPES[type_idx].app_name} app on port {port}")
+                        if port not in self._ports_to_check_app:
+                            self._ports_to_check_app.add(port)
+
+            if len(hexdrive_apps) > 0:
+                app.hexdrive_apps = hexdrive_apps
+                if self._logging:
+                    print(f"H:Updated HexDrive apps: {app.hexdrive_apps}")
+     
+        # Create the high-level MotorController for IMU-aided driving
+        # (only when the HexDrive has motors)
+        if app.num_motors > 1 and len(app.hexdrive_apps) > 0 and app.motor_controller is None:
+            # App may still be loading - we can't initialise the MotorController until the HexDrive app is loaded, because we need to pass a reference to it in order to read the motor directions settings and apply them to the motors.
+            try:
+                from .motor_controller import MotorController
+                app.motor_controller = MotorController(
+                    app.hexdrive_apps[0], app.settings,
+                    logging=self._logging,
+                    front_face_setting=app.settings.get('front_face'),
+                    apply_motor_directions_callback=app.apply_motor_directions,
+                )
+            except Exception as e:      # pylint: disable=broad-except
+                print(f"H:MotorController init failed: {e}")
                 app.motor_controller = None
+        elif app.motor_controller is not None and app.num_motors == 0:
+            app.motor_controller = None
 
-        # Now check if there are any new HexDrives that we haven't added to the list yet
-        # check for each type of hexpansion that can be a HexDrive
-        for type_index in app.hexdrive_hexpansion_types:
-            print(f"H:Checking for HexDrive type index {type_index}")
-            current_port, current_app = self._check_hexpansion(None, type_index)
-            if current_port is not None and current_port not in app.hexdrive_ports:
-                if self._logging:
-                    print(f"H:HexDrive on port {current_port} added to list")
-                app.hexdrive_ports.append(current_port)
-            if current_app is not None and current_app not in app.hexdrive_apps:
-                if self._logging:
-                    print(f"H:HexDrive App on port {current_port} added to list")
-                app.hexdrive_apps.append(current_app)
-
-        if len(app.hexdrive_ports) > 0 and len(app.hexdrive_apps) > 0:
-            hexdrive_type_idx = self._hexpansion_type_by_slot[app.hexdrive_ports[0] - 1]
-            app.num_motors = app.HEXPANSION_TYPES[hexdrive_type_idx].motors
-            app.num_servos = app.HEXPANSION_TYPES[hexdrive_type_idx].servos
-            app.num_steppers = app.HEXPANSION_TYPES[hexdrive_type_idx].steppers
-
-            # Create the high-level MotorController for IMU-aided driving
-            # (only when the HexDrive has motors)
-            if app.num_motors > 1 and app.motor_controller is None:
-                try:
-                    from .motor_controller import MotorController
-                    app.motor_controller = MotorController(
-                        app.hexdrive_apps[0], app.settings,
-                        logging=self._logging,
-                        front_face_setting=app.settings.get('front_face'),
-                        apply_motor_directions_callback=app.apply_motor_directions,
-                    )
-                except Exception as e:      # pylint: disable=broad-except
-                    print(f"H:MotorController init failed: {e}")
-                    app.motor_controller = None
-            elif app.motor_controller is not None and app.num_motors == 0:
-                app.motor_controller = None
-
-            if not self._interactive_mode and app.hexdrive_apps[0].get_status():
-                # In non-interactive mode, if we have a HexDrive and its app is running, we can proceed straight to the main menu
-                self._sub_state = _SUB_DONE
+        if len(self._ports_to_check_app) > 0:
+            # there are outstandind apps to check
+            if self._logging:
+                print(f"H:Checking apps on ports: {self._ports_to_check_app}")
         elif self._interactive_mode:
             self._enter_port_select()
         elif self._reboop_required:
-            app.show_message(["Please", "reboop"], [(1,1,1),(1,1,1)], "reboop")        
-        else:
-            app.show_message(_HEXDRIVE_REQUIRED_MESSAGE, _HEXDRIVE_REQUIRED_MESSAGE_COLOURS, "warning")
+            app.show_message(["Please", "reboop"], [(1,1,1),(1,1,1)], "reboop")
+        elif self._initialisation_phase:
+            if len(app.hexdrive_apps) == 0:
+                app.show_message(_HEXDRIVE_REQUIRED_MESSAGE, _HEXDRIVE_REQUIRED_MESSAGE_COLOURS, "warning")
+            self._sub_state = _SUB_DONE
 
  
     def _update_state_port_select(self, delta: int):   # pylint: disable=unused-argument
@@ -1204,7 +1240,7 @@ class HexpansionMgr:
         """Check for hexpansion presence in any ports, and if a new hexpansion with a blank EEPROM is detected, prompt the user to initialise it.  
            Returns True if we are now in the initialise confirmation state, False otherwise."""
         app = self._app
-        if 0 < len(self._ports_to_initialise):
+        if 0 < len(self._ports_to_initialise) and self._detected_port is None:
             self._detected_port = self._ports_to_initialise.pop()
             app.notification = Notification("Initialise?", port=self._detected_port)
             self._sub_state = _SUB_DETECTED

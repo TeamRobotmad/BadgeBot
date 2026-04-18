@@ -292,7 +292,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         # Diagnostics hexpansion
         self.hexdiag_port = _DIAG_PORT
         self._diag_config = None
-        self.diagnostics_setup()
+        self.hexdiag_setup()
 
         # High-level motor controller (created when HexDrive is found)
         self.motor_controller = None
@@ -520,7 +520,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self._motor2_reversed: bool = self.settings['motor2_dir'].v != 0
 
 
-    def diagnostics_setup(self):
+    def hexdiag_setup(self):
         # Use HS pins on a spare Hexpansion to make diagnostic timing measurements
         if self._diag_config is not None and self.hexdiag_port != self._diag_config.port:
             for i in range(4):
@@ -949,18 +949,18 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             # construct the main menu based on template
             menu_items = MAIN_MENU_ITEMS.copy()
             if not self.enable_servo_test and MAIN_MENU_ITEMS[MENU_ITEM_SERVO_TEST] in menu_items:
-                menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_SERVO_TEST])   
+                menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_SERVO_TEST])
             if not self.enable_stepper_test and MAIN_MENU_ITEMS[MENU_ITEM_STEPPER_TEST] in menu_items:
-                menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_STEPPER_TEST])   
+                menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_STEPPER_TEST])
             if not self.enable_motor_moves and MAIN_MENU_ITEMS[MENU_ITEM_MOTOR_MOVES] in menu_items:
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_MOTOR_MOVES])
-            if not self.enable_line_follow and MAIN_MENU_ITEMS[MENU_ITEM_LINE_FOLLOWER] in menu_items:                
+            if not self.enable_line_follow and MAIN_MENU_ITEMS[MENU_ITEM_LINE_FOLLOWER] in menu_items:
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_LINE_FOLLOWER])
             if not self.enable_line_follow and MAIN_MENU_ITEMS[MENU_ITEM_PID_AUTOTUNE] in menu_items:
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_PID_AUTOTUNE])
             if not self.enable_sensor_test and MAIN_MENU_ITEMS[MENU_ITEM_SENSOR_TEST] in menu_items:
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_SENSOR_TEST])
-            if not self.enable_autodrive and MAIN_MENU_ITEMS[MENU_ITEM_AUTO_DRIVE] in menu_items:    
+            if not self.enable_autodrive and MAIN_MENU_ITEMS[MENU_ITEM_AUTO_DRIVE] in menu_items:
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_AUTO_DRIVE])
             if not self.enable_hexpansion_mgr and MAIN_MENU_ITEMS[MENU_ITEM_HEXPANSION] in menu_items:
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_HEXPANSION])
@@ -971,7 +971,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                     menu_items,
                     select_handler=self._main_menu_select_handler,
                     back_handler=self._menu_back_handler,
-                )            
+                )
         elif menu_name == MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS] and self._settings_mgr is not None: # "Settings"
             # construct the settings menu
             _settings_menu_items = ["SAVE ALL", "DEFAULT ALL"]
