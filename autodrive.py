@@ -125,10 +125,11 @@ class AutoDriveMgr:
             sensor_open = True
         else:
             ports_to_try = [sensor_test.port_selected]
-            if app.hexdrive_port is not None and app.hexdrive_port != sensor_test.port_selected:
-                ports_to_try.append(app.hexdrive_port)
-            if app.hexsense_config.port is not None and app.hexsense_config.port != sensor_test.port_selected:
-                ports_to_try.append(app.hexsense_config.port)                
+            for port in app.hexdrive_ports:
+                if port != sensor_test.port_selected:
+                    ports_to_try.append(port)
+            if app.hexsense_port is not None and app.hexsense_port != sensor_test.port_selected:
+                ports_to_try.append(app.hexsense_port)
             for probe_port in ports_to_try:
                 if sensor_test.open_sensor_port(probe_port):
                     sensor_test.port_selected = probe_port
@@ -146,9 +147,9 @@ class AutoDriveMgr:
         app.button_states.clear()
         app.update_period = 10
         app.refresh = True
-        if app.hexdrive_app is not None:
-            app.hexdrive_app.set_power(True)
-            app.hexdrive_app.set_freq(MOTOR_PWM_FREQ)
+        if len(app.hexdrive_apps) > 0:
+            app.hexdrive_apps[0].set_power(True)
+            app.hexdrive_apps[0].set_freq(MOTOR_PWM_FREQ)
 
 
         # Reset driving state
@@ -262,9 +263,9 @@ class AutoDriveMgr:
         self._active = False
         self.motor_output = (0, 0)
         self.target_output = (0, 0)
-        if self._app.hexdrive_app is not None:
-            self._app.hexdrive_app.set_motors((0, 0))
-            self._app.hexdrive_app.set_power(False)
+        if len(self._app.hexdrive_apps) > 0:
+            self._app.hexdrive_apps[0].set_motors((0, 0))
+            self._app.hexdrive_apps[0].set_power(False)
         self.status = ""
 
     # ------------------------------------------------------------------

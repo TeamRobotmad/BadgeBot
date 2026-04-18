@@ -24,6 +24,9 @@ from pathlib import Path
 DEFAULT_APP_DIR_ON_DEVICE = ":apps/TeamRobotMad_BadgeBot"
 STATE_DIR = Path(".deploy_state")
 STATE_PATH = STATE_DIR / "test_device_download_state.json"
+MPREMOTE_COMMAND_TIMEOUT = 20
+MPREMOTE_PROBE_TIMEOUT = 5
+MPREMOTE_PROBE_MARKER = "__badgebot_mpremote_ok__"
 
 
 @dataclass(frozen=True)
@@ -62,6 +65,7 @@ MODULES: tuple[ModuleSpec, ...] = (
 STATIC_FILES: tuple[Path, ...] = (
     Path("metadata.json"),
     Path("tildagon.toml"),
+    #Path("caffeine.mpy"),   # Club Mate hexpansion app
 )
 
 
@@ -126,14 +130,44 @@ def _save_state(path: Path, state: dict[str, dict[str, str]]) -> None:
         file.write("\n")
 
 
-def _run_command(command: list[str], *, dry_run: bool) -> None:
-    quoted = " ".join(f'"{part}"' if " " in part else part for part in command)
+def _format_command(command: list[str]) -> str:
+    return " ".join(f'"{part}"' if " " in part else part for part in command)
+
+
+def _run_command(
+    command: list[str],
+    *,
+    dry_run: bool,
+    timeout: int | None = None,
+) -> subprocess.CompletedProcess[str] | None:
+    quoted = _format_command(command)
     _log("CMD", quoted)
 
     if dry_run:
-        return
+        return None
 
-    completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout = (exc.stdout or "").rstrip() or "<empty>"
+        stderr = (exc.stderr or "").rstrip() or "<empty>"
+        raise CommandFailed(
+            "\n".join(
+                [
+                    f"Command timed out after {timeout} seconds",
+                    f"Command: {quoted}",
+                    f"STDOUT:\n{stdout}",
+                    f"STDERR:\n{stderr}",
+                ]
+            )
+        ) from exc
+
     if completed.returncode != 0:
         raise CommandFailed(
             "\n".join(
@@ -150,6 +184,96 @@ def _run_command(command: list[str], *, dry_run: bool) -> None:
         _log("OUT", completed.stdout.rstrip())
     if completed.stderr.strip():
         _log("ERR", completed.stderr.rstrip())
+    return completed
+
+
+def _find_connect_arg(mpremote_args: list[str]) -> int | None:
+    for index, arg in enumerate(mpremote_args[:-1]):
+        if arg == "connect":
+            return index
+    return None
+
+
+def _list_mpremote_devices() -> list[str]:
+    completed = _run_command(
+        ["mpremote", "devs"],
+        dry_run=False,
+        timeout=MPREMOTE_PROBE_TIMEOUT,
+    )
+    if completed is None:
+        return []
+
+    devices: list[str] = []
+    for line in completed.stdout.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        first_field = stripped.split()[0]
+        if re.match(r"^(COM\d+|/dev/\S+|/tty\S+)$", first_field, re.IGNORECASE):
+            devices.append(first_field)
+    return devices
+
+
+def _probe_mpremote_device(port: str) -> bool:
+    command = [
+        "mpremote",
+        "connect",
+        port,
+        "exec",
+        f"print('{MPREMOTE_PROBE_MARKER}')",
+    ]
+    _log("INFO", f"probing mpremote device on {port}")
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=MPREMOTE_PROBE_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        _log("WARN", f"skipping {port}: mpremote probe timed out after {MPREMOTE_PROBE_TIMEOUT} seconds")
+        return False
+
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip() or "probe failed"
+        _log("WARN", f"skipping {port}: {detail}")
+        return False
+
+    if MPREMOTE_PROBE_MARKER not in completed.stdout:
+        _log("WARN", f"skipping {port}: probe did not return the expected marker")
+        return False
+
+    _log("INFO", f"using verified mpremote device on {port}")
+    return True
+
+
+def _resolve_mpremote_args(mpremote_args: list[str], *, dry_run: bool) -> list[str]:
+    if dry_run:
+        return list(mpremote_args)
+
+    connect_index = _find_connect_arg(mpremote_args)
+    if connect_index is not None:
+        if connect_index + 1 >= len(mpremote_args):
+            raise RuntimeError("--mpremote-arg connect requires a device argument")
+        port = mpremote_args[connect_index + 1]
+        if not _probe_mpremote_device(port):
+            raise RuntimeError(f"Configured mpremote device {port} did not respond to a probe")
+        return list(mpremote_args)
+
+    devices = _list_mpremote_devices()
+    if not devices:
+        raise RuntimeError("No candidate devices were returned by 'mpremote devs'")
+
+    _log("INFO", f"mpremote reported {len(devices)} candidate device(s): {', '.join(devices)}")
+    for port in devices:
+        if _probe_mpremote_device(port):
+            return ["connect", port, *mpremote_args]
+
+    raise RuntimeError(
+        "No responsive MicroPython device was found from 'mpremote devs'; "
+        "use --mpremote-arg connect --mpremote-arg <PORT> to force a specific port if needed"
+    )
 
 
 def _ensure_repo_root() -> Path:
@@ -181,7 +305,11 @@ def _ensure_device_dir(dir_path: str, *, mpremote_args: list[str], dry_run: bool
         "    except OSError:\n"
         "        os.mkdir(cur)"
     )
-    _run_command(["mpremote", *mpremote_args, "exec", exec_code], dry_run=dry_run)
+    _run_command(
+        ["mpremote", *mpremote_args, "exec", exec_code],
+        dry_run=dry_run,
+        timeout=MPREMOTE_COMMAND_TIMEOUT,
+    )
 
 
 def _ensure_device_dirs(app_dir: str, *, mpremote_args: list[str], dry_run: bool) -> None:
@@ -288,7 +416,20 @@ def _get_device_files(
     quoted = " ".join(f'"{p}"' if " " in p else p for p in command)
     _log("CMD", quoted)
 
-    completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=MPREMOTE_COMMAND_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        _log(
+            "WARN",
+            "could not list device files because mpremote timed out; will upload all unverified",
+        )
+        return None
     if completed.returncode != 0:
         _log("WARN", f"could not list device files (will upload all unverified): "
                      f"{completed.stderr.strip() or completed.stdout.strip()}")
@@ -351,7 +492,7 @@ def _upload_changed_artifacts(
 
         destination = f"{app_dir}/{spec.artifact.as_posix()}"
         command = ["mpremote", *mpremote_args, "cp", str(spec.artifact), destination]
-        _run_command(command, dry_run=dry_run)
+        _run_command(command, dry_run=dry_run, timeout=MPREMOTE_COMMAND_TIMEOUT)
 
         state["uploaded"][artifact_key] = artifact_hash
         uploaded += 1
@@ -398,7 +539,7 @@ def _upload_changed_static_files(
 
         destination = f"{app_dir}/{path.as_posix()}"
         command = ["mpremote", *mpremote_args, "cp", str(path), destination]
-        _run_command(command, dry_run=dry_run)
+        _run_command(command, dry_run=dry_run, timeout=MPREMOTE_COMMAND_TIMEOUT)
 
         state["uploaded"][file_key] = file_hash
         uploaded += 1
@@ -451,6 +592,7 @@ def _parse_args() -> argparse.Namespace:
         default=[],
         help=(
             "Extra argument passed to mpremote before 'cp'. "
+            "If omitted, the script auto-detects and probes candidate devices from 'mpremote devs'. "
             "Can be supplied multiple times, e.g. --mpremote-arg connect --mpremote-arg COM5"
         ),
     )
@@ -482,9 +624,14 @@ def main() -> int:
 
         state = _load_state(STATE_PATH)
 
+        resolved_mpremote_args = _resolve_mpremote_args(
+            options.mpremote_arg,
+            dry_run=options.dry_run,
+        )
+
         _ensure_device_dirs(
             options.app_dir,
-            mpremote_args=options.mpremote_arg,
+            mpremote_args=resolved_mpremote_args,
             dry_run=options.dry_run,
         )
         compiled, compile_skipped = _compile_changed_modules(
@@ -497,14 +644,14 @@ def main() -> int:
             if options.dry_run
             else _get_device_files(
                 app_dir=options.app_dir,
-                mpremote_args=options.mpremote_arg,
+                mpremote_args=resolved_mpremote_args,
             )
         )
         uploaded, upload_skipped, artifact_bytes = _upload_changed_artifacts(
             state,
             force=options.force_upload,
             dry_run=options.dry_run,
-            mpremote_args=options.mpremote_arg,
+            mpremote_args=resolved_mpremote_args,
             app_dir=options.app_dir,
             device_files=device_files,
         )
@@ -512,7 +659,7 @@ def main() -> int:
             state,
             force=options.force_upload,
             dry_run=options.dry_run,
-            mpremote_args=options.mpremote_arg,
+            mpremote_args=resolved_mpremote_args,
             app_dir=options.app_dir,
             device_files=device_files,
         )

@@ -10,6 +10,7 @@ max-line-length = 200
 # errors when linting on developer machines.
 ignored-modules = [
     "machine",
+    "micropython",
     "ota",
     "vfs",
     "system",

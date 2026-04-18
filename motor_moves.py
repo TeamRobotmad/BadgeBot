@@ -103,12 +103,13 @@ class Instruction:
 
     def directional_duration(self, mysettings) -> int:
         if self._press_type == BUTTON_TYPES["UP"] or self._press_type == BUTTON_TYPES["DOWN"]:
-            return (mysettings['drive_step_ms'].v)
+            return (mysettings['drive_step_ms'].v if 'drive_step_ms' in mysettings else _DEFAULT_USER_DRIVE_MS)
         elif self._press_type == BUTTON_TYPES["LEFT"] or self._press_type == BUTTON_TYPES["RIGHT"]:
-            return (mysettings['turn_step_ms'].v)
+            return (mysettings['turn_step_ms'].v if 'turn_step_ms' in mysettings else _DEFAULT_USER_TURN_MS)
 
 
     def make_power_plan(self, mysettings):
+        """Convert the instruction's duration and direction into a power plan, which is a list of (power_tuple, duration) pairs."""
         curr_power = 0
         ramp_up = []
         max_ramp_up_ticks = ((self.directional_duration(mysettings) * self._duration) // (2 * _TICK_MS)) - 1
@@ -117,11 +118,11 @@ class Instruction:
             if curr_power >= mysettings['max_power'].v:
                 curr_power = mysettings['max_power'].v
                 break
-            else:    
+            else:
                 ramp_up.append((self.directional_power_tuple(curr_power), _TICK_MS))
         power_durations = ramp_up.copy()
         # period of constant power after ramp-up, before ramp-down
-        user_power_duration = (self.directional_duration(mysettings) * self._duration) - (2 * i * _TICK_MS)
+        user_power_duration = (self.directional_duration(mysettings) * self._duration) - (2 * len(ramp_up) * _TICK_MS)
         if user_power_duration > 0:
             power_durations.append((self.directional_power_tuple(curr_power), user_power_duration))
         ramp_down = ramp_up.copy()
@@ -225,9 +226,9 @@ class MotorMovesMgr:
         else:
             # Fallback: old power-plan iterator
             self.power_plan_iter = chain(*(instr.power_plan for instr in self.instructions))
-            if app.hexdrive_app is not None:
-                if app.hexdrive_app.initialise() and app.hexdrive_app.set_power(True) and app.hexdrive_app.set_freq(MOTOR_PWM_FREQ):
-                    app.hexdrive_app.set_logging(False)
+            if len(app.hexdrive_apps) > 0:
+                if app.hexdrive_apps[0].initialise() and app.hexdrive_apps[0].set_power(True) and app.hexdrive_apps[0].set_freq(MOTOR_PWM_FREQ):
+                    app.hexdrive_apps[0].set_logging(False)
                 else:
                     if self.logging:
                         print("H:Failed to initialise HexDrive for motor moves")
@@ -294,6 +295,7 @@ class MotorMovesMgr:
         #else:
         # Legacy power-plan path
         if self._sub_state == _SUB_RUN:
+            print("Running motor moves with power plan iterator")
             output = self._get_current_power_level(delta)
         else:
             output = None
@@ -318,9 +320,11 @@ class MotorMovesMgr:
         elif app.button_states.get(BUTTON_TYPES["DOWN"]):
             # reset the instructions list on DOWN press in the help screen, for convenience
             app.button_states.clear()
-            self.instructions = []
-            # Notification that list cleared
-            app.notification = Notification("Instructions Cleared")
+            if 0 < len(self.instructions) or self.current_instruction is not None:
+                self.instructions = []
+                self.current_instruction = None
+                # Notification that list cleared
+                app.notification = Notification("Instructions Cleared")
         else:
             app.animation_counter += delta
             if app.animation_counter > 10000:
@@ -339,6 +343,13 @@ class MotorMovesMgr:
                     app.animation_counter = 0
                     self._sub_state = _SUB_HELP
                 else:
+                    # if there are No instructions then warn the user and return to help, otherwise start the countdown to run the instructions
+                    if len(self.instructions) == 0 and self.current_instruction is None:
+                        app.notification = Notification("No instructions entered")
+                        app.scroll_mode_enable(False)                
+                        app.animation_counter = 0
+                        self._sub_state = _SUB_HELP
+                        return
                     self.finalize_instruction()
                     app.countdown_next_state = STATE_MOTOR_MOVES
                     app.run_countdown_elapsed_ms = 0
@@ -381,6 +392,7 @@ class MotorMovesMgr:
         app = self._app
         app.clear_leds()
         # Run is primarily managed in the background update - but we allow CANCEL here as well to stop immediately
+        app.refresh = True # TODO not every cycle, just when we need to update the screen (e.g. for power level display)
         if app.button_states.get(BUTTON_TYPES["CANCEL"]):
             app.button_states.clear()
             self.reset_robot()
@@ -443,8 +455,8 @@ class MotorMovesMgr:
         self.current_power_duration = ((0, 0), 0)
         if self.logging:
             print("Robot reset")
-        if app.hexdrive_app is not None:
-            app.hexdrive_app.set_power(False)        
+        if len(app.hexdrive_apps) > 0:
+            app.hexdrive_apps[0].set_power(False)        
 
 
     def reset_instructions(self):
@@ -455,10 +467,10 @@ class MotorMovesMgr:
         if self.logging:
             print("Instructions reset")
         # Initialise a simple power_plan for use in testing - 10 steps forward then 10 steps reverse, all repated 10 times:
-        for _ in range(50):
-            for _ in range(40):
+        for _ in range(10):
+            for _ in range(10):
                 self._handle_instruction_press(BUTTON_TYPES["UP"])
-            for _ in range(40):
+            for _ in range(10):
                 self._handle_instruction_press(BUTTON_TYPES["DOWN"])
 
 
