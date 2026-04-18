@@ -14,7 +14,18 @@ from events.input import BUTTON_TYPES
 from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
 from system.hexpansion.config import HexpansionConfig, ePin
-from machine import Pin, mem32, disable_irq, enable_irq
+try:
+    from machine import Pin, mem32, disable_irq, enable_irq
+except ImportError:
+    from machine import Pin
+
+    mem32 = {}  # type: ignore[assignment]
+
+    def disable_irq():
+        return 0
+
+    def enable_irq(_state):
+        return None
 from micropython import const
 from .app import DEFAULT_BACKGROUND_UPDATE_PERIOD, MOTOR_PWM_FREQ
 
