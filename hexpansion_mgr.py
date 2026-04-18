@@ -330,15 +330,16 @@ class HexpansionMgr:
                 print(f"H:HexpansionMgr State: {self._prev_state} -> {self._sub_state}")
             self._prev_state = self._sub_state
 
-        if self._sub_state == _SUB_DONE:         
+        if self._sub_state == _SUB_DONE:
+            print(f"H:Hexpansion initialisation/upgrade complete")
             if app.hexpansion_update_required:
                 app.hexpansion_update_required = False
             if self._initialisation_phase:
                 self._initialisation_phase = False
                 app.initialise_settings()
-                if len(app.hexdrive_apps) > 0:
-                    # If we have a HexDrive and its app is running, we can proceed straight to the main menu
-                    app.return_to_menu()
+            if len(app.hexdrive_apps) > 0:
+                # If we have a HexDrive and its app is running, we can proceed straight to the main menu
+                app.return_to_menu()
             self._sub_state = _SUB_CHECK
         return True
 
@@ -444,7 +445,7 @@ class HexpansionMgr:
                 print("H:Erase Cancelled")
             app.button_states.clear()
             self._erase_port = None
-            self._sub_state = _SUB_CHECK if not self._interactive_mode else _SUB_PORT_SELECT
+            self._sub_state = _SUB_PORT_SELECT if self._interactive_mode else _SUB_CHECK
 
 
     def _update_state_erase(self, delta):       # pylint: disable=unused-argument
@@ -472,7 +473,7 @@ class HexpansionMgr:
         else:
             app.notification = Notification("Failed", port=self._erase_port)
             app.show_message(["EEPROM", "erasure", "failed", "Protected?"], [(1,0,0),(1,0,0),(1,0,0),(1,0,0)], "warning")
-            self._sub_state = _SUB_CHECK if not self._interactive_mode else _SUB_PORT_SELECT
+            self._sub_state = _SUB_PORT_SELECT if self._interactive_mode else _SUB_CHECK
         self._reboop_required = True
         
         if self._erase_port is not None and self._erase_port in app.hexdrive_ports:
@@ -547,6 +548,8 @@ class HexpansionMgr:
         print(f"hexgps_port:{app.hexgps_port}")
         print(f"hexdiag_port:{app.hexdiag_port}")
         print(f"hexdrive_ports:{app.hexdrive_ports}")
+        print(f"hexpansion_update_required = {app.hexpansion_update_required}")
+
 
 
     def _check_hexpansion(self, port: int | None, type_index: int) -> tuple[int | None, object | None]:
@@ -692,9 +695,10 @@ class HexpansionMgr:
             self._enter_port_select()
         elif self._reboop_required:
             app.show_message(["Please", "reboop"], [(1,1,1),(1,1,1)], "reboop")
-        elif self._initialisation_phase:
-            if len(app.hexdrive_apps) == 0:
-                app.show_message(_HEXDRIVE_REQUIRED_MESSAGE, _HEXDRIVE_REQUIRED_MESSAGE_COLOURS, "warning")
+        else:
+            if self._initialisation_phase:
+                if len(app.hexdrive_apps) == 0:
+                    app.show_message(_HEXDRIVE_REQUIRED_MESSAGE, _HEXDRIVE_REQUIRED_MESSAGE_COLOURS, "warning")
             self._sub_state = _SUB_DONE
 
  
