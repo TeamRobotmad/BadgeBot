@@ -30,7 +30,12 @@ except ImportError:
     def enable_irq(_state):
         # No-op in simulator fallback.
         return None
-from micropython import const
+try:
+    from micropython import const
+except ImportError:
+    # CPython / simulator fallback – const() is just an identity function
+    # on MicroPython; replicate that so module-level const() calls work.
+    const = lambda x: x
 from .app import DEFAULT_BACKGROUND_UPDATE_PERIOD, MOTOR_PWM_FREQ
 
 
@@ -168,15 +173,21 @@ class SensorTestMgr:
     def hextest_setup(self, port: int | None):
         """Use HS pins on a spare Hexpansion to make rotation rate measurements."""
         if self._test_support_hexpansion_config is not None and port != self._test_support_hexpansion_config.port:
-            for i in range(4):
-                self._test_support_hexpansion_config.pin[i].init(mode=Pin.IN)
+            try:
+                for i in range(4):
+                    self._test_support_hexpansion_config.pin[i].init(mode=Pin.IN)
+            except AttributeError:
+                pass  # Simulator Pin stubs lack .init()
             self._test_support_hexpansion_config = None        
         if port is not None and self._test_support_hexpansion_config is None:
             self._test_support_hexpansion_config = HexpansionConfig(port)
-            for pin_num in _ROTATION_RATE_EMITTER_PINS:
-                self._test_support_hexpansion_config.ls_pin[pin_num].init(mode=Pin.OUT)   # Set LS pins to output mode to drive the IR emitters (only enabled when on)
-            for pin_num in _ROTATION_RATE_SENSOR_PINS:
-                self._test_support_hexpansion_config.pin[pin_num].init(mode=Pin.IN)       # Set HS pins to input mode to read the phototransistors for rotation rate measurement
+            try:
+                for pin_num in _ROTATION_RATE_EMITTER_PINS:
+                    self._test_support_hexpansion_config.ls_pin[pin_num].init(mode=Pin.OUT)   # Set LS pins to output mode to drive the IR emitters (only enabled when on)
+                for pin_num in _ROTATION_RATE_SENSOR_PINS:
+                    self._test_support_hexpansion_config.pin[pin_num].init(mode=Pin.IN)       # Set HS pins to input mode to read the phototransistors for rotation rate measurement
+            except AttributeError:
+                pass  # Simulator Pin stubs lack .init()
     
 
     # ------------------------------------------------------------------
