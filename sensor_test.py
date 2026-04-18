@@ -19,12 +19,16 @@ try:
 except ImportError:
     from machine import Pin
 
-    mem32 = {}  # type: ignore[assignment]
+    # Simulator fallback: keep imports working even when direct register access
+    # and IRQ controls are not exposed by the simulated machine module.
+    mem32 = None
 
     def disable_irq():
+        # No-op in simulator fallback.
         return 0
 
     def enable_irq(_state):
+        # No-op in simulator fallback.
         return None
 from micropython import const
 from .app import DEFAULT_BACKGROUND_UPDATE_PERIOD, MOTOR_PWM_FREQ
