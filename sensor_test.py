@@ -117,7 +117,7 @@ class SensorTestMgr:
 
         self._rotation_rate_emitter_duty: int = _DEFAULT_ROTATION_RATE_EMITTER_DUTY # duty cycle for the IR emitter when doing rate testing, 0-255 (0=off, 255=full on)
         self._rotation_rate_sensor_pin: int | None = None           # pin used to read the photodiode for rate testing
-        self._rotation_rate_counters: list[Counter | None] = []     # hardware counter used to count photodiode pulses for rate testing
+        self._rotation_rate_counters = []                           # hardware counter used to count photodiode pulses for rate testing
         self._rotation_rate_rpms: list[int | None] = []             # current value of the hardware counters (for diagnostics, should increase as the photodiode detects pulses when the emitter is on)
         self._rotation_rate_measurement_period_elapsed: int = 0     # ticks since last rate check, used to compute pulse rate in Hz based on the change in the counter value
         self._rotation_rate_motor_power: int = 0                    # Power applied to motors in TEST mode
