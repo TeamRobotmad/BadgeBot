@@ -606,7 +606,12 @@ class SensorTestMgr:
             app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["CONFIRM"]):
             app.button_states.clear()
-            if self._port_selected == self._test_support_hexpansion_config.port and self._start_motor_test_mode():
+            motor_test_port = (
+                self._test_support_hexpansion_config.port
+                if self._test_support_hexpansion_config is not None
+                else _ROTATION_RATE_PORT
+            )
+            if self._port_selected == motor_test_port and self._start_motor_test_mode():
                 app.notification = Notification("Motor Test", port=self._port_selected)
                 if self.logging:
                     print(f"S:Entering Motor Test mode on port {self._port_selected}")
