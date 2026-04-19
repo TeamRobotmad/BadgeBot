@@ -1,4 +1,4 @@
-# Sensor Test Module for BadgeBot
+"""Sensor Test Module for BadgeBot"""
 #
 # Manages the I2C sensor test feature.  Handles port selection, sensor
 # scanning, live reading display, and sensor switching.
@@ -13,7 +13,8 @@
 from events.input import BUTTON_TYPES
 from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
-from system.hexpansion.config import HexpansionConfig, ePin
+from system.hexpansion.config import HexpansionConfig
+
 try:
     from machine import Pin, mem32, disable_irq, enable_irq
 except ImportError:
@@ -44,8 +45,10 @@ _ROTATION_RATE_MEASUREMENT_PERIOD_MS = 2500     # how often to update the displa
 _DEFAULT_ROTATION_RATE_EMITTER_DUTY = 64        # default duty cycle for the IR emitter when doing rate testing, 0-255 (0=off, 255=full on)
 _DEFAULT_SPOKES_PER_ROTATION = 3                # number of times the photodiode will be triggered per full rotation of the wheel
 _MOTOR_TEST_BACKGROUND_UPDATE_PERIOD = 1000     # background update period in ms to use during motor test mode (tradeoff between display responsiveness and CPU load)
-_ROTATION_RATE_EMITTER_PINS = [2, 3]            # LS_C & LS_D pins used to drive the IR emitter for rotation rate testing
+_ROTATION_RATE_EMITTER_PINS = [2, 4]            # LS_C & LS_D pins used to drive the IR emitter for rotation rate testing
 _ROTATION_RATE_SENSOR_PINS = [0, 1]             # HS_F & HS_G pins used to read the phottransistors for rotation rate testing
+_ROTATION_RATE_SENSOR_ENABLE_PINS = [3]         # LS_D pins used to enable the phototransistors for rotation rate testing (set to output and high to enable, input to disable)
+
 # Temporary - while there is no EEPROM on the Test Hexpansion
 _ROTATION_RATE_PORT = 5                         # Hexpansion slot used for rotation rate measurement
 
@@ -121,13 +124,12 @@ class SensorTestMgr:
         self._colour: tuple = (1.0, 1.0, 0.0)  # default to yellow for non-colour sensors
 
         self._rotation_rate_emitter_duty: int = _DEFAULT_ROTATION_RATE_EMITTER_DUTY # duty cycle for the IR emitter when doing rate testing, 0-255 (0=off, 255=full on)
-        self._rotation_rate_sensor_pin: int | None = None           # pin used to read the photodiode for rate testing
         self._rotation_rate_counters = []                           # hardware counters used to count photodiode pulses for rate testing
         self._rotation_rate_rpms: list[int | None] = []             # computed RPM values derived from counter deltas
         self._rotation_rate_measurement_period_elapsed: int = 0     # ticks since last rate check, used to compute pulse rate in Hz based on the change in the counter value
         self._rotation_rate_motor_power: int = 0                    # Power applied to motors in TEST mode
         self._rotation_rate_spokes: int = _DEFAULT_SPOKES_PER_ROTATION
-        self._rotation_rate_rounding: int = ((_ROTATION_RATE_MEASUREMENT_PERIOD_MS * self._rotation_rate_spokes) // 2)
+        self._rotation_rate_rounding: int = (_ROTATION_RATE_MEASUREMENT_PERIOD_MS * self._rotation_rate_spokes) // 2
 
         # Auto scan state
         self._auto_mode: bool = False             # True = auto scanning, False = manual
@@ -152,7 +154,7 @@ class SensorTestMgr:
     def logging(self) -> bool:
         """Whether to print debug logs to the console."""
         return self._logging
-    
+
     @logging.setter
     def logging(self, value: bool):
         # Update logging setting in this manager and also in the SensorManager if it exists, so that sensor manager logs will be shown/hidden based on the current app setting
@@ -164,7 +166,7 @@ class SensorTestMgr:
     def sample_count(self) -> int:
         """Number of sensor samples read since starting the current test."""
         return self._sample_count
-    
+
     @sample_count.setter
     def sample_count(self, value: int):
         self._sample_count = value
@@ -176,19 +178,20 @@ class SensorTestMgr:
             try:
                 for i in range(4):
                     self._test_support_hexpansion_config.pin[i].init(mode=Pin.IN)
+                if self._sub_state == _SUB_MOTOR_TEST:
+                    if self._logging:
+                        print("Exiting Motor Test mode due to Hexpansion change")
+                    self._app.notification = Notification("Motor Test - aborted", port=self._test_support_hexpansion_config.port)
+                    self._stop_motor_test_mode()
             except AttributeError:
                 pass  # Simulator Pin stubs lack .init()
-            self._test_support_hexpansion_config = None        
+            self._test_support_hexpansion_config = None
         if port is not None and self._test_support_hexpansion_config is None:
+            if self._logging:
+                print(f"Setting up Hexpansion on port {port} for rotation rate measurement")
             self._test_support_hexpansion_config = HexpansionConfig(port)
-            try:
-                for pin_num in _ROTATION_RATE_EMITTER_PINS:
-                    self._test_support_hexpansion_config.ls_pin[pin_num].init(mode=Pin.OUT)   # Set LS pins to output mode to drive the IR emitters (only enabled when on)
-                for pin_num in _ROTATION_RATE_SENSOR_PINS:
-                    self._test_support_hexpansion_config.pin[pin_num].init(mode=Pin.IN)       # Set HS pins to input mode to read the phototransistors for rotation rate measurement
-            except AttributeError:
-                pass  # Simulator Pin stubs lack .init()
-    
+            self._rotation_rate_enable(False)  # start with rotation rate emitter and sensors off until we enter motor test mode
+
 
     # ------------------------------------------------------------------
     # Entry point from menu
@@ -236,6 +239,7 @@ class SensorTestMgr:
         else:
             self._sensor_mgr.close()
 
+
     def open_sensor_port(self, port: int) -> bool:
         """Open a sensor port.  Returns True if sensors found.
         Can be called by other modules (e.g. AutoDriveMgr) that
@@ -264,7 +268,7 @@ class SensorTestMgr:
     def colour(self) -> tuple:
         """Currently detected colour as an (r, g, b) tuple with values in the 0.0-1.0 range."""
         return self._colour
-    
+
     @colour.setter
     def colour(self, value: tuple):
         self._colour = value
@@ -272,6 +276,7 @@ class SensorTestMgr:
 
     @property
     def rotation_rate_emitter_duty(self) -> int:
+        """Duty cycle (0-255) for the IR emitter when doing rotation rate testing."""
         return self._rotation_rate_emitter_duty
 
     @rotation_rate_emitter_duty.setter
@@ -304,7 +309,7 @@ class SensorTestMgr:
         for region in COLOR_REGIONS:
             x_min, x_max = region["x"]
             y_min, y_max = region["y"]
-            
+
             if x_min <= x <= x_max and y_min <= y <= y_max:
                 return region["name"]
 
@@ -382,6 +387,7 @@ class SensorTestMgr:
     # ------------------------------------------------------------------
 
     def background_update(self, delta) -> tuple[int, int] | None:  # pylint: disable=unused-argument
+        """Perform background updates based on the current sub-state."""
         if self._sub_state == _SUB_READING:
             #self._read_timer += delta
             #if self._read_timer >= self._sensor_mgr.read_interval:
@@ -398,7 +404,7 @@ class SensorTestMgr:
             self._count_timer += delta
             if self._count_timer >= 1000:
                 # compute sample rate every second based on the number of samples read and the elapsed time
-                self._sample_rate = (((1000 * self.sample_count) + 500) // self._count_timer) # sample rate in Hz
+                self._sample_rate = ((1000 * self.sample_count) + 500) // self._count_timer # sample rate in Hz
                 self._count_timer = 0
                 self.sample_count = 0
                 self._new_sample = True
@@ -421,7 +427,7 @@ class SensorTestMgr:
                 else:
                     if self._auto_timer >= _AUTO_SCAN_MEASURE_MS:
                         # Measure phase done — read counter and record result
-                        rounding = ((_AUTO_SCAN_MEASURE_MS * self._rotation_rate_spokes) // 2)
+                        rounding = (_AUTO_SCAN_MEASURE_MS * self._rotation_rate_spokes) // 2
                         rate = [0] * len(self._rotation_rate_counters)
                         for index, counter in enumerate(self._rotation_rate_counters):
                             if counter is not None:
@@ -462,35 +468,44 @@ class SensorTestMgr:
             self._update_select_port(delta)
         elif self._sub_state == _SUB_READING:
             self._update_reading(delta)
-        elif self._sub_state == _SUB_MOTOR_TEST and self._test_support_hexpansion_config is not None:
+        elif self._sub_state == _SUB_MOTOR_TEST:
             self._update_motor_test_mode(delta)
 
 
-    def _update_motor_test_mode(self, delta: int):   # pylint: disable=unused-argument
-        app = self._app
+    def _rotation_rate_enable(self, enable: bool = True):
+        if self._test_support_hexpansion_config is None:
+            return
+        try:
+            if enable:
+                for pin_num in _ROTATION_RATE_EMITTER_PINS:
+                    self._test_support_hexpansion_config.ls_pin[pin_num].init(mode=Pin.OUT)  # Set LS pins to output mode to turn on the IR emitters
+                    self._test_support_hexpansion_config.ls_pin[pin_num].duty(self._rotation_rate_emitter_duty)  # Set LS pins to the current duty cycle to drive the IR emitters for rotation rate measurement)
+                for pin_num in _ROTATION_RATE_SENSOR_ENABLE_PINS:
+                    self._test_support_hexpansion_config.ls_pin[pin_num].init(mode=Pin.OUT)  # Set LS pins to output mode to enable the phototransistors for rotation rate measurement
+                    self._test_support_hexpansion_config.ls_pin[pin_num].value(1)  # Set LS enable pins high to turn on the phototransistors for rotation rate measurement
+            else:
+                for pin_num in _ROTATION_RATE_EMITTER_PINS:
+                    self._test_support_hexpansion_config.ls_pin[pin_num].init(mode=Pin.IN)  # Set LS pins to input mode to turn off the IR emitters
+                for pin_num in _ROTATION_RATE_SENSOR_ENABLE_PINS:
+                    self._test_support_hexpansion_config.ls_pin[pin_num].init(mode=Pin.IN)  # Set LS pins to input mode to turn off the phototransistors for rotation rate measurement
 
+            for pin_num in _ROTATION_RATE_SENSOR_PINS:
+                self._test_support_hexpansion_config.pin[pin_num].init(mode=Pin.IN)  # Set HS pins to input mode to read the phototransistors for rotation rate measurement
+        except AttributeError:
+            pass  # Simulator Pin stubs lack .init()
+
+
+    def _update_motor_test_mode(self, delta: int):  # pylint: disable=unused-argument
+        app = self._app
+        if self._test_support_hexpansion_config is None:
+            self._sub_state = _SUB_SELECT_PORT
+            return
         # CANCEL always exits motor test mode
         if app.button_states.get(BUTTON_TYPES["CANCEL"]):
             app.button_states.clear()
             if self.logging:
                 print("Exiting Test mode")
-            self._auto_mode = False
-            self._auto_done = False
-            
-            if len(app.hexdrive_apps) > 0:
-                app.hexdrive_apps[0].set_power(False)
-            
-            for c in self._rotation_rate_counters:
-                if c is not None:
-                    c.deinit()
-            self._rotation_rate_counters = []
-
-            app.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
-            for pin_num in _ROTATION_RATE_EMITTER_PINS:
-                self._test_support_hexpansion_config.ls_pin[pin_num].init(mode=Pin.IN)   # Set LS pins to input mode to turn off the IR emitters
-            self._rotation_rate_motor_power = 0
-            self._sub_state = _SUB_SELECT_PORT
-            app.refresh = True
+            self._stop_motor_test_mode()
             return
 
         # CONFIRM toggles between manual and auto mode
@@ -570,10 +585,15 @@ class SensorTestMgr:
             app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["CONFIRM"]):
             app.button_states.clear()
-            if self._port_selected == _ROTATION_RATE_PORT and self._start_motor_test_mode():
+            motor_test_port = (
+                self._test_support_hexpansion_config.port
+                if self._test_support_hexpansion_config is not None
+                else _ROTATION_RATE_PORT
+            )
+            if self._port_selected == motor_test_port and self._start_motor_test_mode():
                 app.notification = Notification("Motor Test", port=self._port_selected)
                 if self.logging:
-                    print(f"S:Entering Motor Test mode on port {self._port_selected}")                              
+                    print(f"S:Entering Motor Test mode on port {self._port_selected}")
                 self._sub_state = _SUB_MOTOR_TEST
                 app.refresh = True
             else:
@@ -599,9 +619,7 @@ class SensorTestMgr:
                 print("Exiting Sensor Test")
             if self._sensor_mgr is not None:
                 self._sensor_mgr.close()
-                if self._test_support_hexpansion_config is not None:
-                    for pin_num in _ROTATION_RATE_EMITTER_PINS:
-                        self._test_support_hexpansion_config.ls_pin[pin_num].init(mode=Pin.IN)   # Set LS pins to input mode to turn off the IR emitters
+                self._rotation_rate_enable(False)
             app.return_to_menu()
 
 
@@ -670,7 +688,7 @@ class SensorTestMgr:
                     r = g = b = 0
             else:
                 r = g = b = 0
-                
+
             # if the sensor is a colour sensor: create colour which can be used with ctx to show the detected colour
             max_channel = max(r, g, b)
             if max_channel > 0:
@@ -701,7 +719,7 @@ class SensorTestMgr:
 
         if self._page_selected == _PAGE_STATS:
             if self._sample_rate > 0:
-                self._display_data["rate"] = f"{self._sample_rate}Hz"    
+                self._display_data["rate"] = f"{self._sample_rate}Hz"
 
 
     def _update_reading(self, delta: int):      # pylint: disable=unused-argument
@@ -729,14 +747,14 @@ class SensorTestMgr:
             app.button_states.clear()
             if self._page_count > 0:
                 self._page_selected = (self._page_selected - 1) % self._page_count
-                self._update_display_values()               
+                self._update_display_values()
             app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["DOWN"]):
             app.button_states.clear()
             if self._page_count > 0:
                 self._page_selected = (self._page_selected + 1) % self._page_count
                 self._update_display_values()
-            app.refresh = True            
+            app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["CANCEL"]):
             app.button_states.clear()
             self._sensor_mgr.close()
@@ -752,20 +770,14 @@ class SensorTestMgr:
             app.hexdrive_apps[0].set_logging(True)
             if app.hexdrive_apps[0].initialise() and app.hexdrive_apps[0].set_power(True) and app.hexdrive_apps[0].set_freq(MOTOR_PWM_FREQ):
                 # Enable the IR emitter for measuring wheel rotation rate
-                if self.logging:
-                    print("S:IR Emitter On")
-                for pin_num in _ROTATION_RATE_EMITTER_PINS:    
-                    self._test_support_hexpansion_config.ls_pin[pin_num].init(mode=ePin.PWM)     # Set the IR Emitter pin to PWM mode so we can control the brightness
-                    self._test_support_hexpansion_config.ls_pin[pin_num].duty(self._rotation_rate_emitter_duty)  # Set the IR Emitter to the configured duty cycle
+                self._rotation_rate_enable(True)
 
                 # Enable the phototransistor input for measuring wheel rotation rate
                 for pin_num in _ROTATION_RATE_SENSOR_PINS:
-                    self._rotation_rate_sensor_pin = self._test_support_hexpansion_config.pin[pin_num]           # HS_F
-                    self._rotation_rate_sensor_pin.init(mode=Pin.IN)
-                    # configure the ESP32S3 hardware to count pulses on the HS_F pin and make the count available as a regular GPIO input that we can read in software.  This allows us to do high-speed counting of photodiode pulses without needing to do it in software with interrupts or tight loops, which would be unreliable due to the cooperative multitasking nature of the app.
+                    # configure the ESP32S3 hardware to count pulses on the HS_F pin
                     # Counter not yet available in this Micropython port so we have created our own...
-                    gpio_num = _HS_PIN_TO_GPIO[_ROTATION_RATE_PORT][pin_num]
-                    counter = Counter(None, gpio_num, filter_ns=1000000, logging=self.logging)     # auto-select PCNT unit
+                    gpio_num = _HS_PIN_TO_GPIO[self._test_support_hexpansion_config.port][pin_num]
+                    counter = Counter(None, gpio_num, filter_ns=1000000, logging=self.logging)  # auto-select PCNT unit
                     if counter is not None and counter.unit is not None:
                         self._rotation_rate_counters.append(counter)
                     else:
@@ -776,7 +788,7 @@ class SensorTestMgr:
                         for c in self._rotation_rate_counters:
                             if c is not None:
                                 c.deinit()
-                        self._rotation_rate_counters = []  
+                        self._rotation_rate_counters = []
                         return False
                 if self.logging:
                     print(f"S:Rate counter {self._rotation_rate_counters}")
@@ -785,9 +797,30 @@ class SensorTestMgr:
                 app.update_period = _MOTOR_TEST_BACKGROUND_UPDATE_PERIOD  # update every 1000ms to give a responsive display without overwhelming the CPU with updates
                 return True
         if self.logging:
-            print("H:Failed to initialise HexDrive for motor moves")
+            print("H:Failed to initialise HexDrive for motor test mode")
         app.notification = Notification("HexDrive Init Failed")
         return False
+
+
+    def _stop_motor_test_mode(self):
+        app = self._app
+        self._auto_mode = False
+        self._auto_done = False
+        self._rotation_rate_motor_power = 0
+
+        if len(app.hexdrive_apps) > 0:
+            app.hexdrive_apps[0].set_pwm((0, 0, 0, 0))
+            app.hexdrive_apps[0].set_power(False)
+
+        for c in self._rotation_rate_counters:
+            if c is not None:
+                c.deinit()
+        self._rotation_rate_counters = []
+
+        app.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
+        self._rotation_rate_enable(False)
+        self._sub_state = _SUB_SELECT_PORT
+        app.refresh = True
 
 
     # ------------------------------------------------------------------
@@ -806,9 +839,11 @@ class SensorTestMgr:
             self._draw_motor_test_mode(ctx)
             return True
         return False
-    
+
 
     def _draw_motor_test_mode(self, ctx):
+        if self._test_support_hexpansion_config is None:
+            return
         if self._auto_mode:
             self._draw_auto_scan(ctx)
             return
@@ -889,7 +924,7 @@ class SensorTestMgr:
             label_font_size)
         button_labels(ctx, left_label="<Port", right_label="Port>",
                       confirm_label="Scan", cancel_label="Back")
-        
+
 
     def _draw_reading(self, ctx):
         up_label = down_label = ""
@@ -902,7 +937,7 @@ class SensorTestMgr:
         colours = [(1, 1, 0)]
         if self._page_count == 0:
             lines += [sensor_name]
-        else:            
+        else:
             lines += [f"{sensor_name}-{_PAGE_NAMES[self._page_selected]}"]
         colours += [(1, 0, 1)]
         if self._display_data:
@@ -1014,7 +1049,7 @@ class Counter:
     logging : bool
         Print diagnostic messages to the console.
 
-    CURRENTLY ONLY COUNTS UP ON RISING EDGES    
+    CURRENTLY ONLY COUNTS UP ON RISING EDGES
     """
 
     def __init__(self, unit: int | None, src: int, filter_ns: int = 0, logging: bool = False):
@@ -1083,7 +1118,7 @@ class Counter:
         # Check CONF0 register
         conf0_addr = _PCNT_BASE + unit * 0x0C
         conf0 = mem32[conf0_addr]
-        if conf0 == 0x3C10: # a slightly odd reset state 
+        if conf0 == 0x3C10: # a slightly odd reset state
             if self.logging:
                 print(f"PCNT: unit {unit} - CONF0=0x3C10 (unconfigured), unit free")
             return False
@@ -1188,7 +1223,7 @@ class Counter:
             enable_irq(irq_state)
         else:
             count = mem32[cnt_addr] & 0xFFFF
-        return count    
+        return count
 
 
 
