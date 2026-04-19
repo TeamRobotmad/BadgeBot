@@ -65,7 +65,9 @@ MODULES: tuple[ModuleSpec, ...] = (
 STATIC_FILES: tuple[Path, ...] = (
     Path("metadata.json"),
     Path("tildagon.toml"),
+    Path("gps.mpy"),         # L80K GPS App
     #Path("caffeine.mpy"),   # Club Mate hexpansion app
+
 )
 
 
