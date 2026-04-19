@@ -182,12 +182,7 @@ class SensorTestMgr:
                     if self._logging:
                         print("Exiting Motor Test mode due to Hexpansion change")
                     self._app.notification = Notification("Motor Test - aborted", port=self._test_support_hexpansion_config.port)
-                    # if any motor test resources in use tidy them up
-                    for c in self._rotation_rate_counters:
-                        if c is not None:
-                            c.deinit()
-                    self._rotation_rate_counters = []
-                    self._sub_state = _SUB_SELECT_PORT
+                    self._stop_motor_test_mode()
             except AttributeError:
                 pass  # Simulator Pin stubs lack .init()
             self._test_support_hexpansion_config = None
@@ -510,23 +505,7 @@ class SensorTestMgr:
             app.button_states.clear()
             if self.logging:
                 print("Exiting Test mode")
-            self._auto_mode = False
-            self._auto_done = False
-
-            if len(app.hexdrive_apps) > 0:
-                app.hexdrive_apps[0].set_power(False)
-
-            for c in self._rotation_rate_counters:
-                if c is not None:
-                    c.deinit()
-            self._rotation_rate_counters = []
-
-            app.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
-            self._rotation_rate_enable(False)
-
-            self._rotation_rate_motor_power = 0
-            self._sub_state = _SUB_SELECT_PORT
-            app.refresh = True
+            self._stop_motor_test_mode()
             return
 
         # CONFIRM toggles between manual and auto mode
@@ -821,6 +800,27 @@ class SensorTestMgr:
             print("H:Failed to initialise HexDrive for motor test mode")
         app.notification = Notification("HexDrive Init Failed")
         return False
+
+
+    def _stop_motor_test_mode(self):
+        app = self._app
+        self._auto_mode = False
+        self._auto_done = False
+        self._rotation_rate_motor_power = 0
+
+        if len(app.hexdrive_apps) > 0:
+            app.hexdrive_apps[0].set_pwm((0, 0, 0, 0))
+            app.hexdrive_apps[0].set_power(False)
+
+        for c in self._rotation_rate_counters:
+            if c is not None:
+                c.deinit()
+        self._rotation_rate_counters = []
+
+        app.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
+        self._rotation_rate_enable(False)
+        self._sub_state = _SUB_SELECT_PORT
+        app.refresh = True
 
 
     # ------------------------------------------------------------------
