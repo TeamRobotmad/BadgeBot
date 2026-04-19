@@ -124,7 +124,6 @@ class SensorTestMgr:
         self._colour: tuple = (1.0, 1.0, 0.0)  # default to yellow for non-colour sensors
 
         self._rotation_rate_emitter_duty: int = _DEFAULT_ROTATION_RATE_EMITTER_DUTY # duty cycle for the IR emitter when doing rate testing, 0-255 (0=off, 255=full on)
-        self._rotation_rate_sensor_pin: int | None = None           # pin used to read the photodiode for rate testing
         self._rotation_rate_counters = []                           # hardware counters used to count photodiode pulses for rate testing
         self._rotation_rate_rpms: list[int | None] = []             # computed RPM values derived from counter deltas
         self._rotation_rate_measurement_period_elapsed: int = 0     # ticks since last rate check, used to compute pulse rate in Hz based on the change in the counter value
@@ -179,14 +178,25 @@ class SensorTestMgr:
             try:
                 for i in range(4):
                     self._test_support_hexpansion_config.pin[i].init(mode=Pin.IN)
+                if self._sub_state == _SUB_MOTOR_TEST:
+                    if self._logging:
+                        print("Exiting Motor Test mode due to Hexpansion change")
+                    self._app.notification = Notification("Motor Test - aborted", port=self._test_support_hexpansion_config.port)
+                    # if any motor test resources in use tidy them up
+                    for c in self._rotation_rate_counters:
+                        if c is not None:
+                            c.deinit()
+                    self._rotation_rate_counters = []
+                    self._sub_state = _SUB_SELECT_PORT
             except AttributeError:
                 pass  # Simulator Pin stubs lack .init()
             self._test_support_hexpansion_config = None
         if port is not None and self._test_support_hexpansion_config is None:
+            if self._logging:
+                print(f"Setting up Hexpansion on port {port} for rotation rate measurement")
             self._test_support_hexpansion_config = HexpansionConfig(port)
-            self._rotation_rate_enable(
-                False
-            )  # start with rotation rate emitter and sensors off until we enter motor test mode
+            self._rotation_rate_enable(False)  # start with rotation rate emitter and sensors off until we enter motor test mode
+
 
     # ------------------------------------------------------------------
     # Entry point from menu
@@ -233,6 +243,7 @@ class SensorTestMgr:
             self._sensor_mgr = SensorManager(logging=self._logging)
         else:
             self._sensor_mgr.close()
+
 
     def open_sensor_port(self, port: int) -> bool:
         """Open a sensor port.  Returns True if sensors found.
@@ -462,8 +473,9 @@ class SensorTestMgr:
             self._update_select_port(delta)
         elif self._sub_state == _SUB_READING:
             self._update_reading(delta)
-        elif self._sub_state == _SUB_MOTOR_TEST and self._test_support_hexpansion_config is not None:
+        elif self._sub_state == _SUB_MOTOR_TEST:
             self._update_motor_test_mode(delta)
+
 
     def _rotation_rate_enable(self, enable: bool = True):
         if self._test_support_hexpansion_config is None:
@@ -487,9 +499,12 @@ class SensorTestMgr:
         except AttributeError:
             pass  # Simulator Pin stubs lack .init()
 
+
     def _update_motor_test_mode(self, delta: int):  # pylint: disable=unused-argument
         app = self._app
-
+        if self._test_support_hexpansion_config is None:
+            self._sub_state = _SUB_SELECT_PORT
+            return
         # CANCEL always exits motor test mode
         if app.button_states.get(BUTTON_TYPES["CANCEL"]):
             app.button_states.clear()
@@ -591,7 +606,7 @@ class SensorTestMgr:
             app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["CONFIRM"]):
             app.button_states.clear()
-            if self._port_selected == _ROTATION_RATE_PORT and self._start_motor_test_mode():
+            if self._port_selected == self._test_support_hexpansion_config.port and self._start_motor_test_mode():
                 app.notification = Notification("Motor Test", port=self._port_selected)
                 if self.logging:
                     print(f"S:Entering Motor Test mode on port {self._port_selected}")
@@ -775,7 +790,6 @@ class SensorTestMgr:
 
                 # Enable the phototransistor input for measuring wheel rotation rate
                 for pin_num in _ROTATION_RATE_SENSOR_PINS:
-                    _rotation_rate_sensor_pin = self._test_support_hexpansion_config.pin[pin_num]  # HS_?
                     # configure the ESP32S3 hardware to count pulses on the HS_F pin
                     # Counter not yet available in this Micropython port so we have created our own...
                     gpio_num = _HS_PIN_TO_GPIO[self._test_support_hexpansion_config.port][pin_num]
@@ -799,7 +813,7 @@ class SensorTestMgr:
                 app.update_period = _MOTOR_TEST_BACKGROUND_UPDATE_PERIOD  # update every 1000ms to give a responsive display without overwhelming the CPU with updates
                 return True
         if self.logging:
-            print("H:Failed to initialise HexDrive for motor moves")
+            print("H:Failed to initialise HexDrive for motor test mode")
         app.notification = Notification("HexDrive Init Failed")
         return False
 
@@ -823,6 +837,8 @@ class SensorTestMgr:
 
 
     def _draw_motor_test_mode(self, ctx):
+        if self._test_support_hexpansion_config is None:
+            return
         if self._auto_mode:
             self._draw_auto_scan(ctx)
             return
