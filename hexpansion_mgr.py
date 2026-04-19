@@ -293,6 +293,8 @@ class HexpansionMgr:
         except (OSError, RuntimeError):
             self._port_selected_header = None
         self._update_detail_page_count()
+        # remember the unique ID so that we can program it back if the EEPROM is re-initialised.
+        self._hexpansion_serial_number = self._port_selected_header.unique_id if self._port_selected_header is not None else None
         # Default to details page if available, otherwise vid/pid
         self._port_detail_page = self._PAGE_DETAILS if self._port_detail_page_count > 2 else self._PAGE_VID_PID
 
@@ -424,8 +426,9 @@ class HexpansionMgr:
                     self._message_being_shown = True
                     self._sub_state = _SUB_CHECK
                 else:
-                    upgrade_text = "Upgraded" if result == _APP_EEPROM_RESULT_SUCCESSFUL_UPGRADE else "Programmed"
-                    app.notification = Notification(upgrade_text, port=self._upgrade_port)
+                    #upgrade_text = "Upgraded" if result == _APP_EEPROM_RESULT_SUCCESSFUL_UPGRADE else "Programmed"
+                    #app.notification = Notification(upgrade_text, port=self._upgrade_port)
+                    # No point showing "Programmed" vs "Upgraded" as the Hexpansion Insertion Notification will cover it up
                     eventbus.emit(HexpansionInsertionEvent(self._upgrade_port))
                     #app.show_message([f"{upgrade_text}:", "Please", "reboop"], [(0,1,0),(1,1,1),(1,1,1)], "reboop")
                     #self._reboop_required = True
@@ -434,9 +437,10 @@ class HexpansionMgr:
         elif self._detected_port is not None:
             # There is a hexpansion ready for EEPROM initialisation
             if self._prepare_eeprom(self._detected_port):
-                app.notification = Notification("Initialised", port=self._detected_port)
                 self._hexpansion_type_by_slot[self._detected_port - 1] = self._hexpansion_init_type
                 if app.HEXPANSION_TYPES[self._hexpansion_init_type].app_mpy_name is not None:
+                    app.notification = Notification("Initialised", port=self._detected_port)
+                    # Only worth showing "Initialised" Notification is we are NOT going to trigger Hexpansion Insertion Notification
                     self._upgrade_port = self._detected_port
                     self._sub_state = _SUB_PROGRAMMING
                     self._hexpansion_state_by_slot[self._detected_port - 1] = _HEXPANSION_STATE_RECOGNISED
@@ -454,9 +458,9 @@ class HexpansionMgr:
                 self._message_being_shown = True
                 self._sub_state = _SUB_CHECK
             self._detected_port = None
-        elif self._logging:
+        else:
             print("H:Error - no port to program")
-            self._sub_state = _SUB_PORT_SELECT if self._mode == _MODE_INTERACTIVE else _SUB_CHECK
+            self._sub_state = _SUB_INIT if self._mode == _MODE_INIT else _SUB_CHECK
 
 
     def _update_state_detected(self, delta):        # pylint: disable=unused-argument
@@ -470,7 +474,7 @@ class HexpansionMgr:
             if self._logging:
                 print("H:Initialise Cancelled")
             self._detected_port = None
-            self._sub_state = _SUB_PORT_SELECT if self._mode == _MODE_INTERACTIVE else _SUB_CHECK
+            self._sub_state = _SUB_INIT if self._mode == _MODE_INIT else _SUB_CHECK
         elif app.button_states.get(BUTTON_TYPES["UP"]):
             app.button_states.clear()
             self._hexpansion_init_type = (self._hexpansion_init_type + 1) % app.UNRECOGNISED_HEXPANSION_INDEX
@@ -493,6 +497,7 @@ class HexpansionMgr:
 
     def _update_state_erase_confirm(self, delta):       # pylint: disable=unused-argument
         """ Allow User to confirm or cancel EEPROM erasure."""
+        # not used in _MODE_INIT
         app = self._app
         if app.button_states.get(BUTTON_TYPES["CONFIRM"]):
             if self._logging:
@@ -510,6 +515,7 @@ class HexpansionMgr:
     def _update_state_erase(self, delta):       # pylint: disable=unused-argument
         """ Perform EEPROM erasure, and update app state accordingly (e.g. if the erased hexpansion is currently in use or being initialised/upgraded, reset those states).
             Unresponsive to buttons during the erasure process."""
+        # not used in _MODE_INIT
         app = self._app
         if self._logging:
             print(f"H:Erasing EEPROM on port {self._erase_port}")        
@@ -523,7 +529,6 @@ class HexpansionMgr:
                               self._hexpansion_eeprom_addr_len[self._erase_port-1],
                               eeprom_total_size,
                               eeprom_page_size):
-            #eventbus.emit(HexpansionInsertionEvent(self._erase_port))
             app.notification = Notification("Erased", port=self._erase_port)
             self._hexpansion_type_by_slot[self._erase_port - 1] = app.BLANK_HEXPANSION_INDEX
             self._hexpansion_state_by_slot[self._erase_port - 1] = _HEXPANSION_STATE_BLANK
@@ -566,7 +571,7 @@ class HexpansionMgr:
             app.button_states.clear()
             self._hexpansion_state_by_slot[self._upgrade_port - 1] = _HEXPANSION_STATE_RECOGNISED_OLD_APP
             self._upgrade_port = None
-            self._sub_state = _SUB_PORT_SELECT if self._mode == _MODE_INTERACTIVE else _SUB_CHECK
+            self._sub_state = _SUB_PORT_SELECT if self._mode == _MODE_INTERACTIVE else (_SUB_INIT if self._mode == _MODE_INIT else _SUB_CHECK)
 
 
     def _get_hexpansion_by_type(self, hexpansion_type) -> int | None:
@@ -579,6 +584,8 @@ class HexpansionMgr:
 
     def _report_hexpansion_states(self):
         """ Utility function to print the current detected hexpansion types and states for each port, for debugging purposes."""
+        if not self._logging:
+            return
         app = self._app
         for port in range(0, _NUM_HEXPANSION_SLOTS):
             type_idx = self._hexpansion_type_by_slot[port]
@@ -868,8 +875,8 @@ class HexpansionMgr:
             if page == self._PAGE_VID_PID:
                 # VID / PID page
                 if hdr is not None:
-                    lines += [f"VID: {hdr.vid:04X}", f"PID: {hdr.pid:04X}"]
-                    colours += [(0, 1, 1), (0, 1, 1)]
+                    lines += [f"VID: {hdr.vid:04X}", f"PID: {hdr.pid:04X}", f"UID: {hdr.unique_id}"]
+                    colours += [(0, 1, 1), (0, 1, 1), (0, 1, 1)]
                 #else:
                 #    lines = header_lines + ["No header"]
                 #    colours = header_colours + [(1, 0, 0)]
