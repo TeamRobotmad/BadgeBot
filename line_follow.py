@@ -21,15 +21,7 @@ from math import pi
 from events.input import BUTTON_TYPES
 from app_components.notification import Notification
 from app_components.tokens import label_font_size, button_labels
-from machine import Pin
-try:
-    from machine import disable_irq, enable_irq
-except ImportError:
-    # Simulator doesn't provide interrupt control; use no-op stubs
-    def disable_irq():
-        return 0
-    def enable_irq(_state):
-        pass
+from machine import Pin, disable_irq, enable_irq
 from system.hexpansion.config import HexpansionConfig
 from .app import MOTOR_PWM_FREQ
 from .motor_moves import DEFAULT_MAX_POWER
@@ -335,17 +327,18 @@ class LineFollowMgr:
         """Enter line follower from the main menu."""
         app = self._app
 
-        if self.line_sensors is None:
-            self.line_sensors = create_line_sensors(app.hexsense_config, app.num_line_sensors)
+        if self.line_sensors is None and app.hexsense_port is not None:
+            config = HexpansionConfig(app.hexsense_port)
+            self.line_sensors = create_line_sensors(config, app.num_line_sensors)
 
         if self.line_sensors is None:
             # Line sensors are not available; inform the user and abort line follower.
             Notification(app, "Line sensors not available")
             return False
         else:
-            if app.hexdrive_app is not None:
-                app.hexdrive_app.set_logging(False)
-                if app.hexdrive_app.initialise() and app.hexdrive_app.set_power(True) and app.hexdrive_app.set_freq(MOTOR_PWM_FREQ):
+            if len(app.hexdrive_apps) > 0:
+                app.hexdrive_apps[0].set_logging(False)
+                if app.hexdrive_apps[0].initialise() and app.hexdrive_apps[0].set_power(True) and app.hexdrive_apps[0].set_freq(MOTOR_PWM_FREQ):
                     #self.line_sensors.enable()
                     #self.line_sensors.read()    # initiate first sensor reading
                     self.line_sensors.read_blocking()    # initiate first sensor reading
@@ -384,8 +377,8 @@ class LineFollowMgr:
         self.sample_time += delta
         if app.button_states.get(BUTTON_TYPES["CANCEL"]):
             app.button_states.clear()
-            if app.hexdrive_app is not None:
-                app.hexdrive_app.set_power(False)
+            if len(app.hexdrive_apps) > 0:
+                app.hexdrive_apps[0].set_power(False)
             self.line_sensors.disable()
             app.pid_integral = 0
             app.pid_previous_error = 0

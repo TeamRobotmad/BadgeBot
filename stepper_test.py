@@ -392,7 +392,7 @@ class StepperTestMgr:
             for i in range(4):
                 try:
                     self.stepper = Stepper(app,
-                                           app.hexdrive_app,
+                                           app.hexdrive_apps[0] if len(app.hexdrive_apps) > 0 else None,
                                            step_size=1,
                                            timer_id=i,
                                            max_pos=self.step_max_pos)
@@ -402,8 +402,8 @@ class StepperTestMgr:
         if self.stepper is None:
             app.notification = Notification("No Free Timers")
             return False
-        if app.hexdrive_app is not None:
-            if app.hexdrive_app.initialise() and app.hexdrive_app.set_power(True):   
+        if len(app.hexdrive_apps) > 0:
+            if app.hexdrive_apps[0].initialise() and app.hexdrive_apps[0].set_power(True):   
                 app.set_menu(None)
                 app.button_states.clear()
                 app.refresh = True

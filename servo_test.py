@@ -158,8 +158,8 @@ class ServoTestMgr:
                     self.servo_centre[self.servo_selected] += self.step
                     if self.servo_centre[self.servo_selected] > (_SERVO_DEFAULT_CENTRE + _SERVO_MAX_TRIM):
                         self.servo_centre[self.servo_selected] = _SERVO_DEFAULT_CENTRE + _SERVO_MAX_TRIM
-                    if app.hexdrive_app is not None:
-                        if not app.hexdrive_app.set_servocentre(self.servo_centre[self.servo_selected], self.servo_selected):
+                    if len(app.hexdrive_apps) > 0:
+                        if not app.hexdrive_apps[0].set_servocentre(self.servo_centre[self.servo_selected], self.servo_selected):
                             print("H:Failed to set servo centre")
                 elif self.servo_mode[self.servo_selected] == ServoMode.SCANNING:
                     if self.servo_rate[self.servo_selected] < 0:
@@ -190,8 +190,8 @@ class ServoTestMgr:
                     self.servo_centre[self.servo_selected] -= self.step
                     if self.servo_centre[self.servo_selected] < (_SERVO_DEFAULT_CENTRE - _SERVO_MAX_TRIM):
                         self.servo_centre[self.servo_selected] = _SERVO_DEFAULT_CENTRE - _SERVO_MAX_TRIM
-                    if app.hexdrive_app is not None:
-                        if not app.hexdrive_app.set_servocentre(self.servo_centre[self.servo_selected], self.servo_selected):
+                    if len(app.hexdrive_apps) > 0:
+                        if not app.hexdrive_apps[0].set_servocentre(self.servo_centre[self.servo_selected], self.servo_selected):
                             print("H:Failed to set servo centre")
                 elif self.servo_mode[self.servo_selected] == ServoMode.SCANNING:
                     if self.servo_rate[self.servo_selected] < 0:
@@ -228,17 +228,17 @@ class ServoTestMgr:
                 app.refresh = True
             elif app.button_states.get(BUTTON_TYPES["CANCEL"]):
                 app.button_states.clear()
-                if app.hexdrive_app is not None:
-                    app.hexdrive_app.set_power(False)
-                    app.hexdrive_app.set_servoposition()
+                if len(app.hexdrive_apps) > 0:
+                    app.hexdrive_apps[0].set_power(False)
+                    app.hexdrive_apps[0].set_servoposition()
                 app.return_to_menu()
                 return True
             elif app.button_states.get(BUTTON_TYPES["CONFIRM"]):
                 app.button_states.clear()
                 self.servo_mode[self.servo_selected].inc()
                 if self.servo_mode[self.servo_selected] == ServoMode.OFF:
-                    if app.hexdrive_app is not None:
-                        app.hexdrive_app.set_servoposition(self.servo_selected, None)
+                    if len(app.hexdrive_apps) > 0:
+                        app.hexdrive_apps[0].set_servoposition(self.servo_selected, None)
                 else:
                     if self.servo[self.servo_selected] is None:
                         self.servo[self.servo_selected] = 0                    
@@ -250,9 +250,9 @@ class ServoTestMgr:
         else:
             self._time_since_last_input += delta
             if self._time_since_last_input > self.timeout_period:
-                if app.hexdrive_app is not None:
-                    app.hexdrive_app.set_power(False)
-                    app.hexdrive_app.set_servoposition()
+                if len(app.hexdrive_apps) > 0:
+                    app.hexdrive_apps[0].set_power(False)
+                    app.hexdrive_apps[0].set_servoposition()
                 app.return_to_menu()
                 app.notification = Notification("  Servo:\n Timeout")
 
@@ -274,8 +274,8 @@ class ServoTestMgr:
                     self.servo_rate[i] = -self.servo_rate[i]
                     self.servo[i] = -self.servo_range[i] - (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE)
                 _refresh = True
-            if _refresh and app.hexdrive_app is not None and self.servo_mode[i] != ServoMode.OFF and self.servo[i] is not None:
-                app.hexdrive_app.set_servoposition(i, int(self.servo[i]))
+            if _refresh and len(app.hexdrive_apps) > 0 and self.servo_mode[i] != ServoMode.OFF and self.servo[i] is not None:
+                app.hexdrive_apps[0].set_servoposition(i, int(self.servo[i]))
 
         return True
 
@@ -291,18 +291,18 @@ class ServoTestMgr:
     def reset_servo(self) -> bool:
         """Reset servo tester state."""
         app = self._app
-        if app.hexdrive_app is not None:
-            if app.hexdrive_app.initialise() and app.hexdrive_app.set_power(True):
+        if len(app.hexdrive_apps) > 0:
+            if app.hexdrive_apps[0].initialise() and app.hexdrive_apps[0].set_power(True):
                 for i in range(self.available_servo_count):
-                    app.hexdrive_app.set_freq(1000 // self.period, channel=i)
-                    app.hexdrive_app.set_servocentre(self.servo_centre[i], i)
+                    app.hexdrive_apps[0].set_freq(1000 // self.period, channel=i)
+                    app.hexdrive_apps[0].set_servocentre(self.servo_centre[i], i)
                     self.servo_range[i] = self.range
                     if self.servo[i] is not None:
                         if self.servo[i] > self.servo_range[i]:
                             self.servo[i] = self.servo_range[i]
                         elif self.servo[i] < -self.servo_range[i]:
                             self.servo[i] = -self.servo_range[i]
-                        if not app.hexdrive_app.set_servoposition(i, int(self.servo[i])):
+                        if not app.hexdrive_apps[0].set_servoposition(i, int(self.servo[i])):
                             if self._logging:
                                 print("H:Failed to set servo position")
                 self.servo_selected = 0
