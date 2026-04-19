@@ -47,7 +47,7 @@ _MOTOR_TEST_BACKGROUND_UPDATE_PERIOD = 1000     # background update period in ms
 _ROTATION_RATE_EMITTER_PINS = [2, 3]            # LS_C & LS_D pins used to drive the IR emitter for rotation rate testing
 _ROTATION_RATE_SENSOR_PINS = [0, 1]             # HS_F & HS_G pins used to read the phottransistors for rotation rate testing
 # Temporary - while there is no EEPROM on the Test Hexpansion
-_ROTATION_RATE_PORT = 2                         # Hexpansion slot used for rotation rate measurement
+_ROTATION_RATE_PORT = 5                         # Hexpansion slot used for rotation rate measurement
 
 # Local sub-states (internal to Sensor Test)
 _SUB_SELECT_PORT = 0
@@ -408,11 +408,16 @@ class SensorTestMgr:
                 if self._auto_settling:
                     if self._auto_timer >= _AUTO_SCAN_SETTLE_MS:
                         # Settle phase done — discard counter and start measuring
+                        count = 0
                         for counter in self._rotation_rate_counters:
                             if counter is not None:
-                                counter.value(0)  # read-and-reset to discard
-                        self._auto_timer = 0
-                        self._auto_settling = False
+                                count += counter.value(0)  # read-and-reset to discard
+                        if count == 0:
+                            # There has been no motion from any motors - so we can skip the measure phase and move straight to the next power level
+                            self._auto_rotation_rate_step()
+                        else:
+                            self._auto_timer = 0
+                            self._auto_settling = False
                 else:
                     if self._auto_timer >= _AUTO_SCAN_MEASURE_MS:
                         # Measure phase done — read counter and record result
@@ -427,21 +432,24 @@ class SensorTestMgr:
                                 rate[index] = rpm
                         power = self._rotation_rate_motor_power
                         self._auto_results.append((power, rate))
+                        self._auto_rotation_rate_step()
 
-                        self._auto_step += 1
-                        self._app.refresh = True
-                        if self._auto_step >= _AUTO_SCAN_STEPS:
-                            # Scan complete — stop motors
-                            self._auto_done = True
-                            self._rotation_rate_motor_power = 0
-                        else:
-                            # Advance to next power level
-                            self._rotation_rate_motor_power = (65535 * self._auto_step) // (_AUTO_SCAN_STEPS - 1)
-                            self._auto_timer = 0
-                            self._auto_settling = True
             return (self._rotation_rate_motor_power, self._rotation_rate_motor_power)
-
         return None
+
+
+    def _auto_rotation_rate_step(self):
+        self._auto_step += 1
+        self._app.refresh = True
+        if self._auto_step >= _AUTO_SCAN_STEPS:
+            # Scan complete — stop motors
+            self._auto_done = True
+            self._rotation_rate_motor_power = 0
+        else:
+            # Advance to next power level
+            self._rotation_rate_motor_power = (65535 * self._auto_step) // (_AUTO_SCAN_STEPS - 1)
+            self._auto_timer = 0
+            self._auto_settling = True
 
 
     # ------------------------------------------------------------------
