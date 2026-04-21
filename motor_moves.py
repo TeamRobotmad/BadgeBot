@@ -1,4 +1,4 @@
-# Motor Moves Module for BadgeBot
+""" Motor Moves Module for BadgeBot """
 #
 # Handles the "turtle/Logo" style motor-move programming.
 # Internally manages its own sub-states (HELP, RECEIVE_INSTR, RUN, DONE).
@@ -21,10 +21,10 @@
 #   init_settings(settings)  – register motor-moves specific settings
 
 import asyncio
+
 from events.input import BUTTON_TYPES, Button
 from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
-
 from .utils import chain
 from .app import (STATE_COUNTDOWN, STATE_MOTOR_MOVES, STATE_LOGO, DEFAULT_BACKGROUND_UPDATE_PERIOD, MOTOR_PWM_FREQ)
 
@@ -47,7 +47,7 @@ _MIN_MAX_POWER         = 1000
 _MIN_USER_DRIVE_MS     = 10
 _MIN_USER_TURN_MS      = 10
 
-_MAX_MAX_POWER         = 100000
+_MAX_MAX_POWER         = 65535
 _MAX_ACCELERATION      = 20000
 _MAX_USER_DRIVE_MS     = 10000
 _MAX_USER_TURN_MS      = 10000
@@ -70,28 +70,44 @@ _SUB_DONE          = 3
 # ---- Instruction class -----------------------------------------------------
 
 class Instruction:
+    """Represents a single movement instruction, consisting of a direction (button press) and duration (number of ticks).
+    Also contains the power plan for this instruction, which is a list of (power_tuple)"""
     def __init__(self, press_type: Button) -> None:
         self._press_type = press_type
         self._duration = 1
-        self.power_plan = []
+        self.power_plan: list[tuple[tuple[int, int], int]] = []
 
     @property
     def press_type(self) -> Button:
+        """The button press type (direction) for this instruction."""
         return self._press_type
 
     @property
     def duration(self) -> int:
+        """The duration (number of ticks) for this instruction."""
         return self._duration
 
     def inc(self):
+        """Increment the duration of this instruction by one tick."""
         self._duration += 1
 
 
     def __str__(self):
-        return f"{self.press_type.name} {self._duration}"
+        if self._press_type == BUTTON_TYPES["UP"]:
+            direction = "UP"
+        elif self._press_type == BUTTON_TYPES["DOWN"]:
+            direction = "DOWN"
+        elif self._press_type == BUTTON_TYPES["LEFT"]:
+            direction = "LEFT"
+        elif self._press_type == BUTTON_TYPES["RIGHT"]:
+            direction = "RIGHT"
+        else:
+            direction = str(self._press_type)
+        return f"{direction} {self._duration}"
 
 
     def directional_power_tuple(self, power) -> tuple[int, int]:
+        """Return the power tuple for this instruction based on its direction."""
         if self._press_type == BUTTON_TYPES["UP"]:
             return (power, power)
         elif self._press_type == BUTTON_TYPES["DOWN"]:
@@ -100,12 +116,15 @@ class Instruction:
             return (-power, power)
         elif self._press_type == BUTTON_TYPES["RIGHT"]:
             return (power, -power)
+        return (0, 0)
 
     def directional_duration(self, mysettings) -> int:
+        """Return the base duration for this instruction based on its direction and the user-configured settings."""
         if self._press_type == BUTTON_TYPES["UP"] or self._press_type == BUTTON_TYPES["DOWN"]:
             return (mysettings['drive_step_ms'].v if 'drive_step_ms' in mysettings else _DEFAULT_USER_DRIVE_MS)
         elif self._press_type == BUTTON_TYPES["LEFT"] or self._press_type == BUTTON_TYPES["RIGHT"]:
             return (mysettings['turn_step_ms'].v if 'turn_step_ms' in mysettings else _DEFAULT_USER_TURN_MS)
+        return _DEFAULT_USER_DRIVE_MS
 
 
     def make_power_plan(self, mysettings):
@@ -113,7 +132,7 @@ class Instruction:
         curr_power = 0
         ramp_up = []
         max_ramp_up_ticks = ((self.directional_duration(mysettings) * self._duration) // (2 * _TICK_MS)) - 1
-        for i in range(max_ramp_up_ticks):
+        for _ in range(max_ramp_up_ticks):
             curr_power += mysettings['acceleration'].v
             if curr_power >= mysettings['max_power'].v:
                 curr_power = mysettings['max_power'].v
@@ -137,7 +156,7 @@ class Instruction:
 
 # ---- Settings initialisation -----------------------------------------------
 
-def init_settings(s, MySetting: type):
+def init_settings(s, MySetting: type):  #pylint: disable=invalid-name
     """Register motor-moves-specific settings in the shared settings dict."""
     s['acceleration']  = MySetting(s, _DEFAULT_ACCELERATION,  _MIN_ACCELERATION,  _MAX_ACCELERATION)
     s['max_power']     = MySetting(s, DEFAULT_MAX_POWER,     _MIN_MAX_POWER,     _MAX_MAX_POWER)
@@ -163,12 +182,12 @@ class MotorMovesMgr:
         self._sub_state: int = _SUB_HELP
         self._prev_state: int = _SUB_HELP
         # Motor-moves instance variables
-        self.instructions: list = []
+        self.instructions: list[Instruction] = []
         self.current_instruction: Instruction | None = None
-        self.current_power_duration: tuple = ((0, 0), 0)
-        self.power_plan_iter: iter = iter([])
+        self.current_power_duration: tuple[tuple[int, int], int] = ((0, 0), 0)
+        self.power_plan_iter = None
         self.long_press_delta: int = 0
-        self._mc_task: any = None  # asyncio task for MotorController-based execution    
+        self._mc_task = None  # asyncio task for MotorController-based execution
         if self.logging:
             print("MotorMovesMgr initialised")
 
@@ -179,13 +198,14 @@ class MotorMovesMgr:
     def logging(self) -> bool:
         """Get or set logging state for this manager."""
         return self._logging
-    
+
     @logging.setter
     def logging(self, value: bool):
         self._logging = value
 
     @property
     def drive_mode(self):
+        """Get the current drive mode (time or distance) from settings, defaulting to distance if not set."""
         return self._app.settings['drive_mode'].v if 'drive_mode' in self._app.settings else DRIVE_MODE_DISTANCE
 
 
@@ -201,7 +221,7 @@ class MotorMovesMgr:
         app.set_menu(None)
         app.button_states.clear()
         app.refresh = True
-        if self.current_instruction is None: 
+        if self.current_instruction is None:
             self.reset_instructions()  # initializes the instructions list and other related state
             self.reset_robot()         # ensures robot is in a known reset state (motors off, etc)
         app.scroll_mode_enable(False)
@@ -246,9 +266,10 @@ class MotorMovesMgr:
         loop monitors the task and transitions to _SUB_DONE when it completes."""
         try:
             await self._app.motor_controller.run_instructions(self.instructions)
-        except asyncio.CancelledError:
-            self._app.motor_controller.stop()
         except Exception as e:      # pylint: disable=broad-exception-caught
+            if type(e).__name__ == "CancelledError":
+                self._app.motor_controller.stop()
+                return
             print(f"MotorController run error: {e}")
             self._app.motor_controller.stop()
 
@@ -314,7 +335,7 @@ class MotorMovesMgr:
             app.return_to_menu()
         elif app.button_states.get(BUTTON_TYPES["CONFIRM"]):
             app.button_states.clear()
-            app.scroll(False)            
+            app.scroll(False)
             app.scroll_mode_enable(True)
             self._sub_state = _SUB_RECEIVE_INSTR
         elif app.button_states.get(BUTTON_TYPES["DOWN"]):
@@ -332,21 +353,21 @@ class MotorMovesMgr:
                 app.current_state = STATE_LOGO
 
 
-    def _update_state_receive_instr(self, delta: int) -> None:       
+    def _update_state_receive_instr(self, delta: int) -> None:
         app = self._app
 
         if app.button_states.get(BUTTON_TYPES["CONFIRM"]):
             app.long_press_delta += delta
             if app.long_press_delta >= _LONG_PRESS_MS:
                 if self.power_plan_iter is None:
-                    app.scroll_mode_enable(False)                
+                    app.scroll_mode_enable(False)
                     app.animation_counter = 0
                     self._sub_state = _SUB_HELP
                 else:
                     # if there are No instructions then warn the user and return to help, otherwise start the countdown to run the instructions
                     if len(self.instructions) == 0 and self.current_instruction is None:
                         app.notification = Notification("No instructions entered")
-                        app.scroll_mode_enable(False)                
+                        app.scroll_mode_enable(False)
                         app.animation_counter = 0
                         self._sub_state = _SUB_HELP
                         return
@@ -392,7 +413,7 @@ class MotorMovesMgr:
         app = self._app
         app.clear_leds()
         # Run is primarily managed in the background update - but we allow CANCEL here as well to stop immediately
-        app.refresh = True # TODO not every cycle, just when we need to update the screen (e.g. for power level display)
+        app.refresh = True
         if app.button_states.get(BUTTON_TYPES["CANCEL"]):
             app.button_states.clear()
             self.reset_robot()
@@ -409,7 +430,7 @@ class MotorMovesMgr:
         elif app.button_states.get(BUTTON_TYPES["CONFIRM"]):
             app.button_states.clear()
             app.run_countdown_elapsed_ms = 1
-            self.current_power_duration = ((0, 0, 0, 0), 0)
+            self.current_power_duration = ((0, 0), 0)
             app.countdown_next_state = STATE_MOTOR_MOVES
             app.current_state = STATE_COUNTDOWN
             # at end of countdown begin_moves will be called, which will start the sequence running again
@@ -421,7 +442,7 @@ class MotorMovesMgr:
 
     def _handle_instruction_press(self, press_type):
         app = self._app
-        if app.last_press == press_type:
+        if app.last_press == press_type and self.current_instruction is not None:
             self.current_instruction.inc()
         else:
             self.finalize_instruction()
@@ -456,13 +477,14 @@ class MotorMovesMgr:
         if self.logging:
             print("Robot reset")
         if len(app.hexdrive_apps) > 0:
-            app.hexdrive_apps[0].set_power(False)        
+            app.hexdrive_apps[0].set_power(False)
 
 
     def reset_instructions(self):
+        """Reset the instruction list and related state."""
         self.instructions = []
         self.current_instruction = None
-        self.power_plan_iter = iter([])
+        self.power_plan_iter = None
         self._app.scroll(False)
         if self.logging:
             print("Instructions reset")
@@ -482,12 +504,17 @@ class MotorMovesMgr:
 
     def _get_current_power_level(self, delta: int) -> tuple[int, int] | None:
         #if delta >= _TICK_MS:
-        #    delta = _TICK_MS - 1        
+        #    delta = _TICK_MS - 1
         current_power, current_duration = self.current_power_duration
         updated_duration = current_duration - delta
         if updated_duration <= 0:
+            power_plan_iter = self.power_plan_iter
+            if power_plan_iter is None:
+                self.reset_robot()
+                self._sub_state = _SUB_DONE
+                return None
             try:
-                next_power, next_duration = next(self.power_plan_iter)
+                next_power, next_duration = next(power_plan_iter)
             except StopIteration:
                 self.reset_robot()
                 self._sub_state = _SUB_DONE

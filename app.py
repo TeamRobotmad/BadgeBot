@@ -1,9 +1,9 @@
 """ Main Application File for BadgeBot."""
 import asyncio
 import sys
-from system.hexpansion.config import HexpansionConfig
 import time
 from math import cos, pi
+
 import ota
 import settings
 from app_components.notification import Notification
@@ -12,6 +12,7 @@ from app_components import Menu
 from events.input import BUTTON_TYPES, Button, Buttons, ButtonUpEvent
 from frontboards.twentyfour import BUTTONS
 from system.eventbus import eventbus
+from system.hexpansion.config import HexpansionConfig
 from system.patterndisplay.events import PatternDisable, PatternEnable
 from system.scheduler.events import (RequestForegroundPopEvent,
                                      RequestForegroundPushEvent,
@@ -27,7 +28,7 @@ import app
 #micropython.alloc_emergency_exception_buf(100)
 
 from .utils import draw_logo_animated, parse_version
-from. hexdrive import VERSION as HEXDRIVE_APP_VERSION
+from .hexdrive import VERSION as HEXDRIVE_APP_VERSION
 
 
 _SETTINGS_NAME_PREFIX = "badgebot."  # Prefix for settings keys in EEPROM
@@ -185,12 +186,12 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         # strings shown on the Logo screen
         self.b_msg: str = f"BadgeBot V{self.app_version}"
         self.t_msg: str = "RobotMad"
-        self.notification: Notification = None
+        self.notification: Notification | None = None
         self.message: list = []
         self.message_colours: list = []
-        self.message_type: str = None
-        self.current_menu: str = None
-        self.menu: Menu = None
+        self.message_type: str | None = None
+        self.current_menu: str | None = None
+        self.menu: Menu | None = None
         self.scroll_mode_enabled: bool = False  # Whether pressing the "C" button can toggle scroll mode on/off, which allows the user to scroll through lines on the display.
         self.scroll_ignore_next_c_button: bool = False # Used to ignore the "C" button event that triggers scroll mode on, otherwise it would immediately toggle scroll mode off again
         self.is_scroll: bool = False        # Whether we are in scroll mode - this is displayed by a green border around the screen
@@ -198,7 +199,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
         # UI countdown
         self.run_countdown_elapsed_ms: int = 0
-        self.countdown_next_state: int = None  # which state to go to after countdown
+        self.countdown_next_state: int | None = None  # which state to go to after countdown
 
         self._motor1_reversed: bool = False       # 0 or 1 to control direction of motor 1, set based on settings
         self._motor2_reversed: bool = False       # 0 or 1 to control direction of motor 2, set based on settings
@@ -222,6 +223,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             self.fast_settings_update()
 
         # Check what version of the Badge s/w we are running on
+        ver: list[int | str] | None = None
         try:
             ver = parse_version(ota.get_version())
             if ver is not None:
@@ -233,7 +235,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             pass
 
         # make use of special characters if running on compatible badge s/w version
-        if ver is not None and ver > [1, 10, 0]:
+        version_triplet = tuple(part if isinstance(part, int) else 0 for part in (ver[:3] if ver is not None else []))
+        if len(version_triplet) == 3 and version_triplet > (1, 10, 0):
             self.special_chars = { 'up': "\u25B2",        # up arrow
                                 # 'down': "\u25BC",     # down arrow - has always existed
                                   'left': "\u25C0",     # left arrow
@@ -244,6 +247,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
         # Hexpansion related - SEE ALSO hexpansion_mgr to update _SINGLE_PORT_HEXPANSION_REFS
         #                                       pid      name         vid          eeprom total size        eeprom page size      app mpy name                 app mpy version                       app name                motors    servos    sensors    sub_type
+        assert HexpansionType is not None
         self.HEXPANSION_TYPES = [HexpansionType(0xCBCB, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2, servos=4, steppers=1, sub_type="Uncommitted" ),
                                  HexpansionType(0xCBCA, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2,                       sub_type="2 Motor" ),
                                  HexpansionType(0xCBCC, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp",           servos=4,             sub_type="4 Servo" ),
@@ -255,7 +259,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                                  HexpansionType(0x0202, "HexDriveV2",  vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp",           servos=2,             sub_type="2 Servo" ),
                                  HexpansionType(0x0300, "HexTest",     vid=0xCBCB, eeprom_total_size=65536, eeprom_page_size=128),
                                  HexpansionType(0x0400, "HexDiag",     vid=0xCBCB, eeprom_total_size=65536, eeprom_page_size=128),
-                                 HexpansionType(0x1295, "GPS", app_mpy_name="gps.mpy", app_mpy_version=1, app_name="L80KApp"), # eeprom_total_size= 2048, eeprom_page_size= 16),
+                                 HexpansionType(0x1295, "GPS", app_mpy_name="gps.mpy", app_mpy_version=1, app_name="GPSApp"), # eeprom_total_size= 2048, eeprom_page_size= 16),
                                  HexpansionType(0xD15C, "Flopagon",                eeprom_total_size= 2048, eeprom_page_size= 16), # EEPROM too small for the app
                                  HexpansionType(0xCAFF, "Club Mate",               eeprom_total_size= 8192, eeprom_page_size= 32, app_mpy_name="caffeine.mpy", app_name="CaffeineJitter"),
 
@@ -358,14 +362,19 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             print(f"BadgeBot App V{self.app_version} Initialised")
 
 
-    def _register_state_functions(self, state: int, manager: object):
+    def _register_state_functions(self, state: int, manager: object | None):
         """Register the update, draw, and background update functions for each state in the dispatch tables."""
-        if manager is not None and hasattr(manager, 'update'):
-            self._state_update_dispatch[state] = manager.update
-        if manager is not None and hasattr(manager, 'draw'):
-            self._state_draw_dispatch[state] = manager.draw
-        if manager is not None and hasattr(manager, 'background_update'):
-            self._state_background_dispatch[state] = manager.background_update
+        if manager is None:
+            return
+        update_fn = getattr(manager, "update", None)
+        draw_fn = getattr(manager, "draw", None)
+        background_fn = getattr(manager, "background_update", None)
+        if callable(update_fn):
+            self._state_update_dispatch[state] = update_fn
+        if callable(draw_fn):
+            self._state_draw_dispatch[state] = draw_fn
+        if callable(background_fn):
+            self._state_background_dispatch[state] = background_fn
 
 
     @property
@@ -450,36 +459,43 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
     @property
     def enable_motor_moves(self):
+        """Whether the Motor Moves feature is enabled, based on whether we have detected motor hardware and have the manager available."""
         return self.num_motors > 1 and self._motor_moves_mgr is not None
 
 
     @property
     def enable_servo_test(self):
+        """Whether the Servo Test feature is enabled, based on whether we have detected servo hardware and have the manager available."""
         return self.num_servos > 0 and self._servo_test_mgr is not None
 
 
     @property
     def enable_stepper_test(self):
+        """Whether the Stepper Test feature is enabled, based on whether we have detected stepper hardware and have the manager available."""
         return self.num_steppers > 0 and self._stepper_test_mgr is not None
 
 
     @property
     def enable_line_follow(self):
+        """Whether the Line Follow feature is enabled, based on whether we have detected line sensors and have the manager available."""
         return self.num_motors > 1 and self.num_line_sensors > 0 and self._line_follow_mgr is not None
 
 
     @property
     def enable_sensor_test(self):
+        """Whether the Sensor Test feature is enabled, based on whether we have detected sensor hardware and have the manager available."""
         return self._sensor_test_mgr is not None
 
 
     @property
     def enable_autodrive(self):
+        """Whether the Autodrive feature is enabled, based on whether we have detected motor hardware and have the manager available."""
         return self.num_motors > 1 and self._autodrive_mgr is not None
 
 
     @property
     def enable_hexpansion_mgr(self):
+        """Whether the Hexpansion Manager is enabled, based on whether the manager is available.  Note that this does not necessarily mean that you have hexpansion hardware, as the manager can be enabled and used for managing settings related to hexpansions even if no hexpansion hardware is detected."""
         return self._hexpansion_mgr is not None
 
 
@@ -515,13 +531,13 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
 
     def fast_settings_update(self):
-        # for fast access in background_update
+        """Update fast access settings from the main settings dictionary."""
         self._motor1_reversed: bool = self.settings['motor1_dir'].v != 0
         self._motor2_reversed: bool = self.settings['motor2_dir'].v != 0
 
 
     def hexdiag_setup(self):
-        # Use HS pins on a spare Hexpansion to make diagnostic timing measurements
+        """ Use HS pins on a spare Hexpansion to make diagnostic timing measurements"""
         if self._diag_config is not None and self.hexdiag_port != self._diag_config.port:
             for i in range(4):
                 self._diag_config.pin[i].init(mode=Pin.IN)
@@ -533,6 +549,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
 
     def diagnostics_output(self, index: int, value: int):
+        """Output diagnostic values to the HS pins on the diagnostics hexpansion, for measurement with an oscilloscope"""
         if self._diag_config is not None and 0 <= index < 4:
             self._diag_config.pin[index].value(value)
 
@@ -606,7 +623,12 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 if self.settings['brightness'].v < 1.0:
                     # Scale brightness
                     for i in range(1,13):
-                        tildagonos.leds[i] = tuple(int(j * self.settings['brightness'].v) for j in tildagonos.leds[i])
+                        colour = tildagonos.leds[i]
+                        tildagonos.leds[i] = (
+                            int(colour[0] * self.settings['brightness'].v),
+                            int(colour[1] * self.settings['brightness'].v),
+                            int(colour[2] * self.settings['brightness'].v),
+                        )
                 try:
                     # saw this crash randomly - hence protected by try/except to prevent whole app crashing, and added logging to investigate further
                     tildagonos.leds.write()
@@ -623,8 +645,13 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 self.set_menu()
                 self.refresh = True
             else:
-                self.menu.update(delta)
-                if self.menu.is_animating != "none":
+                menu = self.menu
+                if menu is None:
+                    self.set_menu()
+                    self.refresh = True
+                    return
+                menu.update(delta)
+                if menu.is_animating != "none":
                     if self.logging:
                         print("Menu is animating")
                     self.refresh = True
@@ -699,7 +726,11 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                     # raised cosine cubed wave
                     wave = self.settings['brightness'].v * pow((1.0 + cos(((i) *  pi / 1.5) - (self.rpm * self.animation_counter * pi / 7500)))/2.0, 3)
                     # 4 sides each projecting a pattern of 3 LEDs (12 LEDs in total)
-                    tildagonos.leds[i] = tuple(int(wave * j) for j in colour)
+                    tildagonos.leds[i] = (
+                        int(wave * colour[0]),
+                        int(wave * colour[1]),
+                        int(wave * colour[2]),
+                    )
                 self.refresh = True
             else:
                 for i in range(1,13):
@@ -713,11 +744,17 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             if self.countdown_next_state == STATE_MOTOR_MOVES:
                 # Motor Moves: delegate to begin_moves
                 self.current_state = self.countdown_next_state
-                self._motor_moves_mgr.begin_moves()
+                if self._motor_moves_mgr is not None:
+                    self._motor_moves_mgr.begin_moves()
+                else:
+                    self.return_to_menu()
             elif self.countdown_next_state == STATE_AUTOTUNE:
                 # PID AutoTune: start the tuner after countdown
                 self.current_state = self.countdown_next_state
-                self._autotune_mgr.begin_tuning()
+                if self._autotune_mgr is not None:
+                    self._autotune_mgr.begin_tuning()
+                else:
+                    self.return_to_menu()
             else:
                 # Generic fallback
                 self.return_to_menu()
@@ -820,6 +857,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         """Negate individual motor outputs as per settings."""
         output1, output2 = output
         output = (-output1 if self._motor1_reversed else output1, -output2 if self._motor2_reversed else output2)
+        print(f"M:{output}")
         return output
 
 
@@ -930,7 +968,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 ### MENU FUNCTIONALITY ###
 
 
-    def set_menu(self, menu_name = "main"):  #: Literal["main"]): does it work without the type hint?
+    def set_menu(self, menu_name: str | None = "main"):  #: Literal["main"]): does it work without the type hint?
         """Set the current menu to the specified menu name, and construct the menu if necessary.
            If menu_name is None, it will clear the current menu and return to the previous state
            (e.g. from a submenu back to the main menu)."""

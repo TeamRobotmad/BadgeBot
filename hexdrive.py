@@ -379,6 +379,7 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
             if abs(output) > 65535:
                 return False
             if output == self._motor_output[motor]:
+                # no change in output for this motor so skip to the next one
                 continue
             try:
                 # if the output is changing direction then we need to switch which signal is being driven as the PWM output

@@ -1,4 +1,4 @@
-# Servo Tester Module for BadgeBot
+""" Servo Tester Module for BadgeBot """
 #
 # Handles the servo tester functionality.
 # Allows the user to control up to 4 servos with position, trim,
@@ -29,7 +29,7 @@ _MAX_SERVO_RANGE       = 1400
 
 # ---- Settings initialisation -----------------------------------------------
 
-def init_settings(s, MySetting):
+def init_settings(s, MySetting):            #pylint: disable=invalid-name
     """Register servo-test-specific settings in the shared settings dict."""
     s['servo_step']    = MySetting(s, _SERVO_DEFAULT_STEP, 1, 100)
     s['servo_range']   = MySetting(s, _SERVO_DEFAULT_RANGE, 100, _MAX_SERVO_RANGE)
@@ -37,6 +37,7 @@ def init_settings(s, MySetting):
 
 
 class ServoMode:
+    """Represents the mode of a servo in the tester."""
     OFF = 0
     TRIM = 1
     POSITION = 2
@@ -45,16 +46,18 @@ class ServoMode:
 
     def __init__(self, mode=OFF):
         self._mode = mode
-    
+
     @property
     def mode(self):
+        """ Get the current mode of the servo.  One of OFF, TRIM, POSITION, SCANNING. """
         return self._mode
-    
+
     @mode.setter
     def mode(self, mode):
         self._mode = mode
 
     def inc(self):
+        """Cycle to the next mode."""
         self._mode = (self._mode + 1) % 4
 
     def __eq__(self, other):
@@ -76,19 +79,19 @@ class ServoTestMgr:
     def __init__(self, app, logging: bool = False):
         self._app = app
         self._logging: bool = logging
-        self.servo               = [None]*4                         # Servo Positions
-        self.servo_centre        = [_SERVO_DEFAULT_CENTRE]*4        # Trim Servo Centre
-        self.servo_range         = [_SERVO_DEFAULT_RANGE]*4         # Limit Servo Range
-        self.servo_rate          = [_SERVO_DEFAULT_RATE]*4          # Servo Rate of Change
-        self.servo_mode          = [ServoMode() for _ in range(4)]  # Servo Mode
-        self.servo_selected: int = 0        
-        self.timeout_period: int = 300000                     # ms (5 minutes - without any user input)       
-        self.keep_alive_period: int = 500                     # ms (half the value used in hexdrive.py)  
+        self.servo: list[int | None] = [None] * 4                  # Servo Positions
+        self.servo_centre: list[int] = [_SERVO_DEFAULT_CENTRE] * 4 # Trim Servo Centre
+        self.servo_range: list[int] = [_SERVO_DEFAULT_RANGE] * 4   # Limit Servo Range
+        self.servo_rate: list[int] = [_SERVO_DEFAULT_RATE] * 4     # Servo Rate of Change
+        self.servo_mode: list[ServoMode] = [ServoMode() for _ in range(4)]  # Servo Mode
+        self.servo_selected: int = 0
+        self.timeout_period: int = 300000                     # ms (5 minutes - without any user input)
+        self.keep_alive_period: int = 500                     # ms (half the value used in hexdrive.py)
         self._time_since_last_input: int = 0
         self._time_since_last_update: int = 0
         if self._logging:
             print("ServoTestMgr initialised")
-            
+
 
     # ------------------------------------------------------------------
 
@@ -96,7 +99,7 @@ class ServoTestMgr:
     def logging(self) -> bool:
         """Whether to print debug logs to the console."""
         return self._logging
-    
+
     @logging.setter
     def logging(self, value: bool):
         self._logging = value
@@ -105,19 +108,19 @@ class ServoTestMgr:
     def step(self):
         """Get the current servo step size."""
         return int(self._app.settings['servo_step'].v) if 'servo_step' in self._app.settings else _SERVO_DEFAULT_STEP
-    
+
 
     @property
     def range(self):
         """Get the current servo range."""
         return int(self._app.settings['servo_range'].v) if 'servo_range' in self._app.settings else _SERVO_DEFAULT_RANGE
-    
+
 
     @property
     def period(self):
         """Get the current servo period."""
         return int(self._app.settings['servo_period'].v) if 'servo_period' in self._app.settings else _SERVO_DEFAULT_PERIOD
-    
+
 
     @property
     def available_servo_count(self) -> int:
@@ -142,7 +145,7 @@ class ServoTestMgr:
                 print("Entered Servo Test mode")
             return True
         return False
-    
+
 
     # ------------------------------------------------------------------
     # Per-tick update
@@ -176,12 +179,15 @@ class ServoTestMgr:
                     else:
                         self.servo_rate[self.servo_selected] = rate
                 else:
-                    if self.servo[self.servo_selected] is None:
-                        self.servo[self.servo_selected] = 0
+                    current_servo = self.servo[self.servo_selected]
+                    if current_servo is None:
+                        current_servo = 0
                     self.servo_mode[self.servo_selected].mode = ServoMode.POSITION
-                    self.servo[self.servo_selected] += self.step
-                if self.servo[self.servo_selected] is not None:
-                    if self.servo_range[self.servo_selected] < (self.servo[self.servo_selected] + (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)):
+                    current_servo += self.step
+                    self.servo[self.servo_selected] = current_servo
+                current_servo = self.servo[self.servo_selected]
+                if current_servo is not None:
+                    if self.servo_range[self.servo_selected] < (current_servo + (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)):
                         self.servo[self.servo_selected] = self.servo_range[self.servo_selected] - (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)
                 app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["LEFT"]):
@@ -208,12 +214,15 @@ class ServoTestMgr:
                     else:
                         self.servo_rate[self.servo_selected] = rate
                 else:
-                    if self.servo[self.servo_selected] is None:
-                        self.servo[self.servo_selected] = 0
+                    current_servo = self.servo[self.servo_selected]
+                    if current_servo is None:
+                        current_servo = 0
                     self.servo_mode[self.servo_selected].mode = ServoMode.POSITION
-                    self.servo[self.servo_selected] -= self.step
-                if self.servo[self.servo_selected] is not None:
-                    if -self.servo_range[self.servo_selected] > (self.servo[self.servo_selected] + (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)):
+                    current_servo -= self.step
+                    self.servo[self.servo_selected] = current_servo
+                current_servo = self.servo[self.servo_selected]
+                if current_servo is not None:
+                    if -self.servo_range[self.servo_selected] > (current_servo + (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)):
                         self.servo[self.servo_selected] = -self.servo_range[self.servo_selected] - (self.servo_centre[self.servo_selected] - _SERVO_DEFAULT_CENTRE)
                 app.refresh = True
         else:
@@ -241,7 +250,7 @@ class ServoTestMgr:
                         app.hexdrive_apps[0].set_servoposition(self.servo_selected, None)
                 else:
                     if self.servo[self.servo_selected] is None:
-                        self.servo[self.servo_selected] = 0                    
+                        self.servo[self.servo_selected] = 0
                 app.refresh = True
                 app.notification = Notification(f"  Servo {self.servo_selected}:\n {self.servo_mode[self.servo_selected]}")
 
@@ -264,26 +273,30 @@ class ServoTestMgr:
         for i in range(self.available_servo_count):
             _refresh = app.refresh
             if self.servo_mode[i] == ServoMode.SCANNING:
-                if self.servo[i] is None:
-                    self.servo[i] = 0
-                self.servo[i] = self.servo[i] + ((self.servo_rate[i] * delta) // 1000)
-                if self.servo_range[i] < (self.servo[i] + (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE)):
+                servo_value = self.servo[i]
+                if servo_value is None:
+                    servo_value = 0
+                servo_value += (self.servo_rate[i] * delta) // 1000
+                if self.servo_range[i] < (servo_value + (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE)):
                     self.servo_rate[i] = -self.servo_rate[i]
-                    self.servo[i] = self.servo_range[i] - (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE)
-                elif -self.servo_range[i] > (self.servo[i] + (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE)):
+                    servo_value = self.servo_range[i] - (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE)
+                elif -self.servo_range[i] > (servo_value + (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE)):
                     self.servo_rate[i] = -self.servo_rate[i]
-                    self.servo[i] = -self.servo_range[i] - (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE)
+                    servo_value = -self.servo_range[i] - (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE)
+                self.servo[i] = servo_value
                 _refresh = True
-            if _refresh and len(app.hexdrive_apps) > 0 and self.servo_mode[i] != ServoMode.OFF and self.servo[i] is not None:
-                app.hexdrive_apps[0].set_servoposition(i, int(self.servo[i]))
+            servo_value = self.servo[i]
+            if _refresh and len(app.hexdrive_apps) > 0 and self.servo_mode[i] != ServoMode.OFF and servo_value is not None:
+                app.hexdrive_apps[0].set_servoposition(i, servo_value)
 
         return True
 
 
     def background_update(self, _delta: int):
+        """Handle any background updates for the servo tester."""
         return None
 
-        
+
     # ------------------------------------------------------------------
     # Servo reset
     # ------------------------------------------------------------------
@@ -297,12 +310,14 @@ class ServoTestMgr:
                     app.hexdrive_apps[0].set_freq(1000 // self.period, channel=i)
                     app.hexdrive_apps[0].set_servocentre(self.servo_centre[i], i)
                     self.servo_range[i] = self.range
-                    if self.servo[i] is not None:
-                        if self.servo[i] > self.servo_range[i]:
-                            self.servo[i] = self.servo_range[i]
-                        elif self.servo[i] < -self.servo_range[i]:
-                            self.servo[i] = -self.servo_range[i]
-                        if not app.hexdrive_apps[0].set_servoposition(i, int(self.servo[i])):
+                    servo_value = self.servo[i]
+                    if servo_value is not None:
+                        if servo_value > self.servo_range[i]:
+                            servo_value = self.servo_range[i]
+                        elif servo_value < -self.servo_range[i]:
+                            servo_value = -self.servo_range[i]
+                        self.servo[i] = servo_value
+                        if not app.hexdrive_apps[0].set_servoposition(i, servo_value):
                             if self._logging:
                                 print("H:Failed to set servo position")
                 self.servo_selected = 0
@@ -327,7 +342,7 @@ class ServoTestMgr:
 
         servo_count = self.available_servo_count
         servo_text = ["S"] * (1 + servo_count)
-        servo_text_colours = [(0.4, 0.0, 0.0)] * (1 + servo_count)
+        servo_text_colours: list[tuple[float, float, float]] = [(0.4, 0.0, 0.0)] * (1 + servo_count)
         servo_text[0] = "Servo Test"
         servo_text_colours[0] = (1, 1, 0)
         for i in range(servo_count):
@@ -348,8 +363,9 @@ class ServoTestMgr:
             background_colour = (0.1, 0.1, 0.1) if i != self.servo_selected else (0.15, 0.15, 0.15)
             ctx.rgb(*background_colour).rectangle(-100, 1, 200, label_font_size - 2).fill()
             c = 100 * (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE) / self.servo_range[i]
-            if self.servo[i] is not None:
-                x = 100 * (self.servo[i] + self.servo_centre[i] - _SERVO_DEFAULT_CENTRE) / self.servo_range[i]
+            servo_value = self.servo[i]
+            if servo_value is not None:
+                x = 100 * (servo_value + self.servo_centre[i] - _SERVO_DEFAULT_CENTRE) / self.servo_range[i]
                 ctx.rgb(*bar_colour).rectangle(x - 2, 1, 5, label_font_size - 2).fill()
                 ctx.rgb(*body_colour)
                 if x > (c + 4):
@@ -361,8 +377,13 @@ class ServoTestMgr:
             if self.servo_mode[i] == ServoMode.SCANNING:
                 servo_text[i + 1] = f"{int(abs(self.servo_rate[i])):4}\u00B5s/s"
             else:
-                servo_text[i + 1] = "Off" if (self.servo[i] is None or self.servo_mode[i] == ServoMode.OFF) else f"{int(self.servo[i]):+5}\u00B5s"
-        servo_text_colours[1 + self.servo_selected] = tuple(int(j * 2.5) for j in servo_text_colours[1 + self.servo_selected])
+                servo_text[i + 1] = "Off" if (servo_value is None or self.servo_mode[i] == ServoMode.OFF) else f"{servo_value:+5}\u00B5s"
+        selected_colour = servo_text_colours[1 + self.servo_selected]
+        servo_text_colours[1 + self.servo_selected] = (
+            selected_colour[0] * 2.5,
+            selected_colour[1] * 2.5,
+            selected_colour[2] * 2.5,
+        )
         app.draw_message(ctx, servo_text, servo_text_colours, label_font_size)
         if self.servo_mode[self.servo_selected] == ServoMode.SCANNING:
             button_labels(ctx, up_label=app.special_chars["up"], down_label="\u25BC", confirm_label="Mode", cancel_label="Back", left_label="Slower", right_label="Faster")

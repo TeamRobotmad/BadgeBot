@@ -2,6 +2,7 @@
 # Set to 200 to match existing code style and reduce noisy line wrapping.
 [tool.pylint.format]
 max-line-length = 200
+max-module-lines = 2000
 
 # General pylint behavior for this repository.
 [tool.pylint.master]
@@ -31,6 +32,10 @@ ignored-modules = [
     "frontboards.twentyfour",
     "display",
     "imu",
+    "egpio",
+]
+disable = [
+    "import-outside-toplevel",  # Allow imports inside functions for lazy imports and to avoid circular dependencies.
 ]
 
 # Type-checking exceptions for dynamic runtime members.
