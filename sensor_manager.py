@@ -108,8 +108,9 @@ class SensorManager:
             self._read_interval_ms = 250
             self._type = "Generic"
 
-        # Enable LED if there is at least one sensor
-        if len(self._sensors) > 0:
+        # Enable LED only when at least one Colour sensor is present
+        # (avoids pin conflicts with non-colour hexpansions such as the motor-test board)
+        if len(self._sensors) > 0 and any(getattr(s, 'TYPE', '') == 'Colour' for s in self._sensors):
             if self.logging:
                 print(f"SM:LED On port {port}")
             config = HexpansionConfig(port)    
