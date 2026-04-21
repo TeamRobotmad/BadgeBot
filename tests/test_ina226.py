@@ -8,7 +8,6 @@ from sensors.ina226 import (
     _REG_MANUFACTURER_ID,
     _REG_MASK_ENABLE,
     _REG_POWER,
-    _REG_SHUNT_VOLTAGE,
     _DEFAULT_CONFIGURATION,
 )
 
@@ -47,13 +46,20 @@ def test_ina226_init_and_measure_integer_units():
     assert (0x45, _REG_CALIBRATION, _u16_be(0x0200)) in fake_i2c.writes
 
     fake_i2c.reads[(0x45, _REG_MASK_ENABLE)] = _u16_be(_MASK_CVRF)
-    fake_i2c.reads[(0x45, _REG_SHUNT_VOLTAGE)] = _u16_be(400)
     fake_i2c.reads[(0x45, _REG_BUS_VOLTAGE)] = _u16_be(4000)
     fake_i2c.reads[(0x45, _REG_CURRENT)] = _u16_be(1234)
     fake_i2c.reads[(0x45, _REG_POWER)] = _u16_be(320)
 
     result = sensor.read()
-    assert result["shunt_uV"] == "1000"
     assert result["bus_mV"] == "5000"
     assert result["current_mA"] == "123"
     assert result["power_mW"] == "800"
+
+
+def test_ina226_read_sample_if_ready_none_when_not_ready():
+    fake_i2c = _FakeI2C()
+    sensor = INA226(i2c_addr=0x40)
+    fake_i2c.reads[(0x40, _REG_MANUFACTURER_ID)] = _u16_be(0x5449)
+    fake_i2c.reads[(0x40, _REG_MASK_ENABLE)] = _u16_be(0x0000)
+    assert sensor.begin(fake_i2c) is True
+    assert sensor.read_sample_if_ready() is None

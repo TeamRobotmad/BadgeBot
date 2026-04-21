@@ -5,7 +5,6 @@ Default I2C address range: 0x40-0x4F (A0/A1 address pins).
 Measurements:
   - bus_mV      : bus voltage in millivolts
   - current_mA  : current in milliamps
-  - shunt_uV    : shunt voltage in microvolts
   - power_mW    : power in milliwatts
 """
 
@@ -111,9 +110,9 @@ _READ_TIMEOUT_MS = 40
 # Default operating configuration:
 #  - shunt conversion: 8.244 ms
 #  - bus conversion:   1.1 ms
-#  - averaging:        128 samples
+#  - averaging:        16 samples
 _DEFAULT_CONFIGURATION = (
-    (_CFG_AVG_128 << _CFG_AVG_SHIFT)
+    (_CFG_AVG_16 << _CFG_AVG_SHIFT)
     | (_CFG_CT_1100US << _CFG_VBUSCT_SHIFT)
     | (_CFG_CT_8244US << _CFG_VSHCT_SHIFT)
     | (_CFG_MODE_SHUNT_BUS_CONT << _CFG_MODE_SHIFT)
@@ -129,14 +128,32 @@ class INA226(SensorBase):
     READ_INTERVAL_MS = 100
     TYPE = "Power"
 
-    def _read_u16_be_signed(self, reg: int) -> int:
-        value = self._read_u16_be(reg)
-        if value & 0x8000:
-            value -= 0x10000
-        return value
+    def _measure_from_registers(self) -> dict[str, int]:
+        bus_raw = self._read_u16_be(_REG_BUS_VOLTAGE)
+        current_raw = self._read_s16_be(_REG_CURRENT)
+        power_raw = self._read_u16_be(_REG_POWER)
 
-    def _write_u16_be(self, reg: int, value: int) -> None:
-        self._write_reg(reg, bytes([(value >> 8) & 0xFF, value & 0xFF]))
+        # Bus LSB = 1.25 mV
+        bus_mv = (bus_raw * 125) // 100
+        # Current LSB from calibration = 100 uA (0.1 mA)
+        current_ma = (current_raw * _CURRENT_LSB_UA) // 1000
+        # Power LSB from calibration = 2500 uW (2.5 mW)
+        power_mw = (power_raw * _POWER_LSB_UW) // 1000
+
+        return {
+            "bus_mV": bus_mv,
+            "current_mA": current_ma,
+            "power_mW": power_mw,
+        }
+
+    def read_sample_if_ready(self) -> dict[str, int] | None:
+        """Return one sample in integer units when a new conversion is ready."""
+        if not self._ready:
+            return None
+        status = self._read_u16_be(_REG_MASK_ENABLE)
+        if (status & _MASK_CVRF) == 0:
+            return None
+        return self._measure_from_registers()
 
     def _init(self) -> bool:
         manufacturer = self._read_u16_be(_REG_MANUFACTURER_ID)
@@ -150,33 +167,16 @@ class INA226(SensorBase):
     def _measure(self) -> dict:
         deadline = _ticks_add(_ticks_ms(), _READ_TIMEOUT_MS)
         while True:
-            status = self._read_u16_be(_REG_MASK_ENABLE)
-            if status & _MASK_CVRF:
-                break
+            sample = self.read_sample_if_ready()
+            if sample is not None:
+                return {
+                    "bus_mV": str(sample["bus_mV"]),
+                    "current_mA": str(sample["current_mA"]),
+                    "power_mW": str(sample["power_mW"]),
+                }
             if _ticks_diff(deadline, _ticks_ms()) <= 0:
                 return {"Error": "timeout"}
             _sleep_ms(1)
-
-        shunt_raw = self._read_u16_be_signed(_REG_SHUNT_VOLTAGE)
-        bus_raw = self._read_u16_be(_REG_BUS_VOLTAGE)
-        current_raw = self._read_u16_be_signed(_REG_CURRENT)
-        power_raw = self._read_u16_be(_REG_POWER)
-
-        # Shunt LSB = 2.5 uV
-        shunt_uv = (shunt_raw * 25) // 10
-        # Bus LSB = 1.25 mV
-        bus_mv = (bus_raw * 125) // 100
-        # Current LSB from calibration = 100 uA (0.1 mA)
-        current_ma = (current_raw * _CURRENT_LSB_UA) // 1000
-        # Power LSB from calibration = 2500 uW (2.5 mW)
-        power_mw = (power_raw * _POWER_LSB_UW) // 1000
-
-        return {
-            "bus_mV": str(bus_mv),
-            "current_mA": str(current_ma),
-            "shunt_uV": str(shunt_uv),
-            "power_mW": str(power_mw),
-        }
 
     def _shutdown(self) -> None:
         self._write_u16_be(_REG_CONFIGURATION, _CFG_MODE_POWER_DOWN)

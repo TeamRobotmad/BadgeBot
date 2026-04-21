@@ -159,6 +159,10 @@ class SensorTestMgr:
         self._auto_done: bool = False             # True = scan complete
         self._ina226 = None
         self._ina226_reading: dict[str, int] = {}
+        self._ina226_sum_current_ma: int = 0
+        self._ina226_sum_bus_mv: int = 0
+        self._ina226_sum_power_mw: int = 0
+        self._ina226_sample_count: int = 0
 
         # Use HS pins on a spare Hexpansion to measure rotation rate
         self._test_support_hexpansion_config: HexpansionConfig | None = None
@@ -434,6 +438,7 @@ class SensorTestMgr:
                 self.sample_count = 0
                 self._new_sample = True
         elif self._sub_state == _SUB_MOTOR_TEST:
+            self._sample_ina226_in_background()
             return (self._rotation_rate_motor_power, self._rotation_rate_motor_power)
         return None
 
@@ -497,6 +502,7 @@ class SensorTestMgr:
     def _init_ina226_for_motor_test(self) -> bool:
         self._ina226 = None
         self._ina226_reading = {}
+        self._reset_ina226_accumulators()
         if INA226 is None or self._test_support_hexpansion_config is None:
             return False
         try:
@@ -521,27 +527,40 @@ class SensorTestMgr:
                 return True
         return False
 
-    def _read_ina226_for_motor_test(self) -> int | None:
+    def _reset_ina226_accumulators(self) -> None:
+        self._ina226_sum_current_ma = 0
+        self._ina226_sum_bus_mv = 0
+        self._ina226_sum_power_mw = 0
+        self._ina226_sample_count = 0
+
+    def _sample_ina226_in_background(self) -> None:
         sensor = self._ina226
         if sensor is None:
-            self._ina226_reading = {}
-            return None
-        data = sensor.read()
+            return
+        data = sensor.read_sample_if_ready()
+        if data is None:
+            return
         try:
-            current_ma = int(data.get("current_mA", "0"))
-            bus_mv = int(data.get("bus_mV", "0"))
-            shunt_uv = int(data.get("shunt_uV", "0"))
-            power_mw = int(data.get("power_mW", "0"))
-            self._ina226_reading = {
-                "current_mA": current_ma,
-                "bus_mV": bus_mv,
-                "shunt_uV": shunt_uv,
-                "power_mW": power_mw,
-            }
-            return current_ma
+            self._ina226_sum_current_ma += int(data.get("current_mA", 0))
+            self._ina226_sum_bus_mv += int(data.get("bus_mV", 0))
+            self._ina226_sum_power_mw += int(data.get("power_mW", 0))
+            self._ina226_sample_count += 1
         except Exception:       # pylint: disable=broad-exception-caught
+            return
+
+    def _consume_ina226_average(self) -> int | None:
+        if self._ina226_sample_count <= 0:
             self._ina226_reading = {}
             return None
+        count = self._ina226_sample_count
+        current_ma = self._ina226_sum_current_ma // count
+        self._ina226_reading = {
+            "current_mA": current_ma,
+            "bus_mV": self._ina226_sum_bus_mv // count,
+            "power_mW": self._ina226_sum_power_mw // count,
+        }
+        self._reset_ina226_accumulators()
+        return current_ma
 
 
     def _update_motor_test_mode(self, delta: int):  # pylint: disable=unused-argument
@@ -559,16 +578,17 @@ class SensorTestMgr:
         # CONFIRM toggles between manual and auto mode
         elif app.button_states.get(BUTTON_TYPES["CONFIRM"]):
             app.button_states.clear()
+            self._rotation_rate_motor_power = 0
+            self._auto_last_current_ma = 0
+            self._rotation_rate_measurement_period_elapsed = 0
+            self._reset_ina226_accumulators()
+            for counter in self._rotation_rate_counters:
+                if counter is not None:
+                    counter.value(0)      # reset counter
             if self._auto_mode:
                 # Switch back to manual
                 self._auto_mode = False
                 self._auto_done = False
-                self._rotation_rate_motor_power = 0
-                self._auto_last_current_ma = 0
-                self._rotation_rate_measurement_period_elapsed = 0
-                for counter in self._rotation_rate_counters:
-                    if counter is not None:
-                        counter.value(0)      # reset counter
             else:
                 # Start auto scan
                 self._auto_mode = True
@@ -579,11 +599,6 @@ class SensorTestMgr:
                 self._auto_results = []
                 self._auto_max_rpm = 0
                 self._auto_max_current_ma = 0
-                self._auto_last_current_ma = 0
-                self._rotation_rate_motor_power = 0  # first step is power 0
-                for counter in self._rotation_rate_counters:
-                    if counter is not None:
-                        counter.value(0)  # reset counter before starting
             app.refresh = True
             return
 
@@ -603,6 +618,7 @@ class SensorTestMgr:
                         else:
                             self._auto_timer = 0
                             self._auto_settling = False
+                            self._reset_ina226_accumulators()
                 else:
                     if self._auto_timer >= _AUTO_SCAN_MEASURE_MS:
                         # Measure phase done — read counter and record result
@@ -615,7 +631,7 @@ class SensorTestMgr:
                                 if rpm > self._auto_max_rpm:
                                     self._auto_max_rpm = rpm
                                 rate[index] = rpm
-                        current_ma = self._read_ina226_for_motor_test()
+                        current_ma = self._consume_ina226_average()
                         if current_ma is not None:
                             current_abs = abs(current_ma)
                             self._auto_last_current_ma = current_ma
@@ -628,7 +644,6 @@ class SensorTestMgr:
             return
         else:
             # manual measurement mode
-            self._read_ina226_for_motor_test()
             self._rotation_rate_measurement_period_elapsed += delta
             if self._rotation_rate_measurement_period_elapsed >= _ROTATION_RATE_MEASUREMENT_PERIOD_MS:
                 count = 0
@@ -637,6 +652,7 @@ class SensorTestMgr:
                         count = counter.value(0)  # read-and-reset to get the count for the elapsed period
                         self._rotation_rate_rpms[index] = ((60000 * count) + self._rotation_rate_rounding) // (self._rotation_rate_measurement_period_elapsed * self._rotation_rate_spokes)
                 self._rotation_rate_measurement_period_elapsed = 0
+                self._consume_ina226_average()
                 if self.logging:
                     print(f"S:Rotation Rates: {self._rotation_rate_rpms}")
 
@@ -903,8 +919,9 @@ class SensorTestMgr:
         self._auto_done = False
         self._rotation_rate_motor_power = 0
         self._ina226_reading = {}
+        self._reset_ina226_accumulators()
         if self._ina226 is not None:
-            self._ina226.reset()
+            self._ina226.shutdown()
         self._ina226 = None
 
         if len(app.hexdrive_apps) > 0:

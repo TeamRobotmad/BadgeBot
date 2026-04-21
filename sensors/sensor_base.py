@@ -65,6 +65,10 @@ class SensorBase:
             print(f"S:{self.NAME} reset error: {e}")
         self._ready = False
 
+    def shutdown(self):
+        """Put the sensor into a low-power state without changing ready state."""
+        self._shutdown()
+
     @property
     def is_ready(self) -> bool:
         return self._ready
@@ -110,5 +114,14 @@ class SensorBase:
         d = self._read_reg(reg, 2)
         return (d[0] << 8) | d[1]
 
+    def _read_s16_be(self, reg: int) -> int:
+        value = self._read_u16_be(reg)
+        if value & 0x8000:
+            value -= 0x10000
+        return value
+
     def _write_u8(self, reg: int, value: int):
         self._write_reg(reg, bytes([value & 0xFF]))
+
+    def _write_u16_be(self, reg: int, value: int):
+        self._write_reg(reg, bytes([(value >> 8) & 0xFF, value & 0xFF]))
