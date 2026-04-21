@@ -59,7 +59,7 @@ class SensorManager:
     # ------------------------------------------------------------------
 
     def open(self, port: int) -> bool:
-    """Open hexpansion I2C port (1–6), scan, and initialise any found sensors.
+        """Open hexpansion I2C port (1–6), scan, and initialise any found sensors.
         Returns True if at least one sensor was found."""
         self.close()
         self._port = port

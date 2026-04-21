@@ -13,6 +13,24 @@ import time
 
 from .sensor_base import SensorBase
 
+try:
+    _ticks_ms = time.ticks_ms
+    _ticks_add = time.ticks_add
+    _ticks_diff = time.ticks_diff
+    _sleep_ms = time.sleep_ms
+except AttributeError:
+    def _ticks_ms() -> int:
+        return int(time.time() * 1000)
+
+    def _ticks_add(base: int, delta: int) -> int:
+        return base + delta
+
+    def _ticks_diff(a: int, b: int) -> int:
+        return a - b
+
+    def _sleep_ms(delay_ms: int) -> None:
+        time.sleep(delay_ms / 1000)
+
 
 # Register map
 _REG_CONFIGURATION = 0x00      # Configuration register
@@ -130,14 +148,14 @@ class INA226(SensorBase):
         return True
 
     def _measure(self) -> dict:
-        deadline = time.ticks_add(time.ticks_ms(), _READ_TIMEOUT_MS)
+        deadline = _ticks_add(_ticks_ms(), _READ_TIMEOUT_MS)
         while True:
             status = self._read_u16_be(_REG_MASK_ENABLE)
             if status & _MASK_CVRF:
                 break
-            if time.ticks_diff(deadline, time.ticks_ms()) <= 0:
+            if _ticks_diff(deadline, _ticks_ms()) <= 0:
                 return {"Error": "timeout"}
-            time.sleep_ms(1)
+            _sleep_ms(1)
 
         shunt_raw = self._read_u16_be_signed(_REG_SHUNT_VOLTAGE)
         bus_raw = self._read_u16_be(_REG_BUS_VOLTAGE)
