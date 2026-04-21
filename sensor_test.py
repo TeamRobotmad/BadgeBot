@@ -48,19 +48,6 @@ except ImportError:
         _ = _state
         return None
 
-try:
-    from machine import I2C
-except ImportError:
-    class I2C:          # type: ignore[no-redef]  # pylint: disable=invalid-name
-        """Fallback stub when machine.I2C is unavailable in the simulator."""
-        def __init__(self, *_args, **_kwargs):
-            pass
-        def scan(self):
-            return []
-        def readfrom_mem(self, *_a, **_kw):
-            return bytes(2)
-        def writeto_mem(self, *_a, **_kw):
-            pass
 
 try:
     from micropython import const
@@ -521,6 +508,7 @@ class SensorTestMgr:
         if INA226 is None or self._test_support_hexpansion_config is None:
             return False
         try:
+            from machine import I2C      # pylint: disable=import-outside-toplevel
             i2c = I2C(self._test_support_hexpansion_config.port)
             found_addrs = set(i2c.scan())
         except Exception as e:      # pylint: disable=broad-exception-caught

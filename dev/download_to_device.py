@@ -59,6 +59,7 @@ MODULES: tuple[ModuleSpec, ...] = (
     ModuleSpec(Path("sensors/vl53l0x.py"), Path("sensors/vl53l0x.mpy")),
     ModuleSpec(Path("sensors/vl6180x.py"), Path("sensors/vl6180x.mpy")),
     ModuleSpec(Path("sensors/opt4048.py"), Path("sensors/opt4048.mpy")),
+    ModuleSpec(Path("sensors/ina226.py"), Path("sensors/ina226.mpy")),
 )
 
 # Files copied to the device as-is (no compilation).
