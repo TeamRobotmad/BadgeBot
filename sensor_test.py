@@ -22,9 +22,9 @@ except ImportError:
     INA226 = None
 
 try:
-    from machine import I2C, Pin, mem32, disable_irq, enable_irq
+    from machine import Pin, mem32, disable_irq, enable_irq
 except ImportError:
-    from machine import I2C, Pin
+    from machine import Pin
 
     class _Mem32Shim:
         def __getitem__(self, _addr: int) -> int:
@@ -47,6 +47,21 @@ except ImportError:
         # No-op in simulator fallback.
         _ = _state
         return None
+
+try:
+    from machine import I2C
+except ImportError:
+    class I2C:          # type: ignore[no-redef]  # pylint: disable=invalid-name
+        """Fallback stub when machine.I2C is unavailable in the simulator."""
+        def __init__(self, *_args, **_kwargs):
+            pass
+        def scan(self):
+            return []
+        def readfrom_mem(self, *_a, **_kw):
+            return bytes(2)
+        def writeto_mem(self, *_a, **_kw):
+            pass
+
 try:
     from micropython import const
 except ImportError:
