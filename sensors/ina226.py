@@ -105,7 +105,7 @@ _SHUNT_RESISTOR_MILLIOHM = 100
 _CALIBRATION_VALUE = 0x0200    # 512 => 0.1 mA current register LSB with 100 mΩ shunt
 _CURRENT_LSB_UA = 100          # 0.1 mA current LSB in microamps
 _POWER_LSB_UW = 2500           # 2.5 mW power LSB in microwatts
-_READ_TIMEOUT_MS = 5
+_READ_TIMEOUT_MS = 10
 
 # Default operating configuration:
 #  - shunt conversion: 8.244 ms
@@ -157,6 +157,7 @@ class INA226(SensorBase):
             return None
         status = self._read_u16_be(_REG_MASK_ENABLE)
         if (status & _MASK_CVRF) == 0:
+            print(f"S:{self.NAME} sample not ready (status=0x{status:04X})")
             return None
         return self._measure_from_registers()
 
@@ -167,7 +168,9 @@ class INA226(SensorBase):
 
         self._write_u16_be(_REG_CONFIGURATION, _DEFAULT_CONFIGURATION)
         self._write_u16_be(_REG_CALIBRATION, _CALIBRATION_VALUE)
+        self._write_u16_be(_REG_MASK_ENABLE, _MASK_CNVR | _MASK_LEN)  # Enable conversion ready alert with latching
         return True
+
 
     def _measure(self) -> dict:
         deadline = _ticks_add(_ticks_ms(), _READ_TIMEOUT_MS)

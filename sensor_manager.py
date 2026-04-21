@@ -40,7 +40,7 @@ class SensorManager:
     @property
     def logging(self) -> bool:
         return self._logging
-    
+
     @logging.setter
     def logging(self, value: bool):
         self._logging = value
@@ -51,7 +51,7 @@ class SensorManager:
 
     @property
     def type(self) -> str:
-        return self._type    
+        return self._type
 
 
     # ------------------------------------------------------------------
@@ -113,7 +113,7 @@ class SensorManager:
         if len(self._sensors) > 0 and any(getattr(s, 'TYPE', '') == 'Colour' for s in self._sensors):
             if self.logging:
                 print(f"SM:LED On port {port}")
-            config = HexpansionConfig(port)    
+            config = HexpansionConfig(port)
             config.ls_pin[_LED_PIN].init(mode=Pin.OUT)
             config.ls_pin[_LED_PIN].value(1)
             config.ls_pin[_INTERRUPT_PIN].init(mode=Pin.IN)
@@ -129,7 +129,7 @@ class SensorManager:
         v = config.ls_pin[_INTERRUPT_PIN].value()
         print(f"INT pin value: {v}")
         return v == 0
-    
+
 
     def close(self):
         """Shutdown all sensors and release the I2C bus."""
@@ -141,7 +141,7 @@ class SensorManager:
         if self._port is not None:
             if self.logging:
                 print(f"SM:LED Off port {self._port}")
-            config = HexpansionConfig(self._port)    
+            config = HexpansionConfig(self._port)
             if config is not None:
                 config.ls_pin[_LED_PIN].value(0)
                 config.ls_pin[_LED_PIN].init(mode=Pin.IN)
@@ -170,8 +170,8 @@ class SensorManager:
             self._last_data = {}
             self._read_interval_ms = getattr(self._sensors[self._index], 'READ_INTERVAL_MS', 250)
             self._type = getattr(self._sensors[self._index], 'TYPE', 'Generic')
-   
-   
+
+
     # ------------------------------------------------------------------
     # Reading
     # ------------------------------------------------------------------
@@ -197,7 +197,8 @@ class SensorManager:
         if not self._sensors:
             return "none"
         sensor = self._sensors[self._index]
-        return f"{sensor.NAME}@0x{sensor.i2c_addr:02X}"
+        return f"{sensor.NAME}"
+        #return f"{sensor.NAME}@0x{sensor.i2c_addr:02X}"
 
     @property
     def current_sensor_index(self) -> int:

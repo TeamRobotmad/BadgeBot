@@ -420,6 +420,7 @@ class SensorTestMgr:
             sensor_mgr = self._sensor_mgr
             if sensor_mgr is None:
                 return None
+            # need per sensor read timing here to balance responsiveness with CPU load, since some sensors can be slow to read and we don't want to bog down the system by reading too frequently.  We also want to update the displayed sample rate at a regular interval (e.g. every second) based on the number of samples read in that time.
             #self._read_timer += delta
             #if self._read_timer >= self._sensor_mgr.read_interval:
                 #print(f"S:Reading sensor (S:read_timer={self._read_timer}ms, count_timer={self._count_timer}ms, sample_count={self.sample_count})")
