@@ -923,7 +923,11 @@ class SensorTestMgr:
         self._ina226_reading = {}
         self._reset_ina226_accumulators()
         if self._ina226 is not None:
-            self._ina226.shutdown()
+            try:
+                self._ina226.shutdown()
+            except Exception as exc:          # pylint: disable=broad-exception-caught
+                if self._logging:
+                    print("INA226 shutdown failed:", exc)
         self._ina226 = None
 
         if len(app.hexdrive_apps) > 0:
