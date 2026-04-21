@@ -90,7 +90,12 @@ class SensorBase:
         raise NotImplementedError
 
     def _shutdown(self):
-        """Optional: power-down registers, etc."""
+        """Optional power-down hook.
+
+        Subclasses can implement register writes here when hardware supports
+        an explicit shutdown mode. Drivers without dedicated power management
+        can leave this as a no-op.
+        """
         return
 
     # ------------------------------------------------------------------

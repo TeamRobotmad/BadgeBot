@@ -147,7 +147,12 @@ class INA226(SensorBase):
         }
 
     def read_sample_if_ready(self) -> dict[str, int] | None:
-        """Return one sample in integer units when a new conversion is ready."""
+        """Return one sample in integer units when a new conversion is ready.
+
+        This helper is intended for high-rate internal consumers (for example
+        background averaging in motor test mode). The public SensorBase `read()`
+        API still returns string values for UI rendering consistency.
+        """
         if not self._ready:
             return None
         status = self._read_u16_be(_REG_MASK_ENABLE)

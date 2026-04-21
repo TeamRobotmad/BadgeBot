@@ -545,7 +545,9 @@ class SensorTestMgr:
             self._ina226_sum_bus_mv += int(data.get("bus_mV", 0))
             self._ina226_sum_power_mw += int(data.get("power_mW", 0))
             self._ina226_sample_count += 1
-        except Exception:       # pylint: disable=broad-exception-caught
+        except Exception as e:       # pylint: disable=broad-exception-caught
+            if self._logging:
+                print(f"S:INA226 sample error: {e}")
             return
 
     def _consume_ina226_average(self) -> int | None:
