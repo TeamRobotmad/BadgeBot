@@ -20,9 +20,10 @@ class SensorBase:
     READ_INTERVAL_MS = 250
     TYPE = "Generic"
 
-    def __init__(self):
+    def __init__(self, i2c_addr: int | None = None):
         self._i2c = None
         self._ready = False
+        self._i2c_addr = self.I2C_ADDR if i2c_addr is None else i2c_addr
 
     # ------------------------------------------------------------------
     # Public API (called by SensorManager / app.py)
@@ -68,6 +69,10 @@ class SensorBase:
     def is_ready(self) -> bool:
         return self._ready
 
+    @property
+    def i2c_addr(self) -> int:
+        return self._i2c_addr
+
     # ------------------------------------------------------------------
     # Internal helpers - override in sub-classes
     # ------------------------------------------------------------------
@@ -89,10 +94,10 @@ class SensorBase:
     # ------------------------------------------------------------------
 
     def _write_reg(self, reg: int, data: bytes):
-        self._i2c.writeto_mem(self.I2C_ADDR, reg, data)
+        self._i2c.writeto_mem(self._i2c_addr, reg, data)
 
     def _read_reg(self, reg: int, n: int = 1) -> bytes:
-        return self._i2c.readfrom_mem(self.I2C_ADDR, reg, n)
+        return self._i2c.readfrom_mem(self._i2c_addr, reg, n)
 
     def _read_u8(self, reg: int) -> int:
         return self._read_reg(reg, 1)[0]

@@ -16,11 +16,15 @@ from app_components.notification import Notification
 from system.hexpansion.config import HexpansionConfig
 from egpio import ePin
 from .app import DEFAULT_BACKGROUND_UPDATE_PERIOD, MOTOR_PWM_FREQ
+try:
+    from .sensors.ina226 import INA226
+except ImportError:
+    INA226 = None
 
 try:
-    from machine import Pin, mem32, disable_irq, enable_irq
+    from machine import I2C, Pin, mem32, disable_irq, enable_irq
 except ImportError:
-    from machine import Pin
+    from machine import I2C, Pin
 
     class _Mem32Shim:
         def __getitem__(self, _addr: int) -> int:
@@ -148,9 +152,13 @@ class SensorTestMgr:
         self._auto_step: int = 0                  # current step index (0.._AUTO_SCAN_STEPS-1)
         self._auto_timer: int = 0                 # elapsed ms within current phase
         self._auto_settling: bool = True          # True = in settle phase, False = in measure phase
-        self._auto_results: list = []             # list of (power, rpm) tuples
+        self._auto_results: list[tuple[int, list[int], int | None]] = []   # list of (power, rpm list, current mA)
         self._auto_max_rpm: int = 0               # max rpm seen during scan
+        self._auto_max_current_ma: int = 0        # max current seen during scan
+        self._auto_last_current_ma: int = 0       # latest current sampled in auto mode
         self._auto_done: bool = False             # True = scan complete
+        self._ina226 = None
+        self._ina226_reading: dict[str, int] = {}
 
         # Use HS pins on a spare Hexpansion to measure rotation rate
         self._test_support_hexpansion_config: HexpansionConfig | None = None
@@ -486,6 +494,55 @@ class SensorTestMgr:
             pass  # Simulator Pin stubs lack .init()
         return True
 
+    def _init_ina226_for_motor_test(self) -> bool:
+        self._ina226 = None
+        self._ina226_reading = {}
+        if INA226 is None or self._test_support_hexpansion_config is None:
+            return False
+        try:
+            i2c = I2C(self._test_support_hexpansion_config.port)
+            found_addrs = set(i2c.scan())
+        except Exception as e:      # pylint: disable=broad-exception-caught
+            if self._logging:
+                print(f"S:INA226 scan failed: {e}")
+            return False
+
+        for address in getattr(INA226, "I2C_ADDRS", (INA226.I2C_ADDR,)):
+            if address not in found_addrs:
+                continue
+            try:
+                sensor = INA226(i2c_addr=address)
+            except TypeError:
+                sensor = INA226()
+            if sensor.begin(i2c):
+                self._ina226 = sensor
+                if self._logging:
+                    print(f"S:INA226 found @ 0x{sensor.i2c_addr:02X}")
+                return True
+        return False
+
+    def _read_ina226_for_motor_test(self) -> int | None:
+        sensor = self._ina226
+        if sensor is None:
+            self._ina226_reading = {}
+            return None
+        data = sensor.read()
+        try:
+            current_ma = int(data.get("current_mA", "0"))
+            bus_mv = int(data.get("bus_mV", "0"))
+            shunt_uv = int(data.get("shunt_uV", "0"))
+            power_mw = int(data.get("power_mW", "0"))
+            self._ina226_reading = {
+                "current_mA": current_ma,
+                "bus_mV": bus_mv,
+                "shunt_uV": shunt_uv,
+                "power_mW": power_mw,
+            }
+            return current_ma
+        except Exception:       # pylint: disable=broad-exception-caught
+            self._ina226_reading = {}
+            return None
+
 
     def _update_motor_test_mode(self, delta: int):  # pylint: disable=unused-argument
         app = self._app
@@ -507,6 +564,7 @@ class SensorTestMgr:
                 self._auto_mode = False
                 self._auto_done = False
                 self._rotation_rate_motor_power = 0
+                self._auto_last_current_ma = 0
                 self._rotation_rate_measurement_period_elapsed = 0
                 for counter in self._rotation_rate_counters:
                     if counter is not None:
@@ -520,6 +578,8 @@ class SensorTestMgr:
                 self._auto_settling = True
                 self._auto_results = []
                 self._auto_max_rpm = 0
+                self._auto_max_current_ma = 0
+                self._auto_last_current_ma = 0
                 self._rotation_rate_motor_power = 0  # first step is power 0
                 for counter in self._rotation_rate_counters:
                     if counter is not None:
@@ -555,13 +615,20 @@ class SensorTestMgr:
                                 if rpm > self._auto_max_rpm:
                                     self._auto_max_rpm = rpm
                                 rate[index] = rpm
+                        current_ma = self._read_ina226_for_motor_test()
+                        if current_ma is not None:
+                            current_abs = abs(current_ma)
+                            self._auto_last_current_ma = current_ma
+                            if current_abs > self._auto_max_current_ma:
+                                self._auto_max_current_ma = current_abs
                         power = self._rotation_rate_motor_power
-                        self._auto_results.append((power, rate))
+                        self._auto_results.append((power, rate, current_ma))
                         self._auto_rotation_rate_step()
             # In auto mode, no manual button control for power/IR
             return
         else:
             # manual measurement mode
+            self._read_ina226_for_motor_test()
             self._rotation_rate_measurement_period_elapsed += delta
             if self._rotation_rate_measurement_period_elapsed >= _ROTATION_RATE_MEASUREMENT_PERIOD_MS:
                 count = 0
@@ -819,6 +886,7 @@ class SensorTestMgr:
                     print(f"S:Rate counter {self._rotation_rate_counters}")
                 self._rotation_rate_measurement_period_elapsed = 0
                 self._rotation_rate_rpms = [0] * len(self._rotation_rate_counters)
+                self._init_ina226_for_motor_test()
                 app.update_period = _MOTOR_TEST_BACKGROUND_UPDATE_PERIOD  # update every 1000ms to give a responsive display without overwhelming the CPU with updates
                 return True
         if self.logging:
@@ -834,6 +902,10 @@ class SensorTestMgr:
         self._auto_mode = False
         self._auto_done = False
         self._rotation_rate_motor_power = 0
+        self._ina226_reading = {}
+        if self._ina226 is not None:
+            self._ina226.reset()
+        self._ina226 = None
 
         if len(app.hexdrive_apps) > 0:
             app.hexdrive_apps[0].set_pwm((0, 0, 0, 0))
@@ -884,6 +956,11 @@ class SensorTestMgr:
             if rpm is not None:
                 lines += [f"{index}: {rpm}rpm"]
                 colours += [(1, 0, 1)]
+        if self._ina226_reading:
+            lines += [f"I:{self._ina226_reading.get('current_mA', 0)}mA"]
+            colours += [(1, 0.3, 0.3)]
+            lines += [f"V:{self._ina226_reading.get('bus_mV', 0)}mV"]
+            colours += [(0.3, 0.8, 1.0)]
         self._app.draw_message(ctx, lines, colours, label_font_size)
         button_labels(ctx, up_label="IR+", down_label="IR-", cancel_label="Back",
                       left_label="Pwr-", right_label="Pwr+", confirm_label="Auto")
@@ -909,6 +986,7 @@ class SensorTestMgr:
 
         n = len(self._auto_results)
         max_rpm = self._auto_max_rpm if self._auto_max_rpm > 0 else 1
+        max_current_ma = self._auto_max_current_ma if self._auto_max_current_ma > 0 else 1
 
         if n > 1:
             # Plot data points as small bars.
@@ -917,7 +995,7 @@ class SensorTestMgr:
             # scalar for this chart by using the maximum measured RPM.
             bar_w = max(1, chart_w // _AUTO_SCAN_STEPS)
             for i in range(n):
-                power, rpms = self._auto_results[i]
+                power, rpms, current_ma = self._auto_results[i]
                 x = chart_left + (power * chart_w) // 65535
                 for index, rpm in enumerate(rpms):
                     h = (rpm * chart_h) // max_rpm
@@ -928,6 +1006,11 @@ class SensorTestMgr:
                         else:
                             ctx.rgb(1.0, 0.5, 0.0)
                         ctx.rectangle(x, chart_bottom - h, bar_w, h).fill()
+                if current_ma is not None:
+                    current_h = (abs(current_ma) * chart_h) // max_current_ma
+                    marker_y = chart_bottom - current_h
+                    ctx.rgb(1.0, 0.2, 0.2)
+                    ctx.rectangle(x + bar_w, marker_y - 1, 2, 2).fill()
 
         # Title and max RPM label
         ctx.rgb(1, 1, 0)
@@ -940,6 +1023,8 @@ class SensorTestMgr:
 
         ctx.rgb(0, 1, 1)
         ctx.move_to(-60, chart_bottom + label_font_size + 2).text(f"Max:{max_rpm}rpm")
+        ctx.rgb(1.0, 0.2, 0.2)
+        ctx.move_to(15, chart_bottom + label_font_size + 2).text(f"Ipk:{max_current_ma}mA")
 
         button_labels(ctx, cancel_label="Back", confirm_label="Manual")
 

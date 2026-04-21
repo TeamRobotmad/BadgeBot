@@ -12,8 +12,9 @@ Usage (lazy import pattern to conserve badge RAM):
 """
 
 from machine import I2C, Pin
-from .sensors import ALL_SENSOR_CLASSES
 from system.hexpansion.config import HexpansionConfig
+from .sensors import ALL_SENSOR_CLASSES
+from .sensors.sensor_base import SensorBase
 
 #HexSense LED pin
 _LED_PIN = 1        # LED to illumiinate area under colour sensor to mmeasure reflected light from surface below.
@@ -24,8 +25,8 @@ class SensorManager:
     def __init__(self, logging: bool = False):
         self._logging: bool = logging
         self._i2c = None
-        self._port: int = None
-        self._sensors = []      # list of initialised SensorBase instances
+        self._port: int | None = None
+        self._sensors: list[SensorBase] = []      # list of initialised SensorBase instances
         self._index: int = 0         # currently selected sensor
         self._last_data = {}
         self._read_interval_ms = 10
@@ -58,7 +59,7 @@ class SensorManager:
     # ------------------------------------------------------------------
 
     def open(self, port: int) -> bool:
-        """Open hexpansion I2C port (1–6), scan, and initialise any found sensors.
+    """Open hexpansion I2C port (1–6), scan, and initialise any found sensors.
         Returns True if at least one sensor was found."""
         self.close()
         self._port = port
@@ -81,15 +82,20 @@ class SensorManager:
             print(f"SM:Port {port} scan: {[hex(a) for a in found_addrs]}")
 
         for cls in ALL_SENSOR_CLASSES:
-            if cls.I2C_ADDR in found_addrs:
-                sensor = cls()
+            addresses = getattr(cls, "I2C_ADDRS", (getattr(cls, "I2C_ADDR", 0),))
+            for address in addresses:
+                if address not in found_addrs:
+                    continue
+                try:
+                    sensor = cls(i2c_addr=address)
+                except TypeError:
+                    sensor = cls()
                 if sensor.begin(self._i2c):
                     self._sensors.append(sensor)
                     if self.logging:
-                        print(f"SM:  + {cls.NAME} @ 0x{cls.I2C_ADDR:02X} {cls.TYPE}")
-                else:
-                    if self.logging:
-                        print(f"SM:  - {cls.NAME} begin() failed")
+                        print(f"SM:  + {cls.NAME} @ 0x{sensor.i2c_addr:02X} {cls.TYPE}")
+                elif self.logging:
+                    print(f"SM:  - {cls.NAME} @ 0x{address:02X} begin() failed")
 
         self._index = 0
         self._last_data = {}
@@ -189,7 +195,8 @@ class SensorManager:
     def current_sensor_name(self) -> str:
         if not self._sensors:
             return "none"
-        return self._sensors[self._index].NAME
+        sensor = self._sensors[self._index]
+        return f"{sensor.NAME}@0x{sensor.i2c_addr:02X}"
 
     @property
     def current_sensor_index(self) -> int:
