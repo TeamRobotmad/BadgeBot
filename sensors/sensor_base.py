@@ -67,7 +67,12 @@ class SensorBase:
 
     def shutdown(self):
         """Put the sensor into a low-power state without changing ready state."""
-        self._shutdown()
+        if self._i2c is None:
+            return
+        try:
+            self._shutdown()
+        except Exception as e:          # pylint: disable=broad-exception-caught
+            print(f"S:{self.NAME} shutdown error: {e}")
 
     @property
     def is_ready(self) -> bool:
