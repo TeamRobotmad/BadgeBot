@@ -105,7 +105,7 @@ _SHUNT_RESISTOR_MILLIOHM = 100
 _CALIBRATION_VALUE = 0x0200    # 512 => 0.1 mA current register LSB with 100 mΩ shunt
 _CURRENT_LSB_UA = 100          # 0.1 mA current LSB in microamps
 _POWER_LSB_UW = 2500           # 2.5 mW power LSB in microwatts
-_READ_TIMEOUT_MS = 40
+_READ_TIMEOUT_MS = 5
 
 # Default operating configuration:
 #  - shunt conversion: 8.244 ms
@@ -125,7 +125,7 @@ class INA226(SensorBase):
     I2C_ADDR = 0x40
     I2C_ADDRS = tuple(range(0x40, 0x50))
     NAME = "INA226"
-    READ_INTERVAL_MS = 100
+    READ_INTERVAL_MS = 150
     TYPE = "Power"
 
     def _measure_from_registers(self) -> dict[str, int]:
