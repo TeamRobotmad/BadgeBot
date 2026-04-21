@@ -1,15 +1,29 @@
-from sensors.ina226 import (
-    INA226,
-    _MASK_CVRF,
-    _REG_BUS_VOLTAGE,
-    _REG_CALIBRATION,
-    _REG_CONFIGURATION,
-    _REG_CURRENT,
-    _REG_MANUFACTURER_ID,
-    _REG_MASK_ENABLE,
-    _REG_POWER,
-    _DEFAULT_CONFIGURATION,
-)
+try:
+    from sim.apps.BadgeBot.sensors.ina226 import (
+        INA226,
+        _MASK_CVRF,
+        _REG_BUS_VOLTAGE,
+        _REG_CALIBRATION,
+        _REG_CONFIGURATION,
+        _REG_CURRENT,
+        _REG_MANUFACTURER_ID,
+        _REG_MASK_ENABLE,
+        _REG_POWER,
+        _DEFAULT_CONFIGURATION,
+    )
+except ModuleNotFoundError:
+    from sensors.ina226 import (
+        INA226,
+        _MASK_CVRF,
+        _REG_BUS_VOLTAGE,
+        _REG_CALIBRATION,
+        _REG_CONFIGURATION,
+        _REG_CURRENT,
+        _REG_MANUFACTURER_ID,
+        _REG_MASK_ENABLE,
+        _REG_POWER,
+        _DEFAULT_CONFIGURATION,
+    )
 
 
 def _u16_be(value: int) -> bytes:
