@@ -11,6 +11,7 @@
 #   init_settings(settings)  – register sensor-test specific settings (none currently)
 
 from events.input import BUTTON_TYPES
+from machine import I2C
 from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
 from system.hexpansion.config import HexpansionConfig
@@ -406,7 +407,6 @@ class SensorTestMgr:
             return "Cyan"
         if h < 260:
             return "Blue"
-            mem32 = _Mem32Shim()
         return "Magenta"
 
 
@@ -508,7 +508,7 @@ class SensorTestMgr:
         if INA226 is None or self._test_support_hexpansion_config is None:
             return False
         try:
-            from machine import I2C      # pylint: disable=import-outside-toplevel
+            #todo - use I2C via sensor manager rather than directly - i.e. ask sensor manager to open the port and then use its i2c instance to scan for the INA226, rather than creating a separate I2C instance here (which may cause conflicts on some platforms)
             i2c = I2C(self._test_support_hexpansion_config.port)
             found_addrs = set(i2c.scan())
         except Exception as e:      # pylint: disable=broad-exception-caught
