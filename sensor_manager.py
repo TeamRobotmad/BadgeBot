@@ -219,3 +219,10 @@ class SensorManager:
     def sensor_list(self) -> list:
         """Return [(index, name), ...] for all found sensors."""
         return [(i, s.NAME) for i, s in enumerate(self._sensors)]
+
+    def get_sensor_by_name(self, name: str):
+        """Return the first sensor instance whose NAME matches, or None."""
+        for s in self._sensors:
+            if s.NAME == name:
+                return s
+        return None

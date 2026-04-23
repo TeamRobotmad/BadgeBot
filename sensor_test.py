@@ -11,17 +11,11 @@
 #   init_settings(settings)  – register sensor-test specific settings (none currently)
 
 from events.input import BUTTON_TYPES
-from machine import I2C
 from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
 from system.hexpansion.config import HexpansionConfig
 from egpio import ePin
 from .app import DEFAULT_BACKGROUND_UPDATE_PERIOD, MOTOR_PWM_FREQ
-try:
-    from .sensors.ina226 import INA226
-except ImportError:
-    INA226 = None
-
 try:
     from machine import Pin, mem32, disable_irq, enable_irq
 except ImportError:
@@ -161,6 +155,7 @@ class SensorTestMgr:
         self._auto_last_current_ma: int = 0       # latest current sampled in auto mode
         self._auto_done: bool = False             # True = scan complete
         self._ina226 = None
+        self._ina226_sensor_mgr = None  # SensorManager used exclusively for motor-test INA226 discovery
         self._ina226_reading: dict[str, int] = {}
         self._ina226_sum_current_ma: int = 0
         self._ina226_sum_bus_mv: int = 0
@@ -504,31 +499,32 @@ class SensorTestMgr:
 
     def _init_ina226_for_motor_test(self) -> bool:
         self._ina226 = None
+        self._ina226_sensor_mgr = None
         self._ina226_reading = {}
         self._reset_ina226_accumulators()
-        if INA226 is None or self._test_support_hexpansion_config is None:
+        if self._test_support_hexpansion_config is None:
             return False
         try:
-            #todo - use I2C via sensor manager rather than directly - i.e. ask sensor manager to open the port and then use its i2c instance to scan for the INA226, rather than creating a separate I2C instance here (which may cause conflicts on some platforms)
-            i2c = I2C(self._test_support_hexpansion_config.port)
-            found_addrs = set(i2c.scan())
-        except Exception as e:      # pylint: disable=broad-exception-caught
-            if self._logging:
-                print(f"S:INA226 scan failed: {e}")
-            return False
-
-        for address in getattr(INA226, "I2C_ADDRS", (INA226.I2C_ADDR,)):
-            if address not in found_addrs:
-                continue
-            try:
-                sensor = INA226(i2c_addr=address)
-            except TypeError:
-                sensor = INA226()
-            if sensor.begin(i2c):
+            from .sensor_manager import SensorManager
+            mgr = SensorManager(logging=self._logging)
+            port = self._test_support_hexpansion_config.port
+            if not mgr.open(port):
+                if self._logging:
+                    print(f"S:INA226 – no sensors found on port {port}")
+                return False
+            # Find the first INA226 sensor in the discovered list
+            sensor = mgr.get_sensor_by_name("INA226")
+            if sensor is not None:
                 self._ina226 = sensor
+                self._ina226_sensor_mgr = mgr
                 if self._logging:
                     print(f"S:INA226 found @ 0x{sensor.i2c_addr:02X}")
                 return True
+            # No INA226 found; close the manager
+            mgr.close()
+        except Exception as e:      # pylint: disable=broad-exception-caught
+            if self._logging:
+                print(f"S:INA226 init failed: {e}")
         return False
 
     def _reset_ina226_accumulators(self) -> None:
@@ -927,11 +923,13 @@ class SensorTestMgr:
         self._ina226_reading = {}
         self._reset_ina226_accumulators()
         if self._ina226 is not None:
-            try:
-                self._ina226.shutdown()
-            except Exception as exc:          # pylint: disable=broad-exception-caught
-                if self._logging:
-                    print("INA226 shutdown failed:", exc)
+            if self._ina226_sensor_mgr is not None:
+                try:
+                    self._ina226_sensor_mgr.close()
+                except Exception as exc:          # pylint: disable=broad-exception-caught
+                    if self._logging:
+                        print("INA226 sensor manager close failed:", exc)
+                self._ina226_sensor_mgr = None
         self._ina226 = None
 
         if len(app.hexdrive_apps) > 0:
