@@ -14,7 +14,12 @@ from events.input import BUTTON_TYPES
 from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
 from system.hexpansion.config import HexpansionConfig
-from egpio import ePin
+try:
+    from egpio import ePin
+except ImportError:
+    class ePin:  # pylint: disable=invalid-name
+        """Simulator stub for egpio.ePin – used only for ePin.PWM mode constant."""
+        PWM = None
 from .app import DEFAULT_BACKGROUND_UPDATE_PERIOD, MOTOR_PWM_FREQ
 try:
     from machine import Pin, mem32, disable_irq, enable_irq
