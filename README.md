@@ -87,7 +87,7 @@ This repo contains lots of files that you don't need on your badge to use a HexD
 + tildagon.toml
 + metadata.json
 + app.py or app.mpy
-+ hexdrive.mpy
++ EEPROM/hexdrive.mpy
 + utils.mpy
 + hexpansion_mgr.mpy
 + motor_controller.mpy

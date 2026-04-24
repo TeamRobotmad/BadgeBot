@@ -28,7 +28,7 @@ import app
 #micropython.alloc_emergency_exception_buf(100)
 
 from .utils import draw_logo_animated, parse_version
-from .hexdrive import VERSION as HEXDRIVE_APP_VERSION
+from .EEPROM.hexdrive import VERSION as HEXDRIVE_APP_VERSION
 
 
 _SETTINGS_NAME_PREFIX = "badgebot."  # Prefix for settings keys in EEPROM

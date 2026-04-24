@@ -8,7 +8,7 @@ import mpy_cross
 
 RUNTIME_MODULES = {
     "app",
-    "hexdrive",
+    "EEPROM/hexdrive",
     "autotune",
     "autotune_mgr",
     "settings_mgr",

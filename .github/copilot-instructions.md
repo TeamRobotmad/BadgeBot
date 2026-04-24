@@ -366,7 +366,7 @@ Whenever `hexdrive.py` is modified, you **must** perform all three steps:
 2. **Bump `HEXDRIVE_APP_VERSION`** in `app.py` (and `linefollower.py` if present) to the **same** integer. This is how the app detects that the EEPROM firmware is out-of-date and prompts the user to reprogram.
 3. **Rebuild the `.mpy`** by running from the BadgeBot directory:
    ```bash
-   mpy-cross -v hexdrive.py
+   mpy-cross -v EEPROM/hexdrive.py
    ```
    This produces `hexdrive.mpy`, which is what actually gets written to the HexDrive EEPROM.
 

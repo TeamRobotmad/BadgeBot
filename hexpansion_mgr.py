@@ -1109,7 +1109,7 @@ class HexpansionMgr:
             if self._logging:
                 print(f"H:Hexpansion type {app.HEXPANSION_TYPES[self._hexpansion_init_type].name} does not have an app to copy to EEPROM")
             return _APP_EEPROM_RESULT_FAILURE
-        source_file = app.HEXPANSION_TYPES[self._hexpansion_init_type].app_mpy_name
+        source_file = f"EEPROM/{app.HEXPANSION_TYPES[self._hexpansion_init_type].app_mpy_name}"
         if self._logging:
             print(f"H:Writing app.mpy on port {port} with {source_file}")
         try:

@@ -15,8 +15,8 @@ def test_import_badgebot_app_and_app_export():
     assert BadgeBot.__app_export__ == BadgeBotApp
 
 def test_import_hexdrive_app_and_app_export():
-    import sim.apps.BadgeBot.hexdrive as HexDrive
-    from sim.apps.BadgeBot.hexdrive import HexDriveApp
+    import sim.apps.BadgeBot.EEPROM.hexdrive as HexDrive
+    from sim.apps.BadgeBot.EEPROM.hexdrive import HexDriveApp
     assert HexDrive.__app_export__ == HexDriveApp
 
 def test_badgebot_app_init():
@@ -24,13 +24,13 @@ def test_badgebot_app_init():
     BadgeBotApp()
 
 def test_hexdrive_app_init(port):
-    from sim.apps.BadgeBot.hexdrive import HexDriveApp
+    from sim.apps.BadgeBot.EEPROM.hexdrive import HexDriveApp
     config = HexpansionConfig(port)
     HexDriveApp(config)
 
 def test_app_versions_match():
     import sim.apps.BadgeBot.app as BadgeBot
-    import sim.apps.BadgeBot.hexdrive as HexDrive
+    import sim.apps.BadgeBot.EEPROM.hexdrive as HexDrive
     assert BadgeBot.HEXDRIVE_APP_VERSION == HexDrive.VERSION
     # above test should always pass since BadgeBot.HEXDRIVE_APP_VERSION is imported from HexDrive.VERSION, but this test will at least catch if someone accidentally changes one without the other. 
 
@@ -43,7 +43,7 @@ def test_hexdrive_type_pids_consistent():
     the motor/servo/stepper capability counts must agree.
     """
     from sim.apps.BadgeBot import BadgeBotApp
-    from sim.apps.BadgeBot.hexdrive import _HEXDRIVE_TYPES
+    from sim.apps.BadgeBot.EEPROM.hexdrive import _HEXDRIVE_TYPES
 
     app_instance = BadgeBotApp()
     hexdrive_hexpansion_types = [
