@@ -291,7 +291,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.hextest_port = None
 
         # GPS hexpansion
-        self.hexgps_port = None
+        #self.hexgps_port = None
 
         # Diagnostics hexpansion
         self.hexdiag_port = _DIAG_PORT
