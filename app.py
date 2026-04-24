@@ -259,9 +259,9 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                                  HexpansionType(0x0202, "HexDriveV2",  vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp",           servos=2,             sub_type="2 Servo" ),
                                  HexpansionType(0x0300, "HexTest",     vid=0xCBCB, eeprom_total_size=65536, eeprom_page_size=128),
                                  HexpansionType(0x0400, "HexDiag",     vid=0xCBCB, eeprom_total_size=65536, eeprom_page_size=128),
-                                 HexpansionType(0x1295, "GPS", app_mpy_name="gps.mpy", app_mpy_version=1, app_name="GPSApp"), # eeprom_total_size= 2048, eeprom_page_size= 16),
-                                 HexpansionType(0xD15C, "Flopagon",                eeprom_total_size= 2048, eeprom_page_size= 16), # EEPROM too small for the app
-                                 HexpansionType(0xCAFF, "Club Mate",               eeprom_total_size= 8192, eeprom_page_size= 32, app_mpy_name="caffeine.mpy", app_name="CaffeineJitter"),
+                                 #HexpansionType(0x1295, "GPS", app_mpy_name="gps.mpy", app_mpy_version=1, app_name="GPSApp"), # eeprom_total_size= 2048, eeprom_page_size= 16),
+                                 #HexpansionType(0xD15C, "Flopagon",                eeprom_total_size= 2048, eeprom_page_size= 16), # EEPROM too small for the app
+                                 #HexpansionType(0xCAFF, "Club Mate",               eeprom_total_size= 8192, eeprom_page_size= 32, app_mpy_name="caffeine.mpy", app_name="CaffeineJitter"),
 
                                  HexpansionType(0x0000, "Unknown",   sub_type=""),       # Virtual type to represent unrecognised hexpansions
                                  HexpansionType(0xFFFF, "Blank",     sub_type="")]       # Virtual type to represent blank EEPROMs
@@ -271,7 +271,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.HEXSENSE_HEXPANSION_INDEX = 5      # Index in the HEXPANSION_TYPES list which corresponds to the HexSense type
         self.HEXTEST_HEXPANSION_INDEX = 9       # Index in the HEXPANSION_TYPES list which corresponds to the HexTest type
         self.HEXDIAG_HEXPANSION_INDEX = 10      # Index in the HEXPANSION_TYPES list which corresponds to the HexDiag type
-        self.HEXGPS_HEXPANSION_INDEX = 11       # Index in the HEXPANSION_TYPES list which corresponds to the HexGPS type
+        #self.HEXGPS_HEXPANSION_INDEX = 11       # Index in the HEXPANSION_TYPES list which corresponds to the HexGPS type
 
         self.UNRECOGNISED_HEXPANSION_INDEX = len(self.HEXPANSION_TYPES) - 2 # Index in the HEXPANSION_TYPES list which corresponds to unrecognised hexpansion types MUST BE LAST NON-BLANK ENTRY IN THE LIST
         self.BLANK_HEXPANSION_INDEX = len(self.HEXPANSION_TYPES) - 1        # Index in the HEXPANSION_TYPES list which corresponds to blank EEPROMs
