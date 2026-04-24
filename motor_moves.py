@@ -266,10 +266,10 @@ class MotorMovesMgr:
         loop monitors the task and transitions to _SUB_DONE when it completes."""
         try:
             await self._app.motor_controller.run_instructions(self.instructions)
+        except asyncio.CancelledError:
+            self._app.motor_controller.stop()
+            return
         except Exception as e:      # pylint: disable=broad-exception-caught
-            if type(e).__name__ == "CancelledError":
-                self._app.motor_controller.stop()
-                return
             print(f"MotorController run error: {e}")
             self._app.motor_controller.stop()
 
