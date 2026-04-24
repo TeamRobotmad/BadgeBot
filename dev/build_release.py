@@ -33,6 +33,7 @@ SENSOR_MODULES = {
     "sensors/vl53l0x",
     "sensors/vl6180x",
     "sensors/opt4048",
+    "sensors/ina226",
 }
 
 files_to_mpy = {Path(f"{module}.py") for module in RUNTIME_MODULES}

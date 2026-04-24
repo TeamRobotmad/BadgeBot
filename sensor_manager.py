@@ -12,8 +12,9 @@ Usage (lazy import pattern to conserve badge RAM):
 """
 
 from machine import I2C, Pin
-from .sensors import ALL_SENSOR_CLASSES
 from system.hexpansion.config import HexpansionConfig
+from .sensors import ALL_SENSOR_CLASSES
+from .sensors.sensor_base import SensorBase
 
 #HexSense LED pin
 _LED_PIN = 1        # LED to illumiinate area under colour sensor to mmeasure reflected light from surface below.
@@ -24,8 +25,8 @@ class SensorManager:
     def __init__(self, logging: bool = False):
         self._logging: bool = logging
         self._i2c = None
-        self._port: int = None
-        self._sensors = []      # list of initialised SensorBase instances
+        self._port: int | None = None
+        self._sensors: list[SensorBase] = []      # list of initialised SensorBase instances
         self._index: int = 0         # currently selected sensor
         self._last_data = {}
         self._read_interval_ms = 10
@@ -39,7 +40,7 @@ class SensorManager:
     @property
     def logging(self) -> bool:
         return self._logging
-    
+
     @logging.setter
     def logging(self, value: bool):
         self._logging = value
@@ -50,7 +51,7 @@ class SensorManager:
 
     @property
     def type(self) -> str:
-        return self._type    
+        return self._type
 
 
     # ------------------------------------------------------------------
@@ -81,15 +82,20 @@ class SensorManager:
             print(f"SM:Port {port} scan: {[hex(a) for a in found_addrs]}")
 
         for cls in ALL_SENSOR_CLASSES:
-            if cls.I2C_ADDR in found_addrs:
-                sensor = cls()
+            addresses = getattr(cls, "I2C_ADDRS", (getattr(cls, "I2C_ADDR", 0),))
+            for address in addresses:
+                if address not in found_addrs:
+                    continue
+                try:
+                    sensor = cls(i2c_addr=address)
+                except TypeError:
+                    sensor = cls()
                 if sensor.begin(self._i2c):
                     self._sensors.append(sensor)
                     if self.logging:
-                        print(f"SM:  + {cls.NAME} @ 0x{cls.I2C_ADDR:02X} {cls.TYPE}")
-                else:
-                    if self.logging:
-                        print(f"SM:  - {cls.NAME} begin() failed")
+                        print(f"SM:  + {cls.NAME} @ 0x{sensor.i2c_addr:02X} {cls.TYPE}")
+                elif self.logging:
+                    print(f"SM:  - {cls.NAME} @ 0x{address:02X} begin() failed")
 
         self._index = 0
         self._last_data = {}
@@ -102,11 +108,12 @@ class SensorManager:
             self._read_interval_ms = 250
             self._type = "Generic"
 
-        # Enable LED if there is at least one sensor
-        if len(self._sensors) > 0:
+        # Enable LED only when at least one Colour sensor is present
+        # (avoids pin conflicts with non-colour hexpansions such as the motor-test board)
+        if len(self._sensors) > 0 and any(getattr(s, 'TYPE', '') == 'Colour' for s in self._sensors):
             if self.logging:
                 print(f"SM:LED On port {port}")
-            config = HexpansionConfig(port)    
+            config = HexpansionConfig(port)
             config.ls_pin[_LED_PIN].init(mode=Pin.OUT)
             config.ls_pin[_LED_PIN].value(1)
             config.ls_pin[_INTERRUPT_PIN].init(mode=Pin.IN)
@@ -122,7 +129,7 @@ class SensorManager:
         v = config.ls_pin[_INTERRUPT_PIN].value()
         print(f"INT pin value: {v}")
         return v == 0
-    
+
 
     def close(self):
         """Shutdown all sensors and release the I2C bus."""
@@ -134,7 +141,7 @@ class SensorManager:
         if self._port is not None:
             if self.logging:
                 print(f"SM:LED Off port {self._port}")
-            config = HexpansionConfig(self._port)    
+            config = HexpansionConfig(self._port)
             if config is not None:
                 config.ls_pin[_LED_PIN].value(0)
                 config.ls_pin[_LED_PIN].init(mode=Pin.IN)
@@ -163,8 +170,8 @@ class SensorManager:
             self._last_data = {}
             self._read_interval_ms = getattr(self._sensors[self._index], 'READ_INTERVAL_MS', 250)
             self._type = getattr(self._sensors[self._index], 'TYPE', 'Generic')
-   
-   
+
+
     # ------------------------------------------------------------------
     # Reading
     # ------------------------------------------------------------------
@@ -189,7 +196,9 @@ class SensorManager:
     def current_sensor_name(self) -> str:
         if not self._sensors:
             return "none"
-        return self._sensors[self._index].NAME
+        sensor = self._sensors[self._index]
+        return f"{sensor.NAME}"
+        #return f"{sensor.NAME}@0x{sensor.i2c_addr:02X}"
 
     @property
     def current_sensor_index(self) -> int:
@@ -210,3 +219,10 @@ class SensorManager:
     def sensor_list(self) -> list:
         """Return [(index, name), ...] for all found sensors."""
         return [(i, s.NAME) for i, s in enumerate(self._sensors)]
+
+    def get_sensor_by_name(self, name: str):
+        """Return the first sensor instance whose NAME matches, or None."""
+        for s in self._sensors:
+            if s.NAME == name:
+                return s
+        return None

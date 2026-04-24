@@ -484,6 +484,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     @property
     def enable_sensor_test(self):
         """Whether the Sensor Test feature is enabled, based on whether we have detected sensor hardware and have the manager available."""
+        print(f"Checking if Sensor Test is enabled: sensor_test_mgr={'present' if self._sensor_test_mgr is not None else 'absent'}")
         return self._sensor_test_mgr is not None
 
 

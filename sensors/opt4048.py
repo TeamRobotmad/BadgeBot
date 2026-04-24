@@ -110,12 +110,11 @@ class OPT4048(SensorBase):
 
     def _read_reg16(self, reg: int) -> int:
         """Read a 16-bit big-endian register."""
-        d = self._i2c.readfrom_mem(self.I2C_ADDR, reg, 2)
-        return (d[0] << 8) | d[1]
+        return self._read_u16_be(reg)
 
     def _write_reg16(self, reg: int, value: int):
         """Write a 16-bit big-endian register."""
-        self._i2c.writeto_mem(self.I2C_ADDR, reg, bytes([(value >> 8) & 0xFF, value & 0xFF]))
+        self._write_u16_be(reg, value)
 
     # ── Configuration helpers (public API) ───────────────────────────────────
 
