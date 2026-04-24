@@ -1027,7 +1027,7 @@ class SensorTestMgr:
             bar_w = max(1, chart_w // _AUTO_SCAN_STEPS)
             for i in range(n):
                 power, rpms, current_ma = self._auto_results[i]
-                x = chart_left + (power * chart_w) // 65535
+                x = chart_left + (abs(power) * chart_w) // 65535
                 for index, rpm in enumerate(rpms):
                     h = (rpm * chart_h) // max_rpm
                     if h > 0:
