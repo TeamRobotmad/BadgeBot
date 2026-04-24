@@ -145,12 +145,12 @@ class GPSApp(app.App):         # pylint: disable=no-member
             ctx.move_to(-100, 20).text("Lon: " + str(round(self.last_fix["lon"], 5)))
             for i in range(1, 13):
                 tildagonos.leds[i] = (0,1,0)
-                tildagonos.leds.write()
+            tildagonos.leds.write()
         else:
             ctx.move_to(-100, 0).text("Searching...")
             for i in range(1,13):
                 tildagonos.leds[i] = (0,0,0)
-                tildagonos.leds.write()
+            tildagonos.leds.write()
 
         # show labels for buttons
         button_labels(ctx, cancel_label="Exit")
