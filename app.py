@@ -858,7 +858,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         """Negate individual motor outputs as per settings."""
         output1, output2 = output
         output = (-output1 if self._motor1_reversed else output1, -output2 if self._motor2_reversed else output2)
-        print(f"M:{output}")
+        if self.logging:
+            print(f"M:{output}")
         return output
 
 
