@@ -514,6 +514,7 @@ class SensorTestMgr:
             mgr = SensorManager(logging=self._logging)
             port = self._test_support_hexpansion_config.port
             if not mgr.open(port):
+                mgr.close()
                 if self._logging:
                     print(f"S:INA226 – no sensors found on port {port}")
                 return False
