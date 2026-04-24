@@ -139,12 +139,13 @@ class SensorManager:
             except Exception:       # pylint: disable=broad-exception-caught
                 pass
         if self._port is not None:
-            if self.logging:
-                print(f"SM:LED Off port {self._port}")
-            config = HexpansionConfig(self._port)
-            if config is not None:
-                config.ls_pin[_LED_PIN].value(0)
-                config.ls_pin[_LED_PIN].init(mode=Pin.IN)
+            if len(self._sensors) > 0 and any(getattr(s, 'TYPE', '') == 'Colour' for s in self._sensors):
+                if self.logging:
+                    print(f"SM:LED Off port {self._port}")
+                config = HexpansionConfig(self._port)
+                if config is not None:
+                    config.ls_pin[_LED_PIN].value(0)
+                    config.ls_pin[_LED_PIN].init(mode=Pin.IN)
         self._sensors = []
         self._index = 0
         self._last_data = {}
