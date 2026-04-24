@@ -90,7 +90,7 @@ _SINGLE_PORT_HEXPANSION_REFS = (
     ("hexsense_port", "HexSense", "HEXSENSE_HEXPANSION_INDEX"),
     ("hextest_port", "HexTest", "HEXTEST_HEXPANSION_INDEX"),
     ("hexdiag_port", "HexDiag", "HEXDIAG_HEXPANSION_INDEX"),
-    ("hexgps_port", "HexGPS", "HEXGPS_HEXPANSION_INDEX"),
+    #("hexgps_port", "HexGPS", "HEXGPS_HEXPANSION_INDEX"),
 )
 
 # ---- Settings initialisation -----------------------------------------------
@@ -613,7 +613,7 @@ class HexpansionMgr:
         print(f"Ports to check app: {self._ports_to_check_app}")
         print(f"hexsense_port:{app.hexsense_port}")
         print(f"hextest_port:{app.hextest_port}")
-        print(f"hexgps_port:{app.hexgps_port}")
+        #print(f"hexgps_port:{app.hexgps_port}")
         print(f"hexdiag_port:{app.hexdiag_port}")
         print(f"hexdrive_ports:{app.hexdrive_ports}")
         print(f"hexpansion_update_required = {app.hexpansion_update_required}")
