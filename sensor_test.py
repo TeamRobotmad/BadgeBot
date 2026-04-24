@@ -62,7 +62,7 @@ _ROTATION_RATE_MEASUREMENT_PERIOD_MS = 2500     # how often to update the displa
 _DEFAULT_ROTATION_RATE_EMITTER_DUTY = 20        # default duty cycle for the IR emitter when doing rate testing, 0-255 (0=off, 255=full on)
 _DEFAULT_SPOKES_PER_ROTATION = 3                # number of times the photodiode will be triggered per full rotation of the wheel
 _MOTOR_TEST_BACKGROUND_UPDATE_PERIOD = 1000     # background update period in ms to use during motor test mode (tradeoff between display responsiveness and CPU load)
-_ROTATION_RATE_EMITTER_PINS = [0,1,2,3,4]       # LS_C & LS_D pins used to drive the IR emitter for rotation rate testing
+_ROTATION_RATE_EMITTER_PINS = [2, 4]             # LS_C & LS_D pins used to drive the IR emitter for rotation rate testing
 _ROTATION_RATE_SENSOR_PINS = [0, 1]             # HS_F & HS_G pins used to read the phottransistors for rotation rate testing
 _ROTATION_RATE_SENSOR_ENABLE_PINS = [3]         # LS_D pins used to enable the phototransistors for rotation rate testing (set to output and high to enable, input to disable)
 _IR_EMITTER_PWM_STEP_SIZE = 2                   # Step size for adjusting IR emitter brightness in manual mode, 0-255 (0=off, 255=full on)
