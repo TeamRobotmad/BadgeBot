@@ -5,4 +5,5 @@ BadgeBot.code-workspace
 .deploy_state/test_device_download_state.json
 .editorconfig
 .venv/
+.venv-wsl*/
 
