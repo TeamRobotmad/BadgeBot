@@ -61,6 +61,7 @@ accelerometer distance estimation).  The app runs directly on an ESP32-S3 badge
 | `tcs3472.py` | TCS3472 colour RGBC + CCT + lux sensor (I2C `0x29`) |
 | `tcs3430.py` | TCS3430 colour CIE XYZ + lux sensor (I2C `0x39`) |
 | `opt4048.py` | OPT4048 tristimulus XYZ colour sensor (I2C `0x44`) |
+| `ina226.py` | INA226 current/voltage/power monitor (I2C `0x40`-`0x4F`, 100mΩ shunt default) |
 
 ### Configuration
 
@@ -293,6 +294,14 @@ No dedicated settings currently; the `init_settings` hook exists for future use.
 - **Sensor driver pattern**: Extend `SensorBase`; set `I2C_ADDR` and `NAME` class attrs;
   implement `_init()`, `_measure()`, `_shutdown()`; add to `ALL_SENSOR_CLASSES` in
   `sensors/__init__.py`.
+- **Alternative I2C addresses**: Drivers may also provide `I2C_ADDRS` for all
+  supported addresses. `SensorManager` will probe each address and may instantiate
+  multiple devices of the same driver on a single bus.
+- **Power/current sensors**: Use integer fixed-point math only (no floats) and
+  report values in integer engineering units (`mA`, `mV`, etc.).
+- **Typing expectations**: New sensor-manager/sensor-test changes should include
+  explicit type annotations that are compatible with both MicroPython runtime and
+  desktop linting/type-checking (Pylint/Pylance).
 - **State constants**: Defined in `app.py` and imported by sub-modules via
   `from .app import STATE_*`.
 - **Logging**: Use `if self._logging:` guard before `print()` statements.

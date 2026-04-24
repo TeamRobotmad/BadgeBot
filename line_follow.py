@@ -1,4 +1,4 @@
-# Line Follower Module for BadgeBot
+""" Line Follower Module for BadgeBot """
 #
 # Handles the line-following functionality.
 # Contains the LineSensors and LineSensor hardware driver classes
@@ -71,7 +71,7 @@ class LineSensors:
             for cfg in sensor_configs
         ]
         self._threshold = 0
-        
+
 
     # ------------------------------------------------------------------
 
@@ -79,7 +79,7 @@ class LineSensors:
     def logging(self) -> bool:
         """Whether to print debug logs from the LineSensors class."""
         return self._logging
-    
+
     @logging.setter
     def logging(self, value: bool):
         """Set the logging state for the LineSensors class."""
@@ -87,34 +87,41 @@ class LineSensors:
 
     @property
     def num_sensors(self):
+        """Get the number of sensors managed by this LineSensors instance."""
         return len(self._sensors)
 
     @property
     def threshold(self):
+        """Get the threshold value for the line sensors."""
         return self._threshold
 
     @threshold.setter
     def threshold(self, value):
+        """Set the threshold value for the line sensors."""
         self._threshold = value
 
     def enable(self):
+        """Enable all sensors."""
         for sensor in self._sensors:
             sensor.enable()
 
     def disable(self):
+        """Disable all sensors."""
         for sensor in self._sensors:
             sensor.disable()
 
     def raw_value(self, index):
+        """Get the raw discharge time value for the sensor at the specified index."""
         return self._sensors[index].value
 
     def raw_values(self):
+        """Get the raw discharge time values for all sensors."""
         return [sensor.value for sensor in self._sensors]
 
     def sample_count(self):
         """Get the total sample count across all sensors."""
         return sum(sensor.sample_count for sensor in self._sensors)
-    
+
     def sample_count_and_reset(self):
         """Atomically get the total sample count across all sensors and reset to zero."""
         count = self.sample_count()
@@ -123,6 +130,7 @@ class LineSensors:
         return count
 
     def read(self):
+        """Charge, release, and poll for all sensors using interrupts."""
         for sensor in self._sensors:
             if sensor.start_time != 0:
                 if time.ticks_diff(time.ticks_us(), sensor.start_time) <= _LINE_SENSOR_READ_TIMEOUT_US:
@@ -144,27 +152,27 @@ class LineSensors:
         enable_irq(irq_state)
 
         return True
-    
+
     #@micropython.native
     def read_blocking(self):
         """Charge, release, and poll for all sensors — no IRQ needed."""
 
         gc.disable()
         irq_state = disable_irq()
-        
+
         # Charge phase
         for sensor in self._sensors:
             sensor.pins["ctrl"].on()
             sensor.pins["sig"].init(mode=Pin.OUT)
             sensor.pins["sig"].on()
-        
+
         time.sleep_us(_LINE_SENSOR_TRIGGER_DURATION_US)
-        
+
         # Release all sig pins simultaneously
         start = time.ticks_us()
         for sensor in self._sensors:
             sensor.pins["sig"].init(mode=Pin.IN, pull=None)
-        
+
         # Poll until both sensors have fallen or timeout
         done = [False] * len(self._sensors)
         while not all(done):
@@ -178,10 +186,10 @@ class LineSensors:
                     sensor.pins["ctrl"].off()
                     sensor.sample_count += 1
                     done[i] = True
-        
+
         enable_irq(irq_state)
         gc.enable()
-        
+
         # Mark timed-out sensors
         for i, sensor in enumerate(self._sensors):
             if not done[i]:
@@ -190,6 +198,7 @@ class LineSensors:
 # ---- LineSensor class ------------------------------------------------------
 
 class LineSensor:
+    """Driver for a single QTRX reflectance sensor."""
     def __init__(self, pins, name="LineSensor"):
         try:
             self._name = name
@@ -200,12 +209,13 @@ class LineSensor:
             self.pins = pins
             self.pins["ctrl"].init(mode=Pin.OUT)
             self.pins["ctrl"].off()
-            self.pins["sig"].init(mode=Pin.IN, pull=Pin.PULL_UP)
+            self.pins["sig"].init(mode=Pin.IN)
         except Exception as e:          # pylint: disable=broad-exception-caught
             print(f"{self._name} Init failed:{e}")
 
     @property
     def name(self) -> str:
+        """Get the name of this sensor (for logging/debugging)."""
         return self._name
 
     def disable(self):
@@ -227,10 +237,11 @@ class LineSensor:
         """Interrupt handler for the sensor signal pin.
         Measures the time since the sensor was triggered and updates the state."""
         # Currently as the "irq" is not a hardware interrupt we are not guaranteed that the handler will be called immediately
-        #  when the signal pin goes low, so instead of relying on the handler to capture the timing 
+        #  when the signal pin goes low, so instead of relying on the handler to capture the timing
         #  it is recommended to do a blocking read in the background update loop.
-        # However the code here is the leanest way to capture the timing if the IRQ handler is called immediately when the signal pin goes low, so leaving it here for now in case that becomes possible in the future.
-        
+        # However the code here is the leanest way to capture the timing if the IRQ handler is called immediately when the signal
+        # pin goes low, so leaving it here for now in case that becomes possible in the future.
+
         #if self.start_time == 0:
         #    # spurious interrupt or handler called before read() set up the start_time; ignore
         #    return
@@ -254,7 +265,7 @@ class LineSensor:
 
 # ---- Settings initialisation -----------------------------------------------
 
-def init_settings(s, MySetting: type):
+def init_settings(s, MySetting: type):      #pylint: disable=invalid-name
     """Register line-follower-specific settings in the shared settings dict."""
     s['line_threshold'] = MySetting(s, _LINE_SENSOR_DEFAULT_THRESHOLD, 0, 65535)
     s['pid_kp']         = MySetting(s, _FOLLOWER_PID_KP_DEFAULT, 0, 65536)
@@ -301,7 +312,7 @@ class LineFollowMgr:
         self._app = app
         self._logging: bool = logging
         self._sensor_state = [False, False]
-        self.line_sensors = None                               # Will be a LineSensors instance when active
+        self.line_sensors: LineSensors | None = None                               # Will be a LineSensors instance when active
         self.sample_time: int   = 0
         self.sensor_rate: int = 0     # sample rate
         self.follower_mode: int = _FOLLOWER_MODE_DIFFERENTIAL   # Default follower mode
@@ -333,7 +344,7 @@ class LineFollowMgr:
 
         if self.line_sensors is None:
             # Line sensors are not available; inform the user and abort line follower.
-            Notification(app, "Line sensors not available")
+            app.notification = Notification("Line sensors not available")
             return False
         else:
             if len(app.hexdrive_apps) > 0:
@@ -344,7 +355,7 @@ class LineFollowMgr:
                     self.line_sensors.read_blocking()    # initiate first sensor reading
                     app.update_period = _LINE_SENSOR_UPDATE_PERIOD_MS
                     app.set_menu(None)
-                    app.button_states.clear()            
+                    app.button_states.clear()
                     app.refresh = True
                     app.auto_repeat_clear()
                     self.motor_output = (0,0)
@@ -356,14 +367,14 @@ class LineFollowMgr:
                     if self.ki > 0:
                         self.integral_limit = self.max_pwr // self.ki
                     else:
-                        self.integral_limit = 0            
+                        self.integral_limit = 0
                     if self._logging:
                         print("Entered Line Follower mode")
-                    return True                    
+                    return True
             if self._logging:
                 print("HexDrive not available; Line Follower requires HexDrive to run")
-            Notification(app, "HexDrive Init Failed")
-            return False                
+            app.notification = Notification("HexDrive Init Failed")
+            return False
 
 
     # ------------------------------------------------------------------
@@ -373,13 +384,14 @@ class LineFollowMgr:
     def update(self, delta) -> bool:
         """Handle Line Follower UI.  Returns True if handled."""
         app = self._app
-    
+
         self.sample_time += delta
         if app.button_states.get(BUTTON_TYPES["CANCEL"]):
             app.button_states.clear()
             if len(app.hexdrive_apps) > 0:
                 app.hexdrive_apps[0].set_power(False)
-            self.line_sensors.disable()
+            if self.line_sensors is not None:
+                self.line_sensors.disable()
             app.pid_integral = 0
             app.pid_previous_error = 0
             app.return_to_menu()
@@ -387,17 +399,19 @@ class LineFollowMgr:
         elif app.button_states.get(BUTTON_TYPES["UP"]):
             app.button_states.clear()
             app.settings['line_threshold'].v = app.settings['line_threshold'].inc(app.settings['line_threshold'].v)
-            self.line_sensors.threshold = app.settings['line_threshold'].v
+            if self.line_sensors is not None:
+                self.line_sensors.threshold = app.settings['line_threshold'].v
             app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["DOWN"]):
             app.button_states.clear()
             app.settings['line_threshold'].v = app.settings['line_threshold'].dec(app.settings['line_threshold'].v)
-            self.line_sensors.threshold = app.settings['line_threshold'].v
+            if self.line_sensors is not None:
+                self.line_sensors.threshold = app.settings['line_threshold'].v
             app.refresh = True
         #if self.line_sensors.updated:
         #    app.refresh = True
         #    self.line_sensors.clear_updated()
-        if (self.sample_time > _LINE_SENSOR_SAMPLE_RATE_UPDATE_PERIOD_MS):
+        if self.sample_time > _LINE_SENSOR_SAMPLE_RATE_UPDATE_PERIOD_MS and self.line_sensors is not None:
             sample_count = self.line_sensors.sample_count_and_reset()
             self.sensor_rate = int(((self.sample_time / self.line_sensors.num_sensors) * sample_count) // self.sample_time)
             self.sample_time = 0
@@ -418,11 +432,13 @@ class LineFollowMgr:
         #if self.follower_mode == _FOLLOWER_MODE_DIFFERENTIAL:
             # PID control
             # Calculate the error as the normalised difference between the two sensor readings
-        self.line_sensors.read_blocking()    # wait for sensor reading        
-        error = self.compute_error(self.line_sensors.raw_value(0), self.line_sensors.raw_value(1))            
-        # self.line_sensors.read()           # initiate next sensor reading (non-blocking, using IRQ handler to capture values when ready)
-        output = self.compute_differential_output(error)
-        #else:
+        if self.line_sensors is not None:
+            self.line_sensors.read_blocking()    # wait for sensor reading
+            error = self.compute_error(self.line_sensors.raw_value(0), self.line_sensors.raw_value(1))
+            # self.line_sensors.read()           # initiate next sensor reading (non-blocking, using IRQ handler to capture values when ready)
+            output = self.compute_differential_output(error)
+        else:
+            output = (0, 0)
         #    # Bang Bang control
         #    if s != self._sensor_state:
         #        self._sensor_state = s
@@ -440,7 +456,7 @@ class LineFollowMgr:
 
     def compute_differential_output(self, error: int) -> tuple[int, int]:
         """Compute motor output using a full PID controller for differential line following.
-        
+
         Uses the difference between left and right sensor readings as the error signal,
         and applies proportional, integral, and derivative terms to compute a steering correction.
         Returns a tuple of (left_motor, right_motor) power values, clamped to max_power.
@@ -461,7 +477,7 @@ class LineFollowMgr:
         # Combined PID output
         # make correction value as integer to avoid issues with motor control expecting int values
         correction = p_term # + int(i_term) + int(d_term)
-    
+
         # Combine correction with base forward power to get output for each motor
         output = (self.forward_power + correction, self.forward_power - correction)
 
@@ -472,8 +488,8 @@ class LineFollowMgr:
         #    print(f"PID: err={error} P={p_term} I={i_term} D={d_term} corr={correction} out={output}")
 
         return output
-    
-    
+
+
     @staticmethod
     def compute_error(left_raw: int, right_raw: int) -> int:
         """Compute a normalised error from raw sensor discharge times.
@@ -509,7 +525,7 @@ class LineFollowMgr:
     def draw(self, ctx) -> bool:
         """Render Line Follower UI.  Returns True if handled."""
         app = self._app
- 
+
         ctx.save()
         ctx.rgb(1, 1, 0).move_to(0, -1 * label_font_size).text(f"TH:{self.line_threshold}")
         ctx.rgb(0, 1, 1).move_to(-70, -1 * label_font_size).text(f"{self.sensor_rate} Hz")
@@ -518,12 +534,13 @@ class LineFollowMgr:
         for i in range(app.num_line_sensors):
             x = offset - i * spacing
             # make a simple visualization of the sensor reading as a filled circle, with colour indicating whether it's above or below the threshold
-            colour = (0, 1, 0) if self.line_sensors.raw_value(i) < self.line_threshold else (0, 0, 0)
-            ctx.rgb(*colour).arc(x, 0, 24, 0, 2 * pi, True).fill()
-            ctx.rgb(1, 1, 1).arc(x, 0, 25, 0, 2 * pi, True).stroke()
-            ctx.rgb(1, 1, 0).move_to(x - 20, 2 * label_font_size).text(f"{self.line_sensors.raw_value(i):4}")
-        #    if self._logging:
-        #        print(f"Sensor {i}: {self.line_sensors.value(i)} (raw: {self.line_sensors.raw_value(i)})")
+            if self.line_sensors is not None:
+                colour = (0, 1, 0) if self.line_sensors.raw_value(i) < self.line_threshold else (0, 0, 0)
+                ctx.rgb(*colour).arc(x, 0, 24, 0, 2 * pi, True).fill()
+                ctx.rgb(1, 1, 1).arc(x, 0, 25, 0, 2 * pi, True).stroke()
+                ctx.rgb(1, 1, 0).move_to(x - 20, 2 * label_font_size).text(f"{self.line_sensors.raw_value(i):4}")
+                #    if self._logging:
+                #        print(f"Sensor {i}: {self.line_sensors.value(i)} (raw: {self.line_sensors.raw_value(i)})")
         ctx.restore()
         button_labels(ctx, up_label="+", down_label="-", cancel_label="Cancel")
         return True

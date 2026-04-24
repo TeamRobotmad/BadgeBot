@@ -37,7 +37,7 @@ class ModuleSpec:
 
 # Add new runtime modules here as the project grows.
 MODULES: tuple[ModuleSpec, ...] = (
-    ModuleSpec(Path("hexdrive.py"), Path("hexdrive.mpy")),
+    ModuleSpec(Path("EEPROM/hexdrive.py"), Path("EEPROM/hexdrive.mpy")),
     ModuleSpec(Path("app.py"), Path("app.mpy")),
     ModuleSpec(Path("autotune.py"), Path("autotune.mpy")),
     ModuleSpec(Path("autotune_mgr.py"), Path("autotune_mgr.mpy")),
@@ -59,13 +59,13 @@ MODULES: tuple[ModuleSpec, ...] = (
     ModuleSpec(Path("sensors/vl53l0x.py"), Path("sensors/vl53l0x.mpy")),
     ModuleSpec(Path("sensors/vl6180x.py"), Path("sensors/vl6180x.mpy")),
     ModuleSpec(Path("sensors/opt4048.py"), Path("sensors/opt4048.mpy")),
+    ModuleSpec(Path("sensors/ina226.py"), Path("sensors/ina226.mpy")),
 )
 
 # Files copied to the device as-is (no compilation).
 STATIC_FILES: tuple[Path, ...] = (
     Path("metadata.json"),
     Path("tildagon.toml"),
-    #Path("caffeine.mpy"),   # Club Mate hexpansion app
 )
 
 

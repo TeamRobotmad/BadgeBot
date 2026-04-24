@@ -8,7 +8,7 @@ import mpy_cross
 
 RUNTIME_MODULES = {
     "app",
-    "hexdrive",
+    "EEPROM/hexdrive",
     "autotune",
     "autotune_mgr",
     "settings_mgr",
@@ -33,6 +33,7 @@ SENSOR_MODULES = {
     "sensors/vl53l0x",
     "sensors/vl6180x",
     "sensors/opt4048",
+    "sensors/ina226",
 }
 
 files_to_mpy = {Path(f"{module}.py") for module in RUNTIME_MODULES}

@@ -20,9 +20,10 @@ class SensorBase:
     READ_INTERVAL_MS = 250
     TYPE = "Generic"
 
-    def __init__(self):
+    def __init__(self, i2c_addr: int | None = None):
         self._i2c = None
         self._ready = False
+        self._i2c_addr = self.I2C_ADDR if i2c_addr is None else i2c_addr
 
     # ------------------------------------------------------------------
     # Public API (called by SensorManager / app.py)
@@ -64,9 +65,22 @@ class SensorBase:
             print(f"S:{self.NAME} reset error: {e}")
         self._ready = False
 
+    def shutdown(self):
+        """Put the sensor into a low-power state without changing ready state."""
+        if self._i2c is None:
+            return
+        try:
+            self._shutdown()
+        except Exception as e:          # pylint: disable=broad-exception-caught
+            print(f"S:{self.NAME} shutdown error: {e}")
+
     @property
     def is_ready(self) -> bool:
         return self._ready
+
+    @property
+    def i2c_addr(self) -> int:
+        return self._i2c_addr
 
     # ------------------------------------------------------------------
     # Internal helpers - override in sub-classes
@@ -81,7 +95,12 @@ class SensorBase:
         raise NotImplementedError
 
     def _shutdown(self):
-        """Optional: power-down registers, etc."""
+        """Optional power-down hook.
+
+        Subclasses can implement register writes here when hardware supports
+        an explicit shutdown mode. Drivers without dedicated power management
+        can leave this as a no-op.
+        """
         return
 
     # ------------------------------------------------------------------
@@ -89,10 +108,10 @@ class SensorBase:
     # ------------------------------------------------------------------
 
     def _write_reg(self, reg: int, data: bytes):
-        self._i2c.writeto_mem(self.I2C_ADDR, reg, data)
+        self._i2c.writeto_mem(self._i2c_addr, reg, data)
 
     def _read_reg(self, reg: int, n: int = 1) -> bytes:
-        return self._i2c.readfrom_mem(self.I2C_ADDR, reg, n)
+        return self._i2c.readfrom_mem(self._i2c_addr, reg, n)
 
     def _read_u8(self, reg: int) -> int:
         return self._read_reg(reg, 1)[0]
@@ -105,5 +124,14 @@ class SensorBase:
         d = self._read_reg(reg, 2)
         return (d[0] << 8) | d[1]
 
+    def _read_s16_be(self, reg: int) -> int:
+        value = self._read_u16_be(reg)
+        if value & 0x8000:
+            value -= 0x10000
+        return value
+
     def _write_u8(self, reg: int, value: int):
         self._write_reg(reg, bytes([value & 0xFF]))
+
+    def _write_u16_be(self, reg: int, value: int):
+        self._write_reg(reg, bytes([(value >> 8) & 0xFF, value & 0xFF]))

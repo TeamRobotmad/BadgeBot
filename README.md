@@ -87,7 +87,7 @@ This repo contains lots of files that you don't need on your badge to use a HexD
 + tildagon.toml
 + metadata.json
 + app.py or app.mpy
-+ hexdrive.mpy
++ EEPROM/hexdrive.mpy
 + utils.mpy
 + hexpansion_mgr.mpy
 + motor_controller.mpy
@@ -175,16 +175,24 @@ This is to help develop the BadgeBot application using the Badge simulator.
 
 Windows:
 ```
-git clone https://github.com/TeamRobotmad/badge-2024-software.git
-cd badge-2024-software
-git submodule update --init
+git clone https://github.com/TeamRobotmad/BadgeBot.git
+cd BadgeBot
 powershell -ExecutionPolicy Bypass -File .\dev\setup_dev_env.ps1
 ```
 
+WSL (recommended for simulator tests):
+```
+git clone https://github.com/TeamRobotmad/BadgeBot.git
+cd BadgeBot
+sh ./dev/setup_wsl_dev_env.sh
+```
+
+The WSL helper uses `uv` to provision Python 3.10 and installs both the local dev requirements and the simulator requirements. This is recommended because the published `wasmer` wheels used by the simulator currently load reliably there.
+
 Linux/macOS:
 ```
-git clone https://github.com/hughrawlinson/tildagon-demo.git
-cd tildagon-demo
+git clone https://github.com/TeamRobotmad/BadgeBot.git
+cd BadgeBot
 sh ./dev/setup_dev_env.sh
 ```
 
@@ -202,6 +210,12 @@ Tests must be run from the `tests/` directory:
 ```
 cd tests
 python -m pytest test_smoke.py test_autotune.py -v
+```
+
+If BadgeBot is checked out inside the `badge-2024-software` repo, set `PYTHONPATH` to the parent repo root so `sim.run` can be imported. For the WSL helper's default environment this looks like:
+```
+cd tests
+PYTHONPATH=/path/to/badge-2024-software ../.venv-wsl310/bin/python -m pytest test_smoke.py test_autotune.py -v
 ```
 
 ### Best practise
