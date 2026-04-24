@@ -103,11 +103,11 @@ class GPSApp(app.App):         # pylint: disable=no-member
 
     def update(self, delta):
         """ Update the app state - expire last_fix if it is too old """
-        if not self.reset.value():
+        if self.reset.value():
             self.ticks_since_start += delta
             if self.ticks_since_start > 100:
                 # Release reset after 100ms to allow the GPS to start up
-                self.reset.value(1)
+                self.reset.value(0)
         if not self.foreground:
             # This triggers the automatic foreground display
             eventbus.emit(RequestForegroundPushEvent(self))
