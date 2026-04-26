@@ -263,7 +263,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                                  HexpansionType(0xFFFF, "Blank",     sub_type="")]       # Virtual type to represent blank EEPROMs
 
         self.HEXDRIVE_HEXPANSION_INDEX = 0      # Index in the HEXPANSION_TYPES list which corresponds to the basic HexDrive type
-        self.HEXDRIVE_V2_HEXPANSION_INDEX = 6   # Index in the HEXPANSION_TYPES list which corresponds to the basic HexDrive V2 type
+        self.HEXDRIVE_V2_HEXPANSION_INDEX = 5   # Index in the HEXPANSION_TYPES list which corresponds to the basic HexDrive V2 type
         self.HEXSENSE_HEXPANSION_INDEX = 4      # Index in the HEXPANSION_TYPES list which corresponds to the HexSense type
         self.HEXTEST_HEXPANSION_INDEX = 8       # Index in the HEXPANSION_TYPES list which corresponds to the HexTest type
         self.HEXDIAG_HEXPANSION_INDEX = 9       # Index in the HEXPANSION_TYPES list which corresponds to the HexDiag type
