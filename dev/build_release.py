@@ -16,7 +16,6 @@ RUNTIME_MODULES = {
     "line_follow",
     "motor_moves",
     "servo_test",
-    "stepper_test",
     "utils",
     "motor_controller",
     "sensor_manager",

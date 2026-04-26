@@ -1,6 +1,6 @@
 # BadgeBot app
 
-Companion app for the HexDrive hexpansion. Supports 2 brushed DC motors, 4 RC servos, 1 motor + 2 servos, or a single two-phase stepper. Features Logo-style motor programming, PID line following with automatic gain tuning, I²C sensor testing, servo/stepper test modes, and persistent settings management.
+Companion app for the HexDrive hexpansion. Supports 2 brushed DC motors, 4 RC servos, 1 motor + 2 servos. Features Logo-style motor programming, PID line following with automatic gain tuning, I²C sensor testing, servo test mode, and persistent settings management.
 
 This guide is current for BadgeBot version 1.5
 
@@ -14,10 +14,9 @@ If your HexDrive software (stored on the EEPROM on the hexpansion) is not the la
 - 2 Motor
 - 4 Servo
 - 1 Motor and 2 Servos
-- Stepper
 - Unknown
 
-The board can drive 2 brushed DC motors, 4 RC servos, 1 DC motor and 2 servos or a single two phase Stepper Motor.
+The board can drive 2 brushed DC motors, 4 RC servos, 1 DC motor and 2 servos.
 Once you have selected the desired 'flavour' - please confirm by pressing the "C" (confirm) button.
  
 There must be a HexDrive board plugged in and running the latest software to use the BadgeBot app. If this is not the case then you will see a warning that you need a HexDrive with a reference to this repo. 
@@ -27,7 +26,6 @@ There must be a HexDrive board plugged in and running the latest software to use
 The main menu presents the following options:
 - **Line Follower** – PID-controlled line following using a HexSense with QTRX reflectance sensors
 - **Motor Moves** – Logo/turtle-style motor programming (record UP/DOWN/LEFT/RIGHT sequences, then execute)
-- **Stepper Test** – Test and control a single stepper motor (position and speed modes)
 - **Servo Test** – Test up to 4 RC servos (position, trim, and scanning modes)
 - **PID Auto Tune** – Automatic PID gain tuning using relay feedback (Åström-Hägglund method)
 - **Settings** – Adjust configurable parameters (see below)
@@ -62,7 +60,6 @@ The main menu includes a sub-menu of Settings which can be adjusted.
 |------------------|-------------------------------------------|----------------|--------|--------|
 | brightness       | LED brightness                            | 1.0            | 0.1    | 1.0    |
 | logging          | Enable or disable logging                 | False          | False  | True   |
-| step_max_pos     | Maximum stepper position                  | 3100           | 0      | 65535  |
 
 The PID gains are best set by using the "PID Auto Tune" menu option.  Place the robot on a line and press C to start the tuning process.  The auto-tuner uses relay feedback (Åström-Hägglund method) to determine the ultimate gain and period of oscillation, then calculates PID gains using Ziegler-Nichols tuning rules.  The tuning process includes a quality score (0-100%) indicating how consistent the oscillation data was.  Results are automatically saved to settings.
 
@@ -74,7 +71,7 @@ When running from badge power the current available is limited - the best way to
 
 The maximum allowed servo range is VERY WIDE - most Servos will not be able to cope with this, so you probably want to reduce the ```servo_range``` setting to suit your servos.
 
-Each Servo or Motor driver requires a PWM signals to control it, so a single HexDrive takes up four PWM resources on the ESP32.  As there are 8 such resources, the 'flavour' of your HexDrives will determine how many you can run simultaneously as long as you don't have any other hexpansions or applications using PWM resources. Two '4 Servo', 'Stepper' or 'Unknown' flavour HexDrives will use up all the available PWM channels, whereas you can run up to 4 HexDrives in '2 Motor' flavour. (While each motor driver does actually require two PWM signals we have been able to reduce this to one by swapping it between the active signal when the motor direction changes.)
+Each Servo or Motor driver requires a PWM signals to control it, so a single HexDrive takes up four PWM resources on the ESP32.  As there are 8 such resources, the 'flavour' of your HexDrives will determine how many you can run simultaneously as long as you don't have any other hexpansions or applications using PWM resources. Two '4 Servo' or 'Unknown' flavour HexDrives will use up all the available PWM channels, whereas you can run up to 4 HexDrives in '2 Motor' flavour. (While each motor driver does actually require two PWM signals we have been able to reduce this to one by swapping it between the active signal when the motor direction changes.)
 
 If you unplug a HexDrive the PWM resources will be released immediately so you can move them around the badge easily. 
 
@@ -93,7 +90,6 @@ This repo contains lots of files that you don't need on your badge to use a HexD
 + motor_controller.mpy
 + motor_moves.mpy
 + servo_test.mpy
-+ stepper_test.mpy
 + settings_mgr.mpy
 + line_follow.mpy
 + autotune.mpy
@@ -163,9 +159,6 @@ You can use one motor and 1 or 2 servos simultaneously.
 
 ### Frequency
 You can adjust the PWM frequency, default 20000Hz for motors and 50Hz for servos by calling the ```set_freq()``` function.
-
-### Stepper Motor
-You can control a single 2 phase stepper motor using ```motor_step()``` specifying which of the 8 possible phases to output in the range 0 to 7.  There are 8 possible values as half stepping is supported. To use only full steps specify phase values of 0, 2, 4 and 6.  Information on the pros and cons of using full or half stepping can be found online and what is right for you will depend on your motor and the application.  The motor can be released (so that it is not taking power to hold it in a fixed position) using ```motor_release()```.
 
 #### Keep Alive
 To protect against most badge/software crashes causing the motors or servos to run out of control there is a keep alive mechanism which means that if you do not make a call to the ```set_pwm```, ```set_motors```, ```motor_step``` or ```set_servoposition``` functions the motors/servos will be turned off after 1000mS (default - which can be changed with a call to ```set_keep_alive()```).

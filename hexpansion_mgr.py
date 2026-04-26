@@ -701,13 +701,11 @@ class HexpansionMgr:
 
             app.num_motors = 0
             app.num_servos = 0
-            app.num_steppers = 0
             for port in app.hexdrive_ports:
                 hexdrive_type_idx = self._hexpansion_type_by_slot[port - 1]
                 if hexdrive_type_idx is not None and 0 <= hexdrive_type_idx < len(app.HEXPANSION_TYPES):
                     app.num_motors   += app.HEXPANSION_TYPES[hexdrive_type_idx].motors
                     app.num_servos   += app.HEXPANSION_TYPES[hexdrive_type_idx].servos
-                    app.num_steppers += app.HEXPANSION_TYPES[hexdrive_type_idx].steppers
 
         if len(app.hexdrive_ports) != len (app.hexdrive_apps):
             hexdrive_apps = []
@@ -1390,7 +1388,7 @@ class HexpansionType:
         pid: the PID value to identify the hexpansion type from its EEPROM header
         name: human-friendly name of the hexpansion type (e.g. "HexDrive")
         vid: the VID value to identify the hexpansion type from its EEPROM header (default 0xCAFE)
-        motors, steppers, servos, sensors: the capabilities of this hexpansion type, used to configure the app when detected
+        motors, servos, sensors: the capabilities of this hexpansion type, used to configure the app when detected
         sub_type: a human-friendly string describing the specific variant of this hexpansion type
         app_mpy_name: the filename of the .mpy to copy to the hexpansion EEPROM for this type (if any)
         app_mpy_version: the version string to report for the .mpy copied to the hexpansion EEPROM for this type (if any)
@@ -1398,7 +1396,7 @@ class HexpansionType:
     """
     def __init__(self, pid: int, name: str, vid: int =0xCAFE,
                  eeprom_page_size: int =_DEFAULT_EEPROM_PAGE_SIZE, eeprom_total_size: int =_DEFAULT_EEPROM_TOTAL_SIZE,
-                 motors: int =0, steppers: int =0, servos: int =0, sensors: int =0,
+                 motors: int =0, servos: int =0, sensors: int =0,
                  sub_type: str | None =None,
                  app_mpy_name: str | None =None, app_mpy_version: str | None =None, app_name: str | None =None):
         self.vid: int = vid
@@ -1409,7 +1407,6 @@ class HexpansionType:
         self.sub_type: str | None = sub_type
         self.motors: int = motors
         self.servos: int = servos
-        self.steppers: int = steppers
         self.sensors: int = sensors
         self.app_mpy_name: str | None = app_mpy_name
         self.app_mpy_version: str | None = app_mpy_version

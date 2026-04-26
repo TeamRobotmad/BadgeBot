@@ -89,12 +89,11 @@ STATE_COUNTDOWN = 3       # Shared countdown (Motor Moves & PID AutoTune)
 STATE_SETTINGS = 4        # Edit Settings
 STATE_MOTOR_MOVES = 5     # Motor Moves (sub-states managed by MotorMovesMgr)
 STATE_SERVO = 6           # Servo test
-STATE_STEPPER = 7         # Stepper test
-STATE_FOLLOWER = 8        # Line Follower
-STATE_AUTOTUNE = 9        # PID Auto Tune
-STATE_SENSOR = 10         # Sensor Test
-STATE_AUTODRIVE = 11      # Autonomous Drive
-STATE_HEXPANSION = 12     # Hexpansion Management (sub-states managed by HexpansionMgr)
+STATE_FOLLOWER = 7        # Line Follower
+STATE_AUTOTUNE = 8        # PID Auto Tune
+STATE_SENSOR = 9          # Sensor Test
+STATE_AUTODRIVE = 10      # Autonomous Drive
+STATE_HEXPANSION = 11     # Hexpansion Management (sub-states managed by HexpansionMgr)
 
 # App states where user can minimise app (Menu, Message, Logo)
 MINIMISE_VALID_STATES = [STATE_MENU, STATE_MESSAGE, STATE_LOGO]
@@ -110,18 +109,17 @@ _FRONT_FACE_DEFAULT = 0
 
 
 # Main Menu Items
-MAIN_MENU_ITEMS = ["Line Follower","Motor Moves", "Stepper Test", "Servo Test", "PID Auto Tune", "Sensor Test", "Auto Drive", "Hexpansions", "Settings", "About","Exit"]
+MAIN_MENU_ITEMS = ["Line Follower","Motor Moves", "Servo Test", "PID Auto Tune", "Sensor Test", "Auto Drive", "Hexpansions", "Settings", "About","Exit"]
 MENU_ITEM_LINE_FOLLOWER = 0
 MENU_ITEM_MOTOR_MOVES = 1
-MENU_ITEM_STEPPER_TEST = 2
-MENU_ITEM_SERVO_TEST = 3
-MENU_ITEM_PID_AUTOTUNE = 4
-MENU_ITEM_SENSOR_TEST = 5
-MENU_ITEM_AUTO_DRIVE = 6
-MENU_ITEM_HEXPANSION = 7
-MENU_ITEM_SETTINGS = 8
-MENU_ITEM_ABOUT = 9
-MENU_ITEM_EXIT = 10
+MENU_ITEM_SERVO_TEST = 2
+MENU_ITEM_PID_AUTOTUNE = 3
+MENU_ITEM_SENSOR_TEST = 4
+MENU_ITEM_AUTO_DRIVE = 5
+MENU_ITEM_HEXPANSION = 6
+MENU_ITEM_SETTINGS = 7
+MENU_ITEM_ABOUT = 8
+MENU_ITEM_EXIT = 9
 
 # Front face direction labels (0=BtnA corner between slots 6 & 1, each step = 30° CW)
 _FRONT_FACE_LABELS = (
@@ -156,7 +154,6 @@ HexpansionMgr, HexpansionType, _hexpansion_init_settings = _try_import('hexpansi
 SettingsMgr, MySetting                                    = _try_import('settings_mgr',   'SettingsMgr', 'MySetting')
 MotorMovesMgr, _motor_moves_init_settings                 = _try_import('motor_moves',    'MotorMovesMgr', 'init_settings')
 ServoTestMgr, _servo_test_init_settings                   = _try_import('servo_test',     'ServoTestMgr', 'init_settings')
-StepperTestMgr, _stepper_test_init_settings               = _try_import('stepper_test',   'StepperTestMgr', 'init_settings')
 LineFollowMgr, _line_follow_init_settings                 = _try_import('line_follow',    'LineFollowMgr', 'init_settings')
 (AutotuneMgr,)                                            = _try_import('autotune_mgr',   'AutotuneMgr')
 SensorTestMgr, _sensor_test_init_settings                 = _try_import('sensor_test',    'SensorTestMgr', 'init_settings')
@@ -248,15 +245,14 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         # Hexpansion related - SEE ALSO hexpansion_mgr to update _SINGLE_PORT_HEXPANSION_REFS
         #                                       pid      name         vid          eeprom total size        eeprom page size      app mpy name                 app mpy version                       app name                motors    servos    sensors    sub_type
         assert HexpansionType is not None
-        self.HEXPANSION_TYPES = [HexpansionType(0xCBCB, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2, servos=4, steppers=1, sub_type="Uncommitted" ),
-                                 HexpansionType(0xCBCA, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2,                       sub_type="2 Motor" ),
-                                 HexpansionType(0xCBCC, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp",           servos=4,             sub_type="4 Servo" ),
-                                 HexpansionType(0xCBCD, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=1, servos=2,             sub_type="1 Mot 2 Srvo" ),
-                                 HexpansionType(0xCBCE, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp",                     steppers=1, sub_type="1 Stepper" ),
-                                 HexpansionType(0x0100, "HexSense",    vid=0xCBCB, eeprom_total_size=65536, eeprom_page_size=128,                                                                                                                sensors=2,  sub_type="2 Line Sensors"),
-                                 HexpansionType(0x0200, "HexDriveV2",  vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2, servos=2,             sub_type="Uncommitted" ),
-                                 HexpansionType(0x0201, "HexDriveV2",  vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2,                       sub_type="2 Motor" ),
-                                 HexpansionType(0x0202, "HexDriveV2",  vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp",           servos=2,             sub_type="2 Servo" ),
+        self.HEXPANSION_TYPES = [HexpansionType(0xCBCB, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2, servos=4, sub_type="Uncommitted" ),
+                                 HexpansionType(0xCBCA, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2,           sub_type="2 Motor" ),
+                                 HexpansionType(0xCBCC, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp",           servos=4, sub_type="4 Servo" ),
+                                 HexpansionType(0xCBCD, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=1, servos=2, sub_type="1 Mot 2 Srvo" ),
+                                 HexpansionType(0x0100, "HexSense",    vid=0xCBCB, eeprom_total_size=65536, eeprom_page_size=128,                                                                                                    sensors=2,  sub_type="2 Line Sensors"),
+                                 HexpansionType(0x0200, "HexDriveV2",  vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2, servos=2, sub_type="Uncommitted" ),
+                                 HexpansionType(0x0201, "HexDriveV2",  vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2,           sub_type="2 Motor" ),
+                                 HexpansionType(0x0202, "HexDriveV2",  vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp",           servos=2, sub_type="2 Servo" ),
                                  HexpansionType(0x0300, "HexTest",     vid=0xCBCB, eeprom_total_size=65536, eeprom_page_size=128),
                                  HexpansionType(0x0400, "HexDiag",     vid=0xCBCB, eeprom_total_size=65536, eeprom_page_size=128),
                                  #HexpansionType(0x1295, "GPS", app_mpy_name="gps.mpy", app_mpy_version=1, app_name="GPSApp"), # eeprom_total_size= 2048, eeprom_page_size= 16),
@@ -268,16 +264,16 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
         self.HEXDRIVE_HEXPANSION_INDEX = 0      # Index in the HEXPANSION_TYPES list which corresponds to the basic HexDrive type
         self.HEXDRIVE_V2_HEXPANSION_INDEX = 6   # Index in the HEXPANSION_TYPES list which corresponds to the basic HexDrive V2 type
-        self.HEXSENSE_HEXPANSION_INDEX = 5      # Index in the HEXPANSION_TYPES list which corresponds to the HexSense type
-        self.HEXTEST_HEXPANSION_INDEX = 9       # Index in the HEXPANSION_TYPES list which corresponds to the HexTest type
-        self.HEXDIAG_HEXPANSION_INDEX = 10      # Index in the HEXPANSION_TYPES list which corresponds to the HexDiag type
-        #self.HEXGPS_HEXPANSION_INDEX = 11       # Index in the HEXPANSION_TYPES list which corresponds to the HexGPS type
+        self.HEXSENSE_HEXPANSION_INDEX = 4      # Index in the HEXPANSION_TYPES list which corresponds to the HexSense type
+        self.HEXTEST_HEXPANSION_INDEX = 8       # Index in the HEXPANSION_TYPES list which corresponds to the HexTest type
+        self.HEXDIAG_HEXPANSION_INDEX = 9       # Index in the HEXPANSION_TYPES list which corresponds to the HexDiag type
+        #self.HEXGPS_HEXPANSION_INDEX = 10      # Index in the HEXPANSION_TYPES list which corresponds to the HexGPS type
 
         self.UNRECOGNISED_HEXPANSION_INDEX = len(self.HEXPANSION_TYPES) - 2 # Index in the HEXPANSION_TYPES list which corresponds to unrecognised hexpansion types MUST BE LAST NON-BLANK ENTRY IN THE LIST
         self.BLANK_HEXPANSION_INDEX = len(self.HEXPANSION_TYPES) - 1        # Index in the HEXPANSION_TYPES list which corresponds to blank EEPROMs
         self.hexpansion_update_required: bool = False # flag from async to main loop
 
-        self.hexdrive_hexpansion_types = [0,1,2,3,4,6,7,8] # indices in the HEXPANSION_TYPES list which correspond to HexDrive variants - used to check if a detected hexpansion is a HexDrive and to set up the motor and servo counts accordingly
+        self.hexdrive_hexpansion_types = [0,1,2,3,5,6,7] # indices in the HEXPANSION_TYPES list which correspond to HexDrive variants - used to check if a detected hexpansion is a HexDrive and to set up the motor and servo counts accordingly
 
         # HexDrive hexpansion - has an app which we use to control the motors and servos
         self.hexdrive_ports = []
@@ -305,7 +301,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self._hexpansion_mgr   = HexpansionMgr(self, logging=self.logging)  if HexpansionMgr is not None else None
         self._motor_moves_mgr  = MotorMovesMgr(self, logging=self.logging)  if MotorMovesMgr is not None else None
         self._servo_test_mgr   = ServoTestMgr(self, logging=self.logging)   if ServoTestMgr is not None else None
-        self._stepper_test_mgr = StepperTestMgr(self, logging=self.logging) if StepperTestMgr is not None else None
         self._settings_mgr     = SettingsMgr(self, logging=self.logging)    if SettingsMgr is not None else None
         self._line_follow_mgr  = LineFollowMgr(self, logging=self.logging)  if LineFollowMgr is not None else None
         self._autotune_mgr     = AutotuneMgr(self, self._line_follow_mgr, logging=self.logging) if AutotuneMgr is not None else None
@@ -322,7 +317,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self._register_state_functions(STATE_FOLLOWER, self._line_follow_mgr)
         self._register_state_functions(STATE_AUTOTUNE, self._autotune_mgr)
         self._register_state_functions(STATE_SERVO, self._servo_test_mgr)
-        self._register_state_functions(STATE_STEPPER, self._stepper_test_mgr)
         self._register_state_functions(STATE_SETTINGS, self._settings_mgr)
         self._register_state_functions(STATE_SENSOR, self._sensor_test_mgr)
         self._register_state_functions(STATE_AUTODRIVE, self._autodrive_mgr)
@@ -330,7 +324,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
         # Motor Driver Hardware
         self.num_motors: int = 0        # initialised to 0 until we detect a HexDrive Hexpansion and can set this based on the actual number of motors it has
-        self.num_steppers: int = 0      # initialised to 0 until we detect a HexDrive Hexpansion and can set this based on the actual number of steppers it has
 
         # Line Sensors Hardware
         self.num_line_sensors: int = 0  # initialised to 0 until we detect a HexSense Hexpansion and can set this based on the actual number of sensors it has
@@ -470,12 +463,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
 
     @property
-    def enable_stepper_test(self):
-        """Whether the Stepper Test feature is enabled, based on whether we have detected stepper hardware and have the manager available."""
-        return self.num_steppers > 0 and self._stepper_test_mgr is not None
-
-
-    @property
     def enable_line_follow(self):
         """Whether the Line Follow feature is enabled, based on whether we have detected line sensors and have the manager available."""
         return self.num_motors > 1 and self.num_line_sensors > 0 and self._line_follow_mgr is not None
@@ -509,8 +496,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             _motor_moves_init_settings(self.settings, MySetting)
         if self.enable_servo_test and _servo_test_init_settings is not None:
             _servo_test_init_settings(self.settings, MySetting)
-        if self.enable_stepper_test and _stepper_test_init_settings is not None:
-            _stepper_test_init_settings(self.settings, MySetting)
         if self.enable_line_follow and _line_follow_init_settings is not None:
             _line_follow_init_settings(self.settings, MySetting)
         if self.enable_sensor_test and _sensor_test_init_settings is not None:
@@ -990,8 +975,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             menu_items = MAIN_MENU_ITEMS.copy()
             if not self.enable_servo_test and MAIN_MENU_ITEMS[MENU_ITEM_SERVO_TEST] in menu_items:
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_SERVO_TEST])
-            if not self.enable_stepper_test and MAIN_MENU_ITEMS[MENU_ITEM_STEPPER_TEST] in menu_items:
-                menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_STEPPER_TEST])
             if not self.enable_motor_moves and MAIN_MENU_ITEMS[MENU_ITEM_MOTOR_MOVES] in menu_items:
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_MOTOR_MOVES])
             if not self.enable_line_follow and MAIN_MENU_ITEMS[MENU_ITEM_LINE_FOLLOWER] in menu_items:
@@ -1062,15 +1045,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                     self._autotune_mgr.logging = self.logging # update logging setting in autotune manager based on current app setting, in case it was changed
                     if self._autotune_mgr.start():
                         self.current_state = STATE_AUTOTUNE
-        elif item == MAIN_MENU_ITEMS[MENU_ITEM_STEPPER_TEST]: # Stepper Test
-            # Check for required hardware and show message if not present, otherwise start the stepper test manager and switch to stepper test state
-            if self.num_steppers == 0:
-                self.notification = Notification("No Steppers")
-            else:
-                if self._stepper_test_mgr is not None:
-                    self._stepper_test_mgr.logging = self.logging # update logging setting in stepper test manager based on current app setting, in case it was changed
-                    if self._stepper_test_mgr.start():
-                        self.current_state = STATE_STEPPER
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_SERVO_TEST]: # Servo Test
             # Check for required hardware and show message if not present, otherwise start the servo test manager and switch to servo test state
             if self.num_servos == 0:

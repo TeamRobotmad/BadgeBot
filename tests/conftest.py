@@ -14,10 +14,10 @@ Usage in tests::
         app = badgebot_app_with_hexpansion
         assert app.num_motors == 2
 
-    @pytest.mark.parametrize("hexdrive_pid", [0xCBCE])
-    def test_stepper(badgebot_app_with_hexpansion):
+    @pytest.mark.parametrize("hexdrive_pid", [0xCBCC])
+    def test_servo(badgebot_app_with_hexpansion):
         app = badgebot_app_with_hexpansion
-        assert app.num_steppers == 1
+        assert app.num_servos == 4
 
 The core helper :func:`install_fake_hexpansion` is deliberately generic –
 callers supply a ``(vid, pid)`` pair and a port number, and it takes care
