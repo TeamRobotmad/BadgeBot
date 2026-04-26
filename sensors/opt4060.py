@@ -177,47 +177,37 @@ class OPT4060(SensorBase):
         super().__init__(i2c_addr)
         self._overload = False
 
-    # ── Low-level I2C (16-bit big-endian registers) ──────────────────────────
-
-    def _read_reg16(self, reg: int) -> int:
-        """Read a 16-bit big-endian register."""
-        return self._read_u16_be(reg)
-
-    def _write_reg16(self, reg: int, value: int):
-        """Write a 16-bit big-endian register."""
-        self._write_u16_be(reg, value)
-
     # ── Configuration helpers (public API) ───────────────────────────────────
 
     def set_range(self, rng: int):
         """Set the measurement range (use RANGE_* constants or RANGE_AUTO)."""
-        cfg = self._read_reg16(_REG_CONFIG)
+        cfg = self._read_u16_be(_REG_CONFIG)
         cfg = (cfg & ~_CFG_RANGE_MASK) | ((rng & 0x0F) << 10)
-        self._write_reg16(_REG_CONFIG, cfg)
+        self._write_u16_be(_REG_CONFIG, cfg)
 
     def get_range(self) -> int:
         """Return the current range setting."""
-        return (self._read_reg16(_REG_CONFIG) >> 10) & 0x0F
+        return (self._read_u16_be(_REG_CONFIG) >> 10) & 0x0F
 
     def set_conversion_time(self, ct: int):
         """Set the per-channel conversion time (use CONV_* constants)."""
-        cfg = self._read_reg16(_REG_CONFIG)
+        cfg = self._read_u16_be(_REG_CONFIG)
         cfg = (cfg & ~_CFG_CONV_TIME_MASK) | ((ct & 0x0F) << 6)
-        self._write_reg16(_REG_CONFIG, cfg)
+        self._write_u16_be(_REG_CONFIG, cfg)
 
     def get_conversion_time(self) -> int:
         """Return the current conversion-time setting."""
-        return (self._read_reg16(_REG_CONFIG) >> 6) & 0x0F
+        return (self._read_u16_be(_REG_CONFIG) >> 6) & 0x0F
 
     def set_mode(self, mode: int):
         """Set the operating mode (use MODE_* constants)."""
-        cfg = self._read_reg16(_REG_CONFIG)
+        cfg = self._read_u16_be(_REG_CONFIG)
         cfg = (cfg & ~_CFG_OPER_MODE_MASK) | ((mode & 0x03) << 4)
-        self._write_reg16(_REG_CONFIG, cfg)
+        self._write_u16_be(_REG_CONFIG, cfg)
 
     def get_mode(self) -> int:
         """Return the current operating mode."""
-        return (self._read_reg16(_REG_CONFIG) >> 4) & 0x03
+        return (self._read_u16_be(_REG_CONFIG) >> 4) & 0x03
 
     def set_interrupt_enabled(self, enabled: bool):
         """Enable or disable conversion-ready interrupt on the INT pin.
@@ -226,16 +216,16 @@ class OPT4060(SensorBase):
         converted, allowing the host to poll the status register rather than
         busy-waiting.
         """
-        tcfg = self._read_reg16(_REG_INT_CTRL)
+        tcfg = self._read_u16_be(_REG_INT_CTRL)
         if enabled:
             tcfg = (tcfg & ~_INT_CTRL_INT_CFG_MASK) | (_INT_CFG_ALL_READY << 2)
         else:
             tcfg = (tcfg & ~_INT_CTRL_INT_CFG_MASK) | (_INT_CFG_DISABLED << 2)
-        self._write_reg16(_REG_INT_CTRL, tcfg)
+        self._write_u16_be(_REG_INT_CTRL, tcfg)
 
     def get_interrupt_enabled(self) -> bool:
         """Return True if the conversion-ready interrupt is enabled."""
-        return ((self._read_reg16(_REG_INT_CTRL) >> 2) & 0x03) == _INT_CFG_ALL_READY
+        return ((self._read_u16_be(_REG_INT_CTRL) >> 2) & 0x03) == _INT_CFG_ALL_READY
 
     def set_latched_interrupt(self, enabled: bool, threshold_ch: int = _THRESH_CH_CLEAR,
                               threshold_low: int = 0x0000, threshold_high: int = 0xFFFF):
@@ -246,28 +236,28 @@ class OPT4060(SensorBase):
         non-latched interrupt mode.
         """
         if enabled:
-            self._write_reg16(_REG_THRESH_LO, threshold_low)
-            self._write_reg16(_REG_THRESH_HI, threshold_high)
+            self._write_u16_be(_REG_THRESH_LO, threshold_low)
+            self._write_u16_be(_REG_THRESH_HI, threshold_high)
 
-        cfg = self._read_reg16(_REG_CONFIG)
+        cfg = self._read_u16_be(_REG_CONFIG)
         if enabled:
             cfg |= _CFG_INT_LATCH_MASK      # INT_LATCH = 1
         else:
             cfg &= ~_CFG_INT_LATCH_MASK     # INT_LATCH = 0
-        self._write_reg16(_REG_CONFIG, cfg)
+        self._write_u16_be(_REG_CONFIG, cfg)
 
-        tcfg = self._read_reg16(_REG_INT_CTRL)
+        tcfg = self._read_u16_be(_REG_INT_CTRL)
         if enabled:
             # Set threshold channel, INT as output, threshold interrupt config
             tcfg = (tcfg & 0x8001) | ((threshold_ch & 0x03) << 5) | (_INT_DIR_OUTPUT << 4) | (_INT_CFG_SMBUS << 2)
         else:
             tcfg = tcfg & ~_INT_CTRL_INT_DIR_MASK   # make INT pin an input
-        self._write_reg16(_REG_INT_CTRL, tcfg)
+        self._write_u16_be(_REG_INT_CTRL, tcfg)
 
     # ── SensorBase interface ─────────────────────────────────────────────────
 
     def _init(self) -> bool:
-        dev_id = self._read_reg16(_REG_DEVICE_ID) & _DEVICE_ID_MASK
+        dev_id = self._read_u16_be(_REG_DEVICE_ID) & _DEVICE_ID_MASK
         if dev_id != _DEVICE_ID_EXPECT:
             print(f"S:OPT4060 ID 0x{dev_id:04X} (expected 0x{_DEVICE_ID_EXPECT:04X}) - rejecting")
             return False
@@ -280,7 +270,7 @@ class OPT4060(SensorBase):
         #   INT polarity: active-low (bit 2 = 0)
         #   Fault count : 1 (bits 1:0 = 0)
         cfg = (RANGE_AUTO << 10) | (CONV_1_8MS << 6) | (MODE_CONTINUOUS << 4) | _CFG_INT_LATCH_MASK
-        self._write_reg16(_REG_CONFIG, cfg)
+        self._write_u16_be(_REG_CONFIG, cfg)
 
         # Use latched interrupt mode so the CONV_READY flag stays set long enough
         # to be reliably sampled — the non-latched pulse is only ~1 µs wide.
@@ -292,7 +282,7 @@ class OPT4060(SensorBase):
         # Poll status for conversion-ready; timeout after READ_INTERVAL_MS
         deadline = time.ticks_add(time.ticks_ms(), self.READ_INTERVAL_MS)
         while True:
-            st = self._read_reg16(_REG_RES_CTRL)
+            st = self._read_u16_be(_REG_RES_CTRL)
             if st & _FLAG_READY:
                 self._overload = bool(st & _FLAG_OVERLOAD)
                 break
