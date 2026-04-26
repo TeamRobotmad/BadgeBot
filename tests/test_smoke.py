@@ -141,3 +141,4 @@ def test_all_sensor_classes_populated():
     assert 'VL53L0X' in names or 'VL6180X' in names  # at least one ToF sensor
     assert 'TCS3472' in names or 'TCS3430' in names  # at least one color sensor
     assert 'OPT4048' in names  # OPT4048 tristimulus sensor
+    assert 'OPT4060' in names  # OPT4060 RGBW colour sensor
