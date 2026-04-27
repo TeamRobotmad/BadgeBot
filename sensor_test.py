@@ -10,6 +10,8 @@
 #   draw(ctx)                – render sensor-test-related UI
 #   init_settings(settings)  – register sensor-test specific settings (none currently)
 
+import time
+
 from events.input import BUTTON_TYPES
 from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
@@ -55,6 +57,15 @@ except ImportError:
     # CPython / simulator fallback – const() is just an identity function
     # on MicroPython; replicate that so module-level const() calls work.
     const = lambda x: x         #pylint: disable=unnecessary-lambda-assignment
+
+_TIME_SLEEP_MS = getattr(time, "sleep_ms", None)
+
+
+def _sleep_ms(delay_ms: int) -> None:
+    if _TIME_SLEEP_MS is not None:
+        _TIME_SLEEP_MS(delay_ms)
+        return
+    time.sleep(delay_ms / 1000)
 
 
 # Constants for rotation rate measurement and motor test mode.
@@ -218,6 +229,100 @@ class SensorTestMgr:
                 print(f"Setting up Hexpansion on port {port} for rotation rate measurement")
             self._test_support_hexpansion_config = HexpansionConfig(port)
             self._rotation_rate_enable(False)  # start with rotation rate emitter and sensors off until we enter motor test mode
+
+
+    def _rotation_rate_sensor_pair(self, pair_index: int = 0) -> tuple[int, int] | None:
+        """Return the requested HS sensor pin pair from `_ROTATION_RATE_SENSOR_PINS`."""
+        start = pair_index * 2
+        if start < 0 or start + 1 >= len(_ROTATION_RATE_SENSOR_PINS):
+            return None
+        return _ROTATION_RATE_SENSOR_PINS[start], _ROTATION_RATE_SENSOR_PINS[start + 1]
+
+
+    def encoder_smoke_test(
+        self,
+        samples: int = 12,
+        interval_ms: int = 250,
+        filter_ns: int = 1_000_000,
+        max: int | None = 3,
+        min: int = 0,
+    ) -> bool:
+        """Run a short console-based encoder smoke test on the first HexTest sensor pair."""
+        if samples <= 0:
+            print("S:Encoder smoke test requires at least one sample")
+            return False
+        if interval_ms < 0:
+            print("S:Encoder smoke test requires interval_ms >= 0")
+            return False
+        if self._sub_state == _SUB_MOTOR_TEST:
+            print("S:Encoder smoke test unavailable while motor test mode is active")
+            return False
+
+        config = self._test_support_hexpansion_config
+        if config is None:
+            print("S:Encoder smoke test requires a HexTest Hexpansion")
+            return False
+
+        hs_pair = self._rotation_rate_sensor_pair(0)
+        if hs_pair is None:
+            print("S:Encoder smoke test requires at least one HS sensor pin pair")
+            return False
+
+        gpios = _HS_PIN_TO_GPIO.get(config.port)
+        if gpios is None:
+            print(f"S:Encoder smoke test does not know the GPIO mapping for port {config.port}")
+            return False
+
+        phase_a_pin, phase_b_pin = hs_pair
+        phase_a_gpio = gpios[phase_a_pin]
+        phase_b_gpio = gpios[phase_b_pin]
+        range_desc = "hardware range" if max is None else f"min={min}, max={max}"
+
+        self._rotation_rate_enable(True)
+        encoder = Encoder(
+            None,
+            phase_a_gpio,
+            phase_b_gpio,
+            filter_ns=filter_ns,
+            max=max,
+            min=min,
+            logging=True,
+        )
+        if encoder.unit is None:
+            print(
+                f"S:Encoder smoke test failed on HexTest port {config.port} "
+                f"HS pins {phase_a_pin}/{phase_b_pin}"
+            )
+            self._rotation_rate_enable(False)
+            return False
+
+        print(
+            f"S:Encoder smoke test on HexTest port {config.port}, "
+            f"HS pins {phase_a_pin}/{phase_b_pin}, GPIOs {phase_a_gpio}/{phase_b_gpio}, {range_desc}"
+        )
+        print("S:Rotate the wheel by hand and watch position/cycles for direction and wrap behaviour")
+
+        try:
+            print(f"S:Encoder initial: position={encoder.value()}, cycles={encoder.cycles()}")
+            for sample_index in range(samples):
+                _sleep_ms(interval_ms)
+                print(
+                    f"S:Encoder sample {sample_index + 1}/{samples}: "
+                    f"position={encoder.value()}, cycles={encoder.cycles()}"
+                )
+
+            final_position = encoder.value()
+            final_cycles = encoder.cycles()
+            encoder.value(0)
+            print(
+                f"S:Encoder reset after position={final_position}, cycles={final_cycles}; "
+                f"now position={encoder.value()}, cycles={encoder.cycles()}"
+            )
+            print("S:Encoder smoke test complete")
+            return True
+        finally:
+            encoder.deinit()
+            self._rotation_rate_enable(False)
 
 
     # ------------------------------------------------------------------
@@ -893,7 +998,11 @@ class SensorTestMgr:
                     # configure the ESP32S3 hardware to count pulses on the HS_F pin
                     # Counter not yet available in this Micropython port so we have created our own...
                     gpio_num = _HS_PIN_TO_GPIO[self._test_support_hexpansion_config.port][pin_num]
-                    counter = Counter(None, gpio_num, filter_ns=1000000, logging=self.logging)  # auto-select PCNT unit
+                    counter = None
+                    if True:
+                        self.encoder_smoke_test()
+                    else:
+                        counter = Counter(None, gpio_num, filter_ns=1000000, logging=self.logging)  # auto-select PCNT unit
                     if counter is not None and counter.unit is not None:
                         self._rotation_rate_counters.append(counter)
                     else:
@@ -1151,7 +1260,6 @@ _PCNT_CTRL_CLK_EN = const(1 << 16)  # Register clock gate — must be 1 for regi
 # CONF0 bit layout (same layout for all units)
 _CONF0_FILTER_THRES_M  = const(0x3FF)   # bits [9:0]
 _CONF0_FILTER_EN       = const(1 << 10)
-_CONF0_CH0_POS_MODE_S  = const(18)      # bits [19:18]
 
 # GPIO signal index base for PCNT: Unit N, CH0 pulse = 33 + N*4, CH0 ctrl = 35 + N*4
 _PCNT_SIG_BASE    = 33
@@ -1176,225 +1284,449 @@ for _port, _gpios in _HS_PIN_TO_GPIO.items():
     for _idx, _gpio in enumerate(_gpios):
         _GPIO_TO_HS[_gpio] = (_port, _idx)
 
-class Counter:
-    """Wrapper around ESP32-S3 PCNT hardware for counting rising edges.
+_PCNT_UNIT_STRIDE = const(0x0C)
+_PCNT_CONF1_OFFSET = const(0x04)
+_PCNT_CONF2_OFFSET = const(0x08)
+_PCNT_CNT_OFFSET = const(0x30)
 
-    Parameters
-    ----------
-    src : int
-        The ESP32-S3 GPIO number to count pulses on.
-        Use ``_HS_PIN_TO_GPIO[port][index]`` to convert from a badge HS pin.
-    id : int | None
-        PCNT unit to use (0-3).  If ``None``, the first available (unused) unit
-        is auto-selected.  If the requested unit is already in use, ``__init__``
-        sets ``self.unit = None`` to signal failure.
-    filter_ns : int
-        Minimum pulse width in nanoseconds.  Pulses shorter than this are
-        rejected by the hardware glitch filter.  Set to 0 to disable filtering.
-    logging : bool
-        Print diagnostic messages to the console.
+_CONF0_CH0_NEG_MODE_S = const(16)
+_CONF0_CH0_POS_MODE_S = const(18)
+_CONF0_CH0_HCTRL_MODE_S = const(20)
+_CONF0_CH0_LCTRL_MODE_S = const(22)
+_CONF0_CH1_NEG_MODE_S = const(24)
+_CONF0_CH1_POS_MODE_S = const(26)
+_CONF0_CH1_HCTRL_MODE_S = const(28)
+_CONF0_CH1_LCTRL_MODE_S = const(30)
 
-    CURRENTLY ONLY COUNTS UP ON RISING EDGES
-    """
+_PCNT_COUNT_DISABLE = const(0)
+_PCNT_COUNT_INCREMENT = const(1)
+_PCNT_COUNT_DECREMENT = const(2)
 
-    def __init__(self, unit: int | None, src: int, filter_ns: int = 0, logging: bool = False):
+_PCNT_CTRL_KEEP = const(0)
+_PCNT_CTRL_REVERSE = const(1)
+_PCNT_CTRL_HOLD = const(2)
+
+_PCNT_GPIO_CONST_HIGH = const(0x38)
+_PCNT_COUNTER_MASK = const(0xFFFF)
+_PCNT_COUNTER_SIGN_BIT = const(0x8000)
+_PCNT_COUNTER_MODULO = const(0x10000)
+_PCNT_COUNTER_MAX = const(0x7FFF)
+_PCNT_DEFAULT_MAX = const(0x7FFF)
+
+
+def _pcnt_conf0_addr(unit: int) -> int:
+    return _PCNT_BASE + unit * _PCNT_UNIT_STRIDE
+
+
+def _pcnt_conf1_addr(unit: int) -> int:
+    return _pcnt_conf0_addr(unit) + _PCNT_CONF1_OFFSET
+
+
+def _pcnt_conf2_addr(unit: int) -> int:
+    return _pcnt_conf0_addr(unit) + _PCNT_CONF2_OFFSET
+
+
+def _pcnt_cnt_addr(unit: int) -> int:
+    return _PCNT_BASE + _PCNT_CNT_OFFSET + unit * 4
+
+
+def _pcnt_rst_bit(unit: int) -> int:
+    return 1 << (unit * 2)
+
+
+def _pcnt_signal_index(unit: int, channel: int, control: bool = False) -> int:
+    return _PCNT_SIG_BASE + unit * 4 + channel + (2 if control else 0)
+
+
+def _pcnt_gpio_label(gpio: int) -> str:
+    hs_pin = _GPIO_TO_HS.get(gpio)
+    if hs_pin is None:
+        return f"GPIO {gpio}"
+    return f"GPIO {gpio} (port {hs_pin[0]} HS pin {hs_pin[1]})"
+
+
+def _pcnt_filter_bits(filter_ns: int | None) -> int:
+    if filter_ns is None or filter_ns <= 0:
+        return 0
+    filter_val = (_APB_CLK_HZ * filter_ns) // 1_000_000_000
+    if filter_val > 1023:
+        filter_val = 1023
+    return (filter_val & _CONF0_FILTER_THRES_M) | _CONF0_FILTER_EN
+
+
+def _pcnt_enable_peripheral() -> None:
+    mem32[_CLK_EN0_REG] |= _PCNT_CLK_BIT
+    mem32[_RST_EN0_REG] &= ~_PCNT_CLK_BIT
+
+
+def _pcnt_disable_peripheral() -> None:
+    mem32[_CLK_EN0_REG] &= ~_PCNT_CLK_BIT
+    mem32[_RST_EN0_REG] |= _PCNT_CLK_BIT
+
+
+def _pcnt_route_input(signal_index: int, gpio: int | None) -> None:
+    route = _SIG_IN_SEL_BIT | (_PCNT_GPIO_CONST_HIGH if gpio is None else gpio)
+    mem32[_GPIO_FUNC_IN_SEL_CFG_BASE + (signal_index * 4)] = route
+
+
+def _pcnt_read_count_signed(unit: int) -> int:
+    raw = mem32[_pcnt_cnt_addr(unit)] & _PCNT_COUNTER_MASK
+    if raw & _PCNT_COUNTER_SIGN_BIT:
+        return raw - _PCNT_COUNTER_MODULO
+    return raw
+
+
+def _pcnt_reset_counter(unit: int) -> None:
+    rst_bit = _pcnt_rst_bit(unit)
+    irq_state = disable_irq()
+    mem32[_PCNT_CTRL_REG] |= rst_bit
+    mem32[_PCNT_CTRL_REG] &= ~rst_bit
+    enable_irq(irq_state)
+
+
+def _pcnt_unit_in_use(unit: int, logging: bool = False) -> bool:
+    """Return True when *unit* appears to be configured and active."""
+    clk_on = (mem32[_CLK_EN0_REG] & _PCNT_CLK_BIT) != 0
+    if not clk_on:
+        if logging:
+            print(f"PCNT: unit {unit} - peripheral clock off, unit free")
+        return False
+
+    ctrl = mem32[_PCNT_CTRL_REG]
+    if not (ctrl & _PCNT_CTRL_CLK_EN):
+        if logging:
+            print(f"PCNT: unit {unit} - register clock gate off, unit free")
+        return False
+
+    rst_bit = _pcnt_rst_bit(unit)
+    if ctrl & rst_bit:
+        if logging:
+            print(f"PCNT: unit {unit} - held in reset, unit free")
+        return False
+
+    conf0 = mem32[_pcnt_conf0_addr(unit)]
+    if conf0 in (0, 0x3C10):
+        if logging:
+            print(f"PCNT: unit {unit} - CONF0=0x{conf0:08X} (unconfigured), unit free")
+        return False
+
+    if logging:
+        cnt = mem32[_pcnt_cnt_addr(unit)] & _PCNT_COUNTER_MASK
+        pulse_sig = _pcnt_signal_index(unit, 0)
+        gpio_route = mem32[_GPIO_FUNC_IN_SEL_CFG_BASE + pulse_sig * 4]
+        routed_gpio = gpio_route & 0x3F
+        print(f"PCNT: unit {unit} - IN USE: CONF0=0x{conf0:08X}, count={cnt}, routed to GPIO {routed_gpio}")
+    return True
+
+
+def _pcnt_allocate_unit(unit: int | None, logging: bool = False) -> int | None:
+    if unit is not None:
+        if unit < 0 or unit >= _PCNT_NUM_UNITS:
+            if logging:
+                print(f"PCNT: unit {unit} out of range (0-{_PCNT_NUM_UNITS - 1})")
+            return None
+        if _pcnt_unit_in_use(unit, logging):
+            if logging:
+                print(f"PCNT: requested unit {unit} is already in use")
+            return None
+        if logging:
+            print(f"PCNT: using requested unit {unit}")
+        return unit
+
+    for candidate in range(_PCNT_NUM_UNITS):
+        if not _pcnt_unit_in_use(candidate, logging):
+            if logging:
+                print(f"PCNT: auto-selected unit {candidate}")
+            return candidate
+
+    if logging:
+        print("PCNT: all units in use, no free unit available")
+    return None
+
+
+def _pcnt_disable_peripheral_if_unused(logging: bool = False) -> None:
+    if any(_pcnt_unit_in_use(unit) for unit in range(_PCNT_NUM_UNITS)):
+        return
+    _pcnt_disable_peripheral()
+    if logging:
+        print("PCNT: all units released, peripheral clock disabled")
+
+
+class _PCNTUnitBase:
+    """Shared low-level PCNT unit allocation and teardown helpers."""
+
+    def __init__(self, unit: int | None, logging: bool = False):
         self.logging = logging
+        self.unit = _pcnt_allocate_unit(unit, logging)
         self._configured = False
 
-        if unit is not None:
-            if unit < 0 or unit >= _PCNT_NUM_UNITS:
-                if self.logging:
-                    print(f"PCNT: unit {unit} out of range (0-{_PCNT_NUM_UNITS - 1})")
-                self.unit = None
-                return
-            if self._unit_in_use(unit):
-                self.unit = None
-                return
-            self.unit = unit
-        else:
-            # Auto-select first available unit
-            self.unit = None
-            for u in range(_PCNT_NUM_UNITS):
-                if not self._unit_in_use(u):
-                    self.unit = u
-                    break
-            if self.unit is None:
-                if self.logging:
-                    print("PCNT: all units in use, no free unit available")
-                return
+    def _log(self, message: str) -> None:
+        if self.logging:
+            print(message)
 
-        if not self.init(src, filter_ns):
-            if self.logging:
-                print(f"PCNT: failed to configure unit {self.unit}")
-            self.unit = None
+    def _begin_configuration(self) -> tuple[int, int]:
+        unit = self.unit
+        if unit is None:
+            raise ValueError("PCNT unit not available")
 
-
-    def _unit_in_use(self, unit: int) -> bool:
-        """Check whether a PCNT unit appears to already be in use.
-
-        A unit is considered in use if:
-        - The peripheral clock is enabled AND
-        - The register clock gate is enabled AND
-        - The unit is NOT held in reset AND
-        - CONF0 is non-zero (has been configured)
-        """
-        # Check peripheral clock
-        clk_on = (mem32[_CLK_EN0_REG] & _PCNT_CLK_BIT) != 0
-        if not clk_on:
-            if self.logging:
-                print(f"PCNT: unit {unit} - peripheral clock off, unit free")
-            return False
+        _pcnt_enable_peripheral()
 
         ctrl = mem32[_PCNT_CTRL_REG]
+        ctrl |= _PCNT_CTRL_CLK_EN | _pcnt_rst_bit(unit)
+        mem32[_PCNT_CTRL_REG] = ctrl
 
-        # Check register clock gate
-        if not ctrl & _PCNT_CTRL_CLK_EN:
-            if self.logging:
-                print(f"PCNT: unit {unit} - register clock gate off, unit free")
-            return False
+        mem32[_pcnt_conf0_addr(unit)] = 0
+        mem32[_pcnt_conf1_addr(unit)] = 0
+        mem32[_pcnt_conf2_addr(unit)] = 0
+        return _pcnt_conf0_addr(unit), _pcnt_cnt_addr(unit)
 
-        # Check if held in reset (reset bit = unit * 2)
-        rst_bit = 1 << (unit * 2)
-        if ctrl & rst_bit:
-            if self.logging:
-                print(f"PCNT: unit {unit} - held in reset, unit free")
-            return False
+    def _finish_configuration(self, conf0_addr: int, cnt_addr: int) -> None:
+        unit = self.unit
+        if unit is None:
+            raise ValueError("PCNT unit not available")
 
-        # Check CONF0 register
-        conf0_addr = _PCNT_BASE + unit * 0x0C
-        conf0 = mem32[conf0_addr]
-        if conf0 == 0x3C10: # a slightly odd reset state
-            if self.logging:
-                print(f"PCNT: unit {unit} - CONF0=0x3C10 (unconfigured), unit free")
-            return False
+        ctrl = mem32[_PCNT_CTRL_REG]
+        ctrl &= ~_pcnt_rst_bit(unit)
+        mem32[_PCNT_CTRL_REG] = ctrl
+        _pcnt_reset_counter(unit)
+        self._configured = True
 
-        # Unit appears to be actively configured and running
-        if self.logging:
-            cnt_addr = _PCNT_BASE + 0x30 + unit * 4
-            cnt = mem32[cnt_addr] & 0xFFFF
-            pulse_sig = _PCNT_SIG_BASE + unit * 4
-            gpio_route = mem32[_GPIO_FUNC_IN_SEL_CFG_BASE + pulse_sig * 4]
-            routed_gpio = gpio_route & 0x3F
-            print(f"PCNT: unit {unit} - IN USE: CONF0=0x{conf0:08X}, "
-                  f"count={cnt}, routed to GPIO {routed_gpio}")
-        return True
+        self._log(
+            f"PCNT U{unit}: configured OK, CONF0=0x{mem32[conf0_addr]:08X}, "
+            f"CTRL=0x{mem32[_PCNT_CTRL_REG]:08X}, CNT={mem32[cnt_addr] & _PCNT_COUNTER_MASK}"
+        )
 
+    def deinit(self):
+        """Release the PCNT unit and make it available again."""
+        if not self._configured or self.unit is None:
+            return
+
+        unit = self.unit
+        mem32[_PCNT_CTRL_REG] |= _pcnt_rst_bit(unit)
+        mem32[_pcnt_conf0_addr(unit)] = 0
+        mem32[_pcnt_conf1_addr(unit)] = 0
+        mem32[_pcnt_conf2_addr(unit)] = 0
+        self._configured = False
+
+        self._log(f"PCNT U{unit}: released")
+        _pcnt_disable_peripheral_if_unused(self.logging)
+
+
+class Counter(_PCNTUnitBase):
+    """Wrapper around ESP32-S3 PCNT hardware for counting rising edges."""
+
+    def __init__(self, unit: int | None, src: int, filter_ns: int = 0, logging: bool = False):
+        self.pin = src
+        super().__init__(unit, logging)
+        if self.unit is None:
+            return
+        if not self.init(src, filter_ns):
+            self._log(f"PCNT: failed to configure unit {self.unit}")
+            self.unit = None
 
     def __str__(self):
         if self.unit is None:
             return "Counter(not configured)"
-        count = self.value()
-        return f"Counter(unit={self.unit}, GPIO={self.pin}, count={count})"
+        return f"Counter(unit={self.unit}, GPIO={self.pin}, count={self.value()})"
 
+    __repr__ = __str__
 
     def init(self, src: int, filter_ns: int | None = None) -> bool:
-        """Configure a PCNT unit to count rising edges on the GPIO pin specified by src."""
-        self.pin = src
-
+        """Configure the unit to count rising edges on *src*."""
         unit = self.unit
         if unit is None:
             return False
-        conf0_addr = _PCNT_BASE + unit * 0x0C
-        cnt_addr = _PCNT_BASE + 0x30 + unit * 4
-        rst_bit = 1 << (unit * 2)
-        pulse_sig = _PCNT_SIG_BASE + unit * 4       # PCNT_SIG_CH0_INn
-        ctrl_sig = _PCNT_SIG_BASE + unit * 4 + 2    # PCNT_CTRL_CH0_INn
 
-        if self.logging:
-            hs = _GPIO_TO_HS.get(self.pin)
-            hs_str = f" port {hs[0]} HS pin {hs[1]})" if hs else ""
-            print(f"PCNT U{unit}: on GPIO {self.pin}{hs_str}, filter_ns={filter_ns}ns")
-            print(f"  CONF0 addr=0x{conf0_addr:08X}, CNT addr=0x{cnt_addr:08X}")
-            print(f"  pulse_sig={pulse_sig}, ctrl_sig={ctrl_sig}")
+        self.pin = src
+        conf0_addr, cnt_addr = self._begin_configuration()
+        pulse_sig = _pcnt_signal_index(unit, 0)
+        ctrl_sig = _pcnt_signal_index(unit, 0, control=True)
+        aux_pulse_sig = _pcnt_signal_index(unit, 1)
+        aux_ctrl_sig = _pcnt_signal_index(unit, 1, control=True)
+
+        self._log(f"PCNT U{unit}: counter on {_pcnt_gpio_label(src)}, filter_ns={filter_ns}ns")
 
         try:
-            # --- 1. ENABLE PERIPHERAL CLOCK ---
-            mem32[_CLK_EN0_REG] |= _PCNT_CLK_BIT
-            mem32[_RST_EN0_REG] &= ~_PCNT_CLK_BIT
+            _pcnt_route_input(pulse_sig, src)
+            _pcnt_route_input(ctrl_sig, None)
+            _pcnt_route_input(aux_pulse_sig, None)
+            _pcnt_route_input(aux_ctrl_sig, None)
 
-            # --- 2. ENABLE REGISTER CLOCK GATE, HOLD THIS UNIT IN RESET ---
-            # Read-modify-write to preserve other units' state
-            ctrl = mem32[_PCNT_CTRL_REG]
-            ctrl |= _PCNT_CTRL_CLK_EN | rst_bit
-            mem32[_PCNT_CTRL_REG] = ctrl
-
-            # --- 3. ROUTE GPIO VIA MATRIX ---
-            mem32[_GPIO_FUNC_IN_SEL_CFG_BASE + (pulse_sig * 4)] = _SIG_IN_SEL_BIT | self.pin
-            # Route constant high (0x38) to control signal
-            mem32[_GPIO_FUNC_IN_SEL_CFG_BASE + (ctrl_sig * 4)] = _SIG_IN_SEL_BIT | 0x38
-
-            # --- 4. CONFIGURE COUNTING ---
-            # Calculate filter threshold from min pulse width
-            if filter_ns is not None and filter_ns > 0:
-                filter_val = (_APB_CLK_HZ * filter_ns) // 1_000_000_000
-                if filter_val > 1023:
-                    filter_val = 1023
-                config = (filter_val & _CONF0_FILTER_THRES_M) | _CONF0_FILTER_EN
-            else:
-                config = 0
-            config |= (1 << _CONF0_CH0_POS_MODE_S)  # Inc on rising edge
+            config = _pcnt_filter_bits(filter_ns)
+            config |= _PCNT_COUNT_INCREMENT << _CONF0_CH0_POS_MODE_S
             mem32[conf0_addr] = config
 
-            # --- 5. RELEASE FROM RESET ---
-            ctrl = mem32[_PCNT_CTRL_REG]
-            ctrl &= ~rst_bit
-            mem32[_PCNT_CTRL_REG] = ctrl
-
-            self._configured = True
-
-        except Exception as e:          # pylint: disable=broad-exception-caught
-            print(f"PCNT U{unit}: error configuring: {e}")
+            self._finish_configuration(conf0_addr, cnt_addr)
+        except Exception as exc:          # pylint: disable=broad-exception-caught
+            self._log(f"PCNT U{unit}: error configuring counter: {exc}")
+            self._configured = False
             return False
 
-        if self.logging:
-            print(f"PCNT U{unit}: configured OK, "
-                  f"CONF0=0x{mem32[conf0_addr]:08X}, "
-                  f"CTRL=0x{mem32[_PCNT_CTRL_REG]:08X}, "
-                  f"CNT={mem32[cnt_addr] & 0xFFFF}")
         return True
 
-
     def value(self, value: int | None = None) -> int:
-        """Read the current count and optionally reset the counter to zero.
-          DOES NOT SUPPORT SETTING THE COUNTER TO AN ARBITRARY VALUE, ONLY RESETTING TO ZERO."""
-        if not self._configured:
+        """Return the current count, optionally read-and-reset on ``value(0)``."""
+        if not self._configured or self.unit is None:
             return 0
 
-        unit = self.unit
-        if unit is None:
-            return 0
-
-        rst_bit = 1 << (unit * 2)
-        cnt_addr = _PCNT_BASE + 0x30 + unit * 4
-        if value is not None and value == 0:
-            irq_state = disable_irq()
-            count = mem32[cnt_addr] & 0xFFFF
-            mem32[_PCNT_CTRL_REG] |= rst_bit
-            mem32[_PCNT_CTRL_REG] &= ~rst_bit
-            enable_irq(irq_state)
-        else:
-            count = mem32[cnt_addr] & 0xFFFF
+        count = mem32[_pcnt_cnt_addr(self.unit)] & _PCNT_COUNTER_MASK
+        if value == 0:
+            _pcnt_reset_counter(self.unit)
         return count
 
 
+class Encoder(_PCNTUnitBase):
+    """4x quadrature encoder wrapper built on a single ESP32-S3 PCNT unit."""
 
-    def deinit(self):
-        """Release the PCNT unit: hold it in reset and clear its CONF0."""
+    def __init__(
+        self,
+        unit: int | None,
+        phase_a: int,
+        phase_b: int,
+        filter_ns: int = 0,
+        max: int | None = None,
+        min: int = 0,
+        logging: bool = False,
+    ):
+        self.phase_a = phase_a
+        self.phase_b = phase_b
+        self._position = 0
+        self._cycles = 0
+        self._last_raw = 0
+        self._range_min = 0
+        self._range_max = 0
+        self._range_enabled = False
+        super().__init__(unit, logging)
+        if self.unit is None:
+            return
+        if not self.init(phase_a, phase_b, filter_ns=filter_ns, max=max, min=min):
+            self._log(f"PCNT: failed to configure encoder on unit {self.unit}")
+            self.unit = None
+
+    def __str__(self):
+        if self.unit is None:
+            return "Encoder(not configured)"
+        return (
+            f"Encoder(unit={self.unit}, phase_a={self.phase_a}, phase_b={self.phase_b}, position={self.value()}, cycles={self._cycles})"
+        )
+
+    __repr__ = __str__
+
+    def init(
+        self,
+        phase_a: int,
+        phase_b: int,
+        filter_ns: int = 0,
+        max: int | None = None,
+        min: int = 0,
+    ) -> bool:
+        """Configure the unit for 4x quadrature decoding on *phase_a* and *phase_b*."""
+        unit = self.unit
+        if unit is None:
+            return False
+        if phase_a == phase_b:
+            self._log("PCNT: encoder phase_a and phase_b must use different GPIOs")
+            return False
+
+        range_enabled = max is not None and not (max == 0 and min == 0)
+        range_max = 0 if max is None else max
+        range_min = 0 if max is None else min
+        if range_enabled and range_max < range_min:
+            self._log(f"PCNT U{unit}: invalid encoder range min={range_min}, max={range_max}")
+            return False
+
+        self.phase_a = phase_a
+        self.phase_b = phase_b
+
+        conf0_addr, cnt_addr = self._begin_configuration()
+        range_desc = "hardware range"
+        if range_enabled:
+            range_desc = f"min={range_min}, max={range_max}"
+        self._log(
+            f"PCNT U{unit}: encoder on {_pcnt_gpio_label(phase_a)} and {_pcnt_gpio_label(phase_b)}, phases=4, filter_ns={filter_ns}ns, {range_desc}"
+        )
+
+        try:
+            _pcnt_route_input(_pcnt_signal_index(unit, 0), phase_a)
+            _pcnt_route_input(_pcnt_signal_index(unit, 0, control=True), phase_b)
+            _pcnt_route_input(_pcnt_signal_index(unit, 1), phase_b)
+            _pcnt_route_input(_pcnt_signal_index(unit, 1, control=True), phase_a)
+
+            config = _pcnt_filter_bits(filter_ns)
+            config |= _PCNT_COUNT_INCREMENT << _CONF0_CH0_NEG_MODE_S
+            config |= _PCNT_COUNT_DECREMENT << _CONF0_CH0_POS_MODE_S
+            config |= _PCNT_CTRL_REVERSE << _CONF0_CH0_LCTRL_MODE_S
+            config |= _PCNT_COUNT_DECREMENT << _CONF0_CH1_NEG_MODE_S
+            config |= _PCNT_COUNT_INCREMENT << _CONF0_CH1_POS_MODE_S
+            config |= _PCNT_CTRL_REVERSE << _CONF0_CH1_LCTRL_MODE_S
+            mem32[conf0_addr] = config
+
+            self._finish_configuration(conf0_addr, cnt_addr)
+        except Exception as exc:          # pylint: disable=broad-exception-caught
+            self._log(f"PCNT U{unit}: error configuring encoder: {exc}")
+            self._configured = False
+            return False
+
+        self._range_min = range_min
+        self._range_max = range_max
+        self._range_enabled = range_enabled
+        self._position = range_min if self._range_enabled else 0
+        self._cycles = 0
+        self._last_raw = _pcnt_read_count_signed(unit)
+        return True
+
+    def _update_position(self) -> None:
         if not self._configured or self.unit is None:
             return
-        unit = self.unit
-        conf0_addr = _PCNT_BASE + unit * 0x0C
-        rst_bit = 1 << (unit * 2)
-        mem32[_PCNT_CTRL_REG] |= rst_bit   # hold in reset
-        mem32[conf0_addr] = 0               # clear config so unit appears free
-        self._configured = False
+
+        raw = _pcnt_read_count_signed(self.unit)
+        delta = raw - self._last_raw
+        if delta > _PCNT_COUNTER_MAX:
+            delta -= _PCNT_COUNTER_MODULO
+        elif delta < -_PCNT_COUNTER_SIGN_BIT:
+            delta += _PCNT_COUNTER_MODULO
+        self._last_raw = raw
+
+        if delta == 0:
+            return
+
+        previous_cycles = self._cycles
+        if self._range_enabled:
+            span = (self._range_max - self._range_min) + 1
+            absolute = self._cycles * span + (self._position - self._range_min)
+            absolute += delta
+            self._cycles, offset = divmod(absolute, span)
+            self._position = self._range_min + offset
+        else:
+            self._position += delta
 
         if self.logging:
-            print(f"PCNT U{unit}: released")
+            wrap_note = " (wrapped)" if self._cycles != previous_cycles else ""
+            print(
+                f"PCNT U{self.unit}: encoder delta={delta}, position={self._position}, cycles={self._cycles}{wrap_note}"
+            )
 
-        # disable the peripheral clock if no units are in use to save power
-        if not any(self._unit_in_use(u) for u in range(_PCNT_NUM_UNITS)):
-            mem32[_CLK_EN0_REG] &= ~_PCNT_CLK_BIT
-            mem32[_RST_EN0_REG] |= _PCNT_CLK_BIT
-            if self.logging:
-                print("PCNT: all units released, peripheral clock disabled")
+    def value(self, value: int | None = None) -> int:
+        """Return the current position and optionally reset it with ``value(0)``."""
+        if not self._configured or self.unit is None:
+            return 0
+
+        self._update_position()
+        position = self._position
+        if value == 0:
+            if self._range_enabled and not (self._range_min <= 0 <= self._range_max):
+                raise ValueError("0 outside configured encoder range")
+            _pcnt_reset_counter(self.unit)
+            self._last_raw = _pcnt_read_count_signed(self.unit)
+            self._position = 0
+            self._cycles = 0
+            self._log(f"PCNT U{self.unit}: encoder position reset to 0, cycles=0")
+        return position
+
+    def cycles(self) -> int:
+        """Return the current logical wrap/underflow cycle count."""
+        if not self._configured or self.unit is None:
+            return 0
+
+        self._update_position()
+        return self._cycles
