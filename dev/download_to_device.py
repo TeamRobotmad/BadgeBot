@@ -47,7 +47,6 @@ MODULES: tuple[ModuleSpec, ...] = (
     ModuleSpec(Path("line_follow.py"), Path("line_follow.mpy")),
     ModuleSpec(Path("motor_moves.py"), Path("motor_moves.mpy")),
     ModuleSpec(Path("servo_test.py"), Path("servo_test.mpy")),
-    ModuleSpec(Path("stepper_test.py"), Path("stepper_test.mpy")),
     ModuleSpec(Path("motor_controller.py"), Path("motor_controller.mpy")),
     ModuleSpec(Path("sensor_manager.py"), Path("sensor_manager.mpy")),
     ModuleSpec(Path("sensor_test.py"), Path("sensor_test.mpy")),

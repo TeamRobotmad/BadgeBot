@@ -40,7 +40,7 @@ def test_hexdrive_type_pids_consistent():
     HexDriveType stores a single PID byte (low byte), while HexpansionType
     stores the full 16-bit PID.  For every HexDrive-flavour HexpansionType
     the low byte of its PID must match exactly one HexDriveType entry, and
-    the motor/servo/stepper capability counts must agree.
+    the motor/servo capability counts must agree.
     """
     from sim.apps.BadgeBot import BadgeBotApp
     from sim.apps.BadgeBot.EEPROM.hexdrive import _HEXDRIVE_TYPES
@@ -74,10 +74,6 @@ def test_hexdrive_type_pids_consistent():
         assert ht.servos == hdt.servos, (
             f"Servo count mismatch for PID 0x{pid_byte:02X}: "
             f"HexpansionType={ht.servos}, HexDriveType={hdt.servos}"
-        )
-        assert ht.steppers == hdt.steppers, (
-            f"Stepper count mismatch for PID 0x{pid_byte:02X}: "
-            f"HexpansionType={ht.steppers}, HexDriveType={hdt.steppers}"
         )
 
 
