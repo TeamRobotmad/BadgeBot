@@ -68,11 +68,6 @@ class GPSApp(app.App):         # pylint: disable=no-member
         self.power_control.value(0)  # Cut power to the GPS to save power when not in use
 
 
-    def get_version(self) -> int:
-        """ Get the version of the app - this is used to determine if an upgrade is required. """
-        return VERSION
-
-
     async def s(self, event: RequestStopAppEvent):
         """ Handle the RequestStopAppEvent so that we can release resources """
         if event.app == self:
