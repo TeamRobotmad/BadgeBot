@@ -925,15 +925,11 @@ class HexpansionMgr:
                         # Try to get running app version
                         running_app = self._find_hexpansion_app(self._port_selected)
                         if running_app is not None:
-                            try:
-                                get_version = getattr(running_app, "get_version", None)
-                                if get_version is None:
-                                    raise AttributeError("get_version")
-                                ver = get_version()
+                            ver = getattr(running_app, "VERSION",
+                                          getattr(running_app, "version", None))
+                            if ver is not None:
                                 lines.append(f"v{ver}")
                                 colours.append((0, 1, 1))
-                            except Exception:       # pylint: disable=broad-except
-                                pass
                     else:
                         lines.append(hexpansion_state)
                         colours.append((0, 1, 1))
@@ -1064,22 +1060,17 @@ class HexpansionMgr:
         app = self._app
         hexpansion_app = self._find_hexpansion_app(port)
         if hexpansion_app is not None:
-            # get version number from app and compare to expected version for this hexpansion type
-            try:
-                get_version = getattr(hexpansion_app, "get_version", None)
-                if get_version is None:
-                    raise AttributeError("get_version")
-                version = get_version()
-            except Exception as e:      # pylint: disable=broad-except
-                try:
-                    version = getattr(hexpansion_app, "version")
-                except Exception as ee:  # pylint: disable=broad-except
-                    print(f"H:Error getting app version for hexpansion on port {port}: {e}, {ee}")
-                    version = None
-            if version != app.HEXPANSION_TYPES[type_index].app_mpy_version:
+            # Read version from VERSION (module-level constant, preferred) or
+            # lowercase version attribute as a fallback for older apps.
+            version = getattr(hexpansion_app, "VERSION",
+                              getattr(hexpansion_app, "version", None))
+            expected = app.HEXPANSION_TYPES[type_index].app_mpy_version
+            if expected is None:
+                # No expected version recorded for this type – treat any running app as current.
+                self._hexpansion_state_by_slot[port - 1] = _HEXPANSION_STATE_RECOGNISED_APP_OK
+            elif not _versions_match(version, expected):
                 if self._logging:
-                    app_version = getattr(hexpansion_app, "version", version)
-                    print(f"H:{app.HEXPANSION_TYPES[type_index].name} app on port {port} has version {app_version}, expected {app.HEXPANSION_TYPES[type_index].app_mpy_version}")
+                    print(f"H:{app.HEXPANSION_TYPES[type_index].name} app on port {port} has version {version}, expected {expected}")
                 self._hexpansion_state_by_slot[port - 1] = _HEXPANSION_STATE_RECOGNISED_OLD_APP
                 # add to upgrade list if not already there
                 if port not in self._ports_to_check_app:
@@ -1386,6 +1377,30 @@ class HexpansionMgr:
 
 
 # ---- Hexpansion type descriptor -------------------------------------------
+
+def _versions_match(running, expected) -> bool:
+    """Return True when *running* (read from the hexpansion app's ``VERSION``
+    attribute) equals *expected* (from ``HexpansionType.app_mpy_version``).
+
+    * Integer versions are compared directly.
+    * String versions are tokenised the same way as ``parse_version()`` in
+      ``app.py`` so that ``"1.10"`` compares greater than ``"1.2"``.
+    * If *running* is ``None`` (attribute missing) the versions do not match.
+    """
+    if running is None:
+        return False
+    if isinstance(expected, str) and isinstance(running, str):
+        def _tok(v):
+            v = v.strip("v")
+            if "+" in v:
+                v = v.split("+", 1)[0]
+            if "-" in v:
+                v = v.split("-", 1)[0]
+            parts = v.split(".")
+            return [int(p) if p.isdigit() else p for p in parts]
+        return _tok(running) == _tok(expected)
+    return running == expected
+
 
 class HexpansionType:
     """Descriptor for known hexpansion types, used for detection and EEPROM programming.
