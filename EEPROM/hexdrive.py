@@ -176,11 +176,6 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
             # we keep retriggering in case anything else has corrupted the PWM outputs
 
 
-    def get_version(self) -> int:
-        """ Get the version of the app - this is used to determine if an upgrade is required. """
-        return VERSION
-
-
     def get_status(self) -> bool:
         """ Get the current status of the app - True if the app is running and able to respond to commands, False if not. """
         return (self._pwm_setup)
