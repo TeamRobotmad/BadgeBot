@@ -30,8 +30,8 @@ def _try_add_sensor(import_name: str, class_name: str) -> None:
 # Ordered list used by the manager when scanning a port.
 _try_add_sensor("vl53l0x", "VL53L0X")
 _try_add_sensor("vl6180x", "VL6180X")
-_try_add_sensor("tcs3472", "TCS3472")
-_try_add_sensor("tcs3430", "TCS3430")
-_try_add_sensor("opt4048", "OPT4048")
+#_try_add_sensor("tcs3472", "TCS3472")
+#_try_add_sensor("tcs3430", "TCS3430")
+#_try_add_sensor("opt4048", "OPT4048")
 _try_add_sensor("opt4060", "OPT4060")
 _try_add_sensor("ina226", "INA226")

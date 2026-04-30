@@ -14,6 +14,7 @@ from events.input import BUTTON_TYPES
 from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
 from system.hexpansion.config import HexpansionConfig
+import settings as platform_settings
 try:
     from egpio import ePin
 except ImportError:
@@ -84,11 +85,16 @@ _AUTO_SCAN_MEASURE_MS  = 2000   # ms measurement window per step
 _PAGE_RAW = 0
 _PAGE_STATS = 1
 _PAGE_DATA = 2
+_PAGE_CAL = 3
 _PAGE_NAMES = {
     0: "Raw",
     1: "Stats",
     2: "Data",
+    3: "Cal",
 }
+
+_WHITE_CAL_SCALE = 1024
+_WHITE_CAL_GAIN_PREFIX = "stc"
 
 # Mapping colour RGB/XY values to human readable colour names.
 # Values are based on the CIE 1931 Chromaticity Diagram
@@ -132,6 +138,7 @@ class SensorTestMgr:
         self._display_data: dict = {}
         self._page_selected: int = _PAGE_RAW
         self._page_count: int = 3
+        self._white_gains: dict[tuple[int, int], tuple[int, int, int, int]] = {}
         self._logging: bool = logging
         self._read_timer: int = 0    # ms since last sensor read
         self._sample_count: int = 0
@@ -408,6 +415,22 @@ class SensorTestMgr:
         if h < 260:
             return "Blue"
         return "Magenta"
+
+
+    @staticmethod
+    def _apply_white_reference(r: int, g: int, b: int, clear: int = 0,
+                               white_gains: tuple[int, int, int, int] | None = None) -> tuple[int, int, int, int]:
+        if white_gains is None:
+            return r, g, b, clear
+
+        gain_r, gain_g, gain_b, gain_clear = white_gains
+
+        return (
+            max(0, ((r * gain_r) + (_WHITE_CAL_SCALE // 2)) // _WHITE_CAL_SCALE),
+            max(0, ((g * gain_g) + (_WHITE_CAL_SCALE // 2)) // _WHITE_CAL_SCALE),
+            max(0, ((b * gain_b) + (_WHITE_CAL_SCALE // 2)) // _WHITE_CAL_SCALE),
+            max(0, ((clear * gain_clear) + (_WHITE_CAL_SCALE // 2)) // _WHITE_CAL_SCALE) if clear > 0 else 0,
+        )
 
 
     # ------------------------------------------------------------------
@@ -735,9 +758,112 @@ class SensorTestMgr:
             app.return_to_menu()
 
 
+    @staticmethod
+    def _ordered_display_data(sensor_data: dict) -> dict:
+        ordered = {}
+        for key in ("r", "g", "b"):
+            if key in sensor_data:
+                ordered[key] = str(sensor_data[key])
+        for key, value in sensor_data.items():
+            if key not in ordered:
+                ordered[key] = str(value)
+        return ordered
+
+    @staticmethod
+    def _ordered_display_items(display_data: dict) -> list[tuple[str, str]]:
+        items = []
+        seen = set()
+        for key in ("r", "g", "b"):
+            if key in display_data:
+                items.append((key, str(display_data[key])))
+                seen.add(key)
+        for key, value in display_data.items():
+            if key not in seen:
+                items.append((key, str(value)))
+        return items
+
+    def _sensor_reference_key(self) -> tuple[int, int] | None:
+        sensor_mgr = self._sensor_mgr
+        if sensor_mgr is None:
+            return None
+        return (self._port_selected, sensor_mgr.current_sensor_index)
+
+    @staticmethod
+    def _white_gain_setting_keys(reference_key: tuple[int, int]) -> tuple[str, str, str, str]:
+        port, sensor_index = reference_key
+        base = f"{_WHITE_CAL_GAIN_PREFIX}{port}{sensor_index}"
+        return (f"{base}r", f"{base}g", f"{base}b", f"{base}w")
+
+    @staticmethod
+    def _reference_to_gains(r: int, g: int, b: int, clear: int = 0) -> tuple[int, int, int, int]:
+        ref_r = max(int(r), 1)
+        ref_g = max(int(g), 1)
+        ref_b = max(int(b), 1)
+        ref_clear = max(int(clear), 1) if clear > 0 else _WHITE_CAL_SCALE
+        gain_scale = _WHITE_CAL_SCALE * _WHITE_CAL_SCALE
+        return (
+            (gain_scale + (ref_r // 2)) // ref_r,
+            (gain_scale + (ref_g // 2)) // ref_g,
+            (gain_scale + (ref_b // 2)) // ref_b,
+            (gain_scale + (ref_clear // 2)) // ref_clear,
+        )
+
+    def _get_white_gains(self) -> tuple[int, int, int, int] | None:
+        key = self._sensor_reference_key()
+        if key is None:
+            return None
+        if key in self._white_gains:
+            return self._white_gains[key]
+
+        setting_keys = self._white_gain_setting_keys(key)
+        values = []
+        for setting_key in setting_keys:
+            value = platform_settings.get(f"badgebot.{setting_key}", None)
+            if value is None:
+                return None
+            values.append(int(value))
+
+        gains = (values[0], values[1], values[2], values[3])
+        self._white_gains[key] = gains
+        return gains
+
+    def _update_page_count(self) -> None:
+        sensor_mgr = self._sensor_mgr
+        self._page_count = 4 if sensor_mgr is not None and sensor_mgr.type == "Colour" else 3
+        if self._page_selected >= self._page_count:
+            self._page_selected = _PAGE_RAW
+
+    def _capture_white_reference(self) -> bool:
+        sensor_mgr = self._sensor_mgr
+        if sensor_mgr is None or sensor_mgr.type != "Colour":
+            return False
+        if not all(key in self._sensor_data for key in ("r", "g", "b")):
+            return False
+
+        key = self._sensor_reference_key()
+        if key is None:
+            return False
+
+        gains = self._reference_to_gains(
+            int(self._sensor_data["r"]),
+            int(self._sensor_data["g"]),
+            int(self._sensor_data["b"]),
+            int(self._sensor_data.get("w", 0)),
+        )
+        self._white_gains[key] = gains
+        setting_keys = self._white_gain_setting_keys(key)
+        for setting_key, gain in zip(setting_keys, gains):
+            platform_settings.set(f"badgebot.{setting_key}", gain)
+        if self._logging:
+            print(f"S:Stored white gains for port {key[0]} sensor {key[1]}: {gains}")
+        self._app.notification = Notification("White Cal Saved", port=self._port_selected)
+        return True
+
+
     def _update_display_values(self):      # pylint: disable=unused-argument
         # clear old display data
         self._display_data = {}
+        self._update_page_count()
 
         # Sensor-specific display logic based on sensor type and available data
         if self._sensor_mgr and self._sensor_mgr.type == "Colour":
@@ -767,7 +893,11 @@ class SensorTestMgr:
                             colour_name = f"x={x_f:.2f}, y={y_f:.2f}"
                         self._display_data["colour"] = colour_name
                     elif self._page_selected == _PAGE_RAW:
-                        self._display_data = {k: str(v) for k, v in self._sensor_data.items()}
+                        self._display_data = self._ordered_display_data(self._sensor_data)
+                    elif self._page_selected == _PAGE_CAL:
+                        self._display_data["mode"] = "XYZ sensor"
+                        self._display_data["ref"] = "N/A"
+                        self._display_data["press"] = "Use Raw/Data"
 
                     #convert CIE1931 XYZ to RGB using a simple matrix transform
                     r = int( 3.2406 * x - 1.5372 * y - 0.4986 * z)
@@ -779,21 +909,28 @@ class SensorTestMgr:
                     print(f"S:Colour conversion error: {e}")
                     r = g = b = 0
 
-            elif all(k in self._sensor_data for k in ("red", "green", "blue")):
+            elif all(k in self._sensor_data for k in ("r", "g", "b")):
                 try:
-                    r = int(self._sensor_data["red"])
-                    g = int(self._sensor_data["green"])
-                    b = int(self._sensor_data["blue"])
+                    r = int(self._sensor_data["r"])
+                    g = int(self._sensor_data["g"])
+                    b = int(self._sensor_data["b"])
+                    clear = int(self._sensor_data.get("w", 0))
+                    white_gains = self._get_white_gains()
+                    calibrated_r, calibrated_g, calibrated_b, calibrated_clear = self._apply_white_reference(
+                        r, g, b, clear, white_gains
+                    )
 
                     if self._page_selected == _PAGE_DATA:
-                        if "clear" in self._sensor_data:
-                            clear = int(self._sensor_data["clear"])
-                            colour_name = self.lookup_colour_RGB(r, g, b, clear)
-                        else:
-                            colour_name = self.lookup_colour_RGB(r, g, b)
+                        colour_name = self.lookup_colour_RGB(calibrated_r, calibrated_g, calibrated_b, calibrated_clear)
                         self._display_data["colour"] = colour_name
+                        if white_gains is not None:
+                            self._display_data["cal"] = "white ref"
                     elif self._page_selected == _PAGE_RAW:
-                        self._display_data = {k: str(v) for k, v in self._sensor_data.items()}
+                        self._display_data = self._ordered_display_data(self._sensor_data)
+                    elif self._page_selected == _PAGE_CAL:
+                        self._display_data["ref"] = "saved" if white_gains is not None else "none"
+                        self._display_data["hold"] = "white card"
+                        self._display_data["press"] = "CONFIRM"
 
                 except Exception as e:    # pylint: disable=broad-exception-caught
                     print(f"S:Colour conversion error: {e}")
@@ -827,7 +964,7 @@ class SensorTestMgr:
                 except Exception as e:    # pylint: disable=broad-exception-caught
                     print(f"S:Distance processing error: {e}")
         elif self._page_selected == _PAGE_RAW:
-            self._display_data = {k: str(v) for k, v in self._sensor_data.items()}
+            self._display_data = self._ordered_display_data(self._sensor_data)
 
         if self._page_selected == _PAGE_STATS:
             if self._sample_rate > 0:
@@ -867,6 +1004,11 @@ class SensorTestMgr:
                 self._page_selected = (self._page_selected + 1) % self._page_count
                 self._update_display_values()
             app.refresh = True
+        elif app.button_states.get(BUTTON_TYPES["CONFIRM"]):
+            app.button_states.clear()
+            if self._page_selected == _PAGE_CAL and self._capture_white_reference():
+                self._update_display_values()
+                app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["CANCEL"]):
             app.button_states.clear()
             sensor_mgr = self._sensor_mgr
@@ -1070,7 +1212,7 @@ class SensorTestMgr:
 
 
     def _draw_reading(self, ctx):
-        up_label = down_label = ""
+        up_label = down_label = confirm_label = ""
         sensor_mgr = self._sensor_mgr
         num_sensors = sensor_mgr.num_sensors if sensor_mgr else 1
         sensor_name = sensor_mgr.current_sensor_name if sensor_mgr else "Sensor"
@@ -1086,7 +1228,7 @@ class SensorTestMgr:
             lines += [f"{sensor_name}-{_PAGE_NAMES[self._page_selected]}"]
         colours += [(1, 0, 1)]
         if self._display_data:
-            for label, value in self._display_data.items():
+            for label, value in self._ordered_display_items(self._display_data):
                 lines += [f"{label}:{value}"]
                 colours += [self.colour]
         else:
@@ -1101,12 +1243,14 @@ class SensorTestMgr:
             down_label=_PAGE_NAMES[down_page] if self._page_count > 1 else ""
             # only show the UP label if there are more than 2 pages, otherwise it would just show the same as the DOWN
             up_label=_PAGE_NAMES[up_page] if self._page_count > 2 else ""
+            if self._page_selected == _PAGE_CAL and sensor_mgr is not None and sensor_mgr.type == "Colour":
+                confirm_label = "Store"
 
             if num_sensors > 1:
                 button_labels(ctx, left_label="<Prev", right_label="Next>",
-                            up_label=up_label, down_label=down_label, cancel_label="Back")
+                            up_label=up_label, down_label=down_label, cancel_label="Back", confirm_label=confirm_label)
             else:
-                button_labels(ctx, up_label=up_label, down_label=down_label, cancel_label="Back")
+                button_labels(ctx, up_label=up_label, down_label=down_label, cancel_label="Back", confirm_label=confirm_label)
 
         # Ensure there are always 5 lines to draw for consistent layout, even if some are blank
         while len(lines) < 5:
@@ -1275,8 +1419,7 @@ class Counter:
             pulse_sig = _PCNT_SIG_BASE + unit * 4
             gpio_route = mem32[_GPIO_FUNC_IN_SEL_CFG_BASE + pulse_sig * 4]
             routed_gpio = gpio_route & 0x3F
-            print(f"PCNT: unit {unit} - IN USE: CONF0=0x{conf0:08X}, "
-                  f"count={cnt}, routed to GPIO {routed_gpio}")
+            print(f"PCNT: unit {unit} - IN USE: CONF0=0x{conf0:08X}, count={cnt}, routed to GPIO {routed_gpio}")
         return True
 
 
@@ -1347,10 +1490,7 @@ class Counter:
             return False
 
         if self.logging:
-            print(f"PCNT U{unit}: configured OK, "
-                  f"CONF0=0x{mem32[conf0_addr]:08X}, "
-                  f"CTRL=0x{mem32[_PCNT_CTRL_REG]:08X}, "
-                  f"CNT={mem32[cnt_addr] & 0xFFFF}")
+            print(f"PCNT U{unit}: configured OK, CONF0=0x{mem32[conf0_addr]:08X}, CTRL=0x{mem32[_PCNT_CTRL_REG]:08X}, CNT={mem32[cnt_addr] & 0xFFFF}")
         return True
 
 

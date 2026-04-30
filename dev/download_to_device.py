@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-DEFAULT_APP_DIR_ON_DEVICE = ":apps/TeamRobotMad_BadgeBot"
+DEFAULT_APP_DIR_ON_DEVICE = ":apps/TeamRobotmad_BadgeBot"
 STATE_DIR = Path(".deploy_state")
 STATE_PATH = STATE_DIR / "test_device_download_state.json"
 MPREMOTE_COMMAND_TIMEOUT = 20
@@ -57,7 +57,7 @@ MODULES: tuple[ModuleSpec, ...] = (
     ModuleSpec(Path("sensors/tcs3472.py"), Path("sensors/tcs3472.mpy")),
     ModuleSpec(Path("sensors/vl53l0x.py"), Path("sensors/vl53l0x.mpy")),
     ModuleSpec(Path("sensors/vl6180x.py"), Path("sensors/vl6180x.mpy")),
-    ModuleSpec(Path("sensors/opt4048.py"), Path("sensors/opt4048.mpy")),
+    ModuleSpec(Path("sensors/opt4060.py"), Path("sensors/opt4060.mpy")),
     ModuleSpec(Path("sensors/ina226.py"), Path("sensors/ina226.mpy")),
 )
 

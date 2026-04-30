@@ -31,7 +31,7 @@ SENSOR_MODULES = {
     "sensors/tcs3472",
     "sensors/vl53l0x",
     "sensors/vl6180x",
-    "sensors/opt4048",
+    "sensors/opt4060",
     "sensors/ina226",
 }
 
@@ -101,7 +101,7 @@ if __name__ == "__main__":
     if not files_to_keep.issubset(found_files):
         raise FileNotFoundError(f"Some of {files_to_keep} are not found so assuming wrong directory. "
                                 "Please run this script from BadgeBot dir.")
-    
+
     files_to_remove = found_files.difference(files_to_keep)
     if not force_mode:
         if input(f"About to remove {len(files_to_remove)} files from {os.getcwd()}, continue? y/n") != "y":

@@ -91,7 +91,6 @@ class _FakeHexDriveApp:
     exposes the tiny surface that ``_update_state_check`` probes:
 
     * ``config.port`` – the port number
-    * ``get_version()`` – returns the current HEXDRIVE_APP_VERSION
     * ``get_status()`` – returns True (PWM ready)
     * ``set_motors()`` – no-op
     """
@@ -100,10 +99,7 @@ class _FakeHexDriveApp:
         _ensure_sim_initialized()
         from system.hexpansion.config import HexpansionConfig
         self.config = HexpansionConfig(port)
-        self._version = version
-
-    def get_version(self) -> int:
-        return self._version
+        self.VERSION = version
 
     def get_status(self) -> bool:
         return True

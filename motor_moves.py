@@ -246,6 +246,8 @@ class MotorMovesMgr:
         else:
             # Fallback: old power-plan iterator
             self.power_plan_iter = chain(*(instr.power_plan for instr in self.instructions))
+            if self.logging:
+                print(f"M:Beginning motor moves with power plan iterator based on {len(self.instructions)} instructions")
             if len(app.hexdrive_apps) > 0:
                 if app.hexdrive_apps[0].initialise() and app.hexdrive_apps[0].set_power(True) and app.hexdrive_apps[0].set_freq(MOTOR_PWM_FREQ):
                     app.hexdrive_apps[0].set_logging(False)
@@ -359,22 +361,26 @@ class MotorMovesMgr:
         if app.button_states.get(BUTTON_TYPES["CONFIRM"]):
             app.long_press_delta += delta
             if app.long_press_delta >= _LONG_PRESS_MS:
-                if self.power_plan_iter is None:
+                #if self.power_plan_iter is None:
+                #    if self.logging:
+                #        print("No instructions to run, returning to HELP")
+                #    app.scroll_mode_enable(False)
+                #    app.animation_counter = 0
+                #    self._sub_state = _SUB_HELP
+                #    return
+                # if there are No instructions then warn the user and return to help, otherwise start the countdown to run the instructions
+                if len(self.instructions) == 0 and self.current_instruction is None:
+                    if self.logging:
+                        print("No instructions entered, returning to HELP")
+                    app.notification = Notification("No instructions entered")
                     app.scroll_mode_enable(False)
                     app.animation_counter = 0
                     self._sub_state = _SUB_HELP
-                else:
-                    # if there are No instructions then warn the user and return to help, otherwise start the countdown to run the instructions
-                    if len(self.instructions) == 0 and self.current_instruction is None:
-                        app.notification = Notification("No instructions entered")
-                        app.scroll_mode_enable(False)
-                        app.animation_counter = 0
-                        self._sub_state = _SUB_HELP
-                        return
-                    self.finalize_instruction()
-                    app.countdown_next_state = STATE_MOTOR_MOVES
-                    app.run_countdown_elapsed_ms = 0
-                    app.current_state = STATE_COUNTDOWN
+                    return
+                self.finalize_instruction()
+                app.countdown_next_state = STATE_MOTOR_MOVES
+                app.run_countdown_elapsed_ms = 0
+                app.current_state = STATE_COUNTDOWN
                 app.scroll_mode_enable(False)
                 app.long_press_delta = 0
         else:

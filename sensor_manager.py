@@ -16,9 +16,9 @@ from system.hexpansion.config import HexpansionConfig
 from .sensors import ALL_SENSOR_CLASSES
 from .sensors.sensor_base import SensorBase
 
-#HexSense LED pin
-_LED_PIN = 1        # LED to illumiinate area under colour sensor to mmeasure reflected light from surface below.
-_INTERRUPT_PIN = 2  # Not currently used, but we can set it up as an input for future interrupt-based drivers
+
+_LED_PIN = 2        # LED to illumiinate area under colour sensor to measure reflected light from surface below.
+_INTERRUPT_PIN = 1  # Not currently used, but we can set it up as an input for future interrupt-based drivers
 
 
 class SensorManager:
@@ -111,9 +111,9 @@ class SensorManager:
         # Enable LED only when at least one Colour sensor is present
         # (avoids pin conflicts with non-colour hexpansions such as the motor-test board)
         if len(self._sensors) > 0 and any(getattr(s, 'TYPE', '') == 'Colour' for s in self._sensors):
-            if self.logging:
-                print(f"SM:LED On port {port}")
             config = HexpansionConfig(port)
+            if self.logging:
+                print(f"SM:LED On port {port} pin {config.ls_pin[_LED_PIN]} for colour sensor")
             config.ls_pin[_LED_PIN].init(mode=Pin.OUT)
             config.ls_pin[_LED_PIN].value(1)
             config.ls_pin[_INTERRUPT_PIN].init(mode=Pin.IN)
@@ -121,14 +121,13 @@ class SensorManager:
         return len(self._sensors) > 0
 
 
-    def report_interrupt(self) -> bool:
+    def report_interrupt(self):
         """Check if the interrupt pin is active (low)."""
         if self._port is None:
             return False
         config = HexpansionConfig(self._port)
         v = config.ls_pin[_INTERRUPT_PIN].value()
-        print(f"INT pin value: {v}")
-        return v == 0
+        print(f"[{self._port}] INT pin value: {v}")
 
 
     def close(self):

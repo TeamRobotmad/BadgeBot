@@ -162,7 +162,7 @@ class OPT4048(SensorBase):
         if enabled:
             # Setup Threshold
             self._write_u16_be(_REG_THRESH_LO, threshold_low)   # low threshold
-            self._write_u16_be(_REG_THRESH_HI, threshold_high)  # high threshold        
+            self._write_u16_be(_REG_THRESH_HI, threshold_high)  # high threshold
 
         cfg = self._read_u16_be(_REG_CONFIG)
         if enabled:
@@ -204,7 +204,7 @@ class OPT4048(SensorBase):
 
         # Enable conversion-ready interrupt so status polling works
         #self.set_interrupt_enabled(True)
-        # The conversion ready interrupt is only 1us in duration which is too short for the LS pin to 
+        # The conversion ready interrupt is only 1us in duration which is too short for the LS pin to
         # reliably capture, so we enable latching mode and poll the status register for the ready flag instead.
         self.set_latched_interrupt(True, threshold_low = 0x8400, threshold_high = 0x8400)
 
@@ -222,6 +222,9 @@ class OPT4048(SensorBase):
         return True
 
     def _measure(self) -> dict:
+        if self._i2c is None:
+            return {"Error": "not initialized"}
+        
         # Poll status for conversion-ready; timeout after 30 ms
         deadline = time.ticks_add(time.ticks_ms(), self.READ_INTERVAL_MS)
         while True:

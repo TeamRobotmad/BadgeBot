@@ -279,6 +279,9 @@ class OPT4060(SensorBase):
         return True
 
     def _measure(self) -> dict:
+        if self._i2c is None:
+            return {"Error": "not initialized"}
+        
         # Poll status for conversion-ready; timeout after READ_INTERVAL_MS
         deadline = time.ticks_add(time.ticks_ms(), self.READ_INTERVAL_MS)
         while True:
@@ -298,10 +301,10 @@ class OPT4060(SensorBase):
         blue  = self._decode_channel(raw, 8)
         w     = self._decode_channel(raw, 12)
         return {
-            "red":   str(red),
-            "green": str(green),
-            "blue":  str(blue),
-            "w":     str(w),
+            "r": str(red),
+            "g": str(green),
+            "b": str(blue),
+            "w": str(w),
         }
 
     @staticmethod

@@ -108,9 +108,13 @@ class SensorBase:
     # ------------------------------------------------------------------
 
     def _write_reg(self, reg: int, data: bytes):
+        if self._i2c is None:
+            raise RuntimeError("I2C not initialized")
         self._i2c.writeto_mem(self._i2c_addr, reg, data)
 
     def _read_reg(self, reg: int, n: int = 1) -> bytes:
+        if self._i2c is None:
+            raise RuntimeError("I2C not initialized")
         return self._i2c.readfrom_mem(self._i2c_addr, reg, n)
 
     def _read_u8(self, reg: int) -> int:

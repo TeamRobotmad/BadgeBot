@@ -390,9 +390,9 @@ class HexpansionMgr:
                     app.hexpansion_update_required = False #to avoid beign called immediately
                 self._sub_state = _SUB_EXIT # exit to menu on next call (when user accepts warning)
         elif self._sub_state == _SUB_EXIT:
+            print("H:EXIT")
             app.hexpansion_update_required = False
             self._message_being_shown = False
-            print("H:EXIT")
             app.initialise_settings()
             app.return_to_menu()
             self._mode = _MODE_IDLE
@@ -577,6 +577,8 @@ class HexpansionMgr:
         app = self._app
         upgrade_port = self._upgrade_port
         if upgrade_port is None:
+            if self.logging:
+                print("H:Error - no port to upgrade")
             self._sub_state = _SUB_INIT if self._mode == _MODE_INIT else _SUB_CHECK
             return
         if app.button_states.get(BUTTON_TYPES["CONFIRM"]):
@@ -587,7 +589,7 @@ class HexpansionMgr:
             if self._logging:
                 print("H:Upgrade Cancelled")
             app.button_states.clear()
-            self._hexpansion_state_by_slot[upgrade_port - 1] = _HEXPANSION_STATE_RECOGNISED_OLD_APP
+            #self._hexpansion_state_by_slot[upgrade_port - 1] = _HEXPANSION_STATE_RECOGNISED_OLD_APP
             self._upgrade_port = None
             self._sub_state = _SUB_INIT if self._mode == _MODE_INIT else _SUB_CHECK
 
@@ -614,7 +616,6 @@ class HexpansionMgr:
         print(f"Ports to check app: {self._ports_to_check_app}")
         print(f"hexsense_port:{app.hexsense_port}")
         print(f"hextest_port:{app.hextest_port}")
-        #print(f"hexgps_port:{app.hexgps_port}")
         print(f"hexdiag_port:{app.hexdiag_port}")
         print(f"hexdrive_ports:{app.hexdrive_ports}")
         print(f"hexpansion_update_required = {app.hexpansion_update_required}")
@@ -668,9 +669,10 @@ class HexpansionMgr:
 
         self._report_hexpansion_states()
 
+        # For hexpansiosn of which we only need to know where one is we track movements between ports and update the assigned port accordingly
         self._refresh_single_port_hexpansion_assignments()
 
-        # Build a new list of ports with HexDrives:
+        # Build a new list of ports with HexDrives - to allow for more than one being present and used:
         new_hexdrive_ports = []
         for port in range(1, _NUM_HEXPANSION_SLOTS + 1):
             # check if there is a hexpansion of a type that can be a HexDrive on this port
@@ -683,20 +685,6 @@ class HexpansionMgr:
         if set(new_hexdrive_ports) != set(app.hexdrive_ports):
             if self._logging:
                 print(f"H:HexDrive ports changed from {app.hexdrive_ports} to {new_hexdrive_ports}")
-            #if len(new_hexdrive_ports) == len(app.hexdrive_ports):
-            #    app.show_message(["HexDrive moved", f"to {new_hexdrive_ports}"], [(1,1,0),(1,1,1)], "hexpansion")
-            #    self._message_being_shown = True
-            #elif len(new_hexdrive_ports) > len(app.hexdrive_ports):
-            #    added_ports = set(new_hexdrive_ports) - set(app.hexdrive_ports)
-            #    if self._mode != _MODE_INIT:
-            #        app.show_message(["HexDrive inserted", f"on port {added_ports}"], [(0,1,0),(1,1,1)], "hexpansion")
-            #        self._message_being_shown = True
-            #else:
-            #    removed_ports = set(app.hexdrive_ports) - set(new_hexdrive_ports)
-            #    if len(new_hexdrive_ports) > 0:
-            #        # no point showing this message if there are no Hexdrives left as user will get the "HexDrive required" message instead
-            #        app.show_message(["HexDrive removed", f"from port {removed_ports}"], [(1,0,0),(1,1,1)], "hexpansion")
-            #        self._message_being_shown = True
             app.hexdrive_ports = new_hexdrive_ports
             app.hexdrive_apps = []
             app.num_motors = 0
@@ -710,7 +698,8 @@ class HexpansionMgr:
         if len(app.hexdrive_ports) != len (app.hexdrive_apps):
             hexdrive_apps = []
             for port in app.hexdrive_ports:
-                print(f"H:Checking HexDrive app on port {port}, current state: {_HEXPANSION_STATE_NAMES[self._hexpansion_state_by_slot[port - 1]]}")
+                if self._logging:
+                    print(f"H:Checking HexDrive app on port {port}, current state: {_HEXPANSION_STATE_NAMES[self._hexpansion_state_by_slot[port - 1]]}")
                 if self._hexpansion_state_by_slot[port - 1] == _HEXPANSION_STATE_RECOGNISED_APP_OK:
                     # already checked and app is OK, so just add it to the list
                     hexdrive_app = self._find_hexpansion_app(port)
@@ -721,8 +710,9 @@ class HexpansionMgr:
                     type_idx = self._hexpansion_type_by_slot[port - 1]
                     if app.HEXPANSION_TYPES[type_idx].app_name is not None:
                         # Yes this port should have an app, but we haven't checked it yet, so check if the correct app is running on this port
-                        print(f"H:Request Check for {app.HEXPANSION_TYPES[type_idx].app_name} app on port {port}")
                         if port not in self._ports_to_check_app:
+                            if self._logging:
+                                print(f"H:Request Check for {app.HEXPANSION_TYPES[type_idx].app_name} app on port {port}")
                             self._ports_to_check_app.add(port)
 
             if len(hexdrive_apps) > 0:
@@ -751,7 +741,7 @@ class HexpansionMgr:
         if len(self._ports_to_check_app) > 0:
             # there are outstandind apps to check
             if self._logging:
-                print(f"H:Checking apps on ports: {self._ports_to_check_app}")
+                print(f"H:Waiting for app version check on port(s): {self._ports_to_check_app}")
         else:
             # Check Complete - decide next state
             if self._reboop_required:
@@ -1055,13 +1045,14 @@ class HexpansionMgr:
 
 
 
-    def _check_hexpansion_app_on_port(self, port: int, type_index: int) -> object | None:
+    def _check_hexpansion_app_on_port(self, port: int, type_index: int, ) -> object | None:
         """Check if the app for the hexpansion on the given port is present and correct"""
         app = self._app
         hexpansion_app = self._find_hexpansion_app(port)
         if hexpansion_app is not None:
-            # Read version from VERSION (module-level constant, preferred) or
-            # lowercase version attribute as a fallback for older apps.
+            # Read version from the running app object's VERSION attribute.
+            # EEPROM apps expose this on the class so per-port app instances
+            # can report their loaded code version reliably.
             version = getattr(hexpansion_app, "VERSION",
                               getattr(hexpansion_app, "version", None))
             expected = app.HEXPANSION_TYPES[type_index].app_mpy_version
@@ -1069,12 +1060,13 @@ class HexpansionMgr:
                 # No expected version recorded for this type – treat any running app as current.
                 self._hexpansion_state_by_slot[port - 1] = _HEXPANSION_STATE_RECOGNISED_APP_OK
             elif not _versions_match(version, expected):
-                if self._logging:
-                    print(f"H:{app.HEXPANSION_TYPES[type_index].name} app on port {port} has version {version}, expected {expected}")
-                self._hexpansion_state_by_slot[port - 1] = _HEXPANSION_STATE_RECOGNISED_OLD_APP
-                # add to upgrade list if not already there
-                if port not in self._ports_to_check_app:
-                    self._ports_to_check_app.add(port)
+                if self._hexpansion_state_by_slot[port - 1] != _HEXPANSION_STATE_RECOGNISED_OLD_APP:
+                    if self._logging:
+                        print(f"H:{app.HEXPANSION_TYPES[type_index].name} app on port {port} has version {version}, expected {expected}")
+                    self._hexpansion_state_by_slot[port - 1] = _HEXPANSION_STATE_RECOGNISED_OLD_APP
+                    # add to upgrade list if not already there
+                    if port not in self._ports_to_check_app:
+                        self._ports_to_check_app.add(port)
             else:
                 self._hexpansion_state_by_slot[port - 1] = _HEXPANSION_STATE_RECOGNISED_APP_OK
             if self._logging:
@@ -1332,44 +1324,36 @@ class HexpansionMgr:
                 port = self._ports_to_check_app.pop()
                 self._waiting_app_port = port
                 self._hexpansion_app_startup_timer = 0
-                hexpansion_app = self._find_hexpansion_app(port)
-                if hexpansion_app is not None:
-                    try:
-                        get_version = getattr(hexpansion_app, "get_version", None)
-                        if get_version is None:
-                            raise AttributeError("get_version")
-                        hexpansion_app_version = get_version()
-                    except Exception as e:   # pylint: disable=broad-except
-                        hexpansion_app_version = 0
-                        print(f"H:Error getting Hexpansion app version - assume old: {e}")
-                elif 5000 < self._hexpansion_app_startup_timer:
-                    if self._logging:
-                        print("H:Timeout waiting for Hexpansion app to be started - assume it needs installing")
-                    hexpansion_app_version = 0
-                else:
-                    if 0 == self._hexpansion_app_startup_timer:
-                        if self._logging:
-                            print(f"H:No app found on port {port} - WAITING for app to appear in Scheduler")
-                    #app.notification = Notification("Checking...", port=port)
-                    self._hexpansion_app_startup_timer += delta
-                    return True
-                if hexpansion_app_version == app.HEXPANSION_TYPES[self._hexpansion_type_by_slot[port - 1]].app_mpy_version:
-                    if self._logging:
-                        print(f"H:Hexpansion on port {port} has latest App")
-                    self._hexpansion_state_by_slot[port - 1] = _HEXPANSION_STATE_RECOGNISED_APP_OK
+            type_index = self._hexpansion_type_by_slot[port - 1]
+            if type_index is None:
+                if self._logging:
+                    print(f"H:Unexpectedly no hexpansion type for port {port} when checking app - skipping")
+                self._waiting_app_port = None
+                return False
+            hexpansion_app = self._check_hexpansion_app_on_port(port, type_index)
+            if hexpansion_app is not None:
+                if self._hexpansion_state_by_slot[port - 1] == _HEXPANSION_STATE_RECOGNISED_APP_OK:
                     self._sub_state = _SUB_CHECK
-                else:
+                elif self._hexpansion_state_by_slot[port - 1] == _HEXPANSION_STATE_RECOGNISED_OLD_APP:
+                    if self._logging:
+                        print(f"H:Hexpansion [{port}] upgrade to {app.HEXPANSION_TYPES[type_index].app_mpy_version}?")
                     self._upgrade_port = port
-                    if hexpansion_app_version == 0:
-                        if self._logging:
-                            print(f"H:Hexpansion [{port}] install {app.HEXPANSION_TYPES[self._hexpansion_type_by_slot[port - 1]].app_mpy_name} app")
-                        self._hexpansion_state_by_slot[port - 1] = _HEXPANSION_STATE_RECOGNISED_NO_APP
-                    else:
-                        if self._logging:
-                            print(f"H:Hexpansion [{port}] version {hexpansion_app_version} upgrade to {app.HEXPANSION_TYPES[self._hexpansion_type_by_slot[port - 1]].app_mpy_version}")
-                        self._hexpansion_state_by_slot[port - 1] = _HEXPANSION_STATE_RECOGNISED_OLD_APP
-                        #app.notification = Notification("Upgrade?", port=self._upgrade_port)
                     self._sub_state = _SUB_UPGRADE_CONFIRM
+            elif 5000 < self._hexpansion_app_startup_timer:
+                if self._logging:
+                    print("H:Timeout waiting for Hexpansion app to be started - assume it needs installing")
+                    print(f"H:Hexpansion [{port}] install {app.HEXPANSION_TYPES[type_index].app_mpy_name} app?")
+                self._hexpansion_state_by_slot[port - 1] = _HEXPANSION_STATE_RECOGNISED_NO_APP
+                self._upgrade_port = port
+                self._sub_state = _SUB_UPGRADE_CONFIRM
+            else:
+                if 0 == self._hexpansion_app_startup_timer:
+                    if self._logging:
+                        print(f"H:No app found on port {port} - WAITING for app to appear in Scheduler")
+                self._hexpansion_app_startup_timer += delta
+                # Keep calling this function to keep checking for the app and updating the timer until we find the app or hit the timeout, at which point we will prompt to install.
+                return True
+            # Clear waiting app state so that we will check the next port on the next call.
             self._waiting_app_port = None
             self._hexpansion_app_startup_timer = 0
             return True
