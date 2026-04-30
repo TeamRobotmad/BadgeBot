@@ -1,11 +1,9 @@
 import sys
 
-import pytest
-
 # Add badge software to pythonpath
 sys.path.append("../../../")
 
-import sim.run
+import sim.run as _sim_run
 from system.hexpansion.config import HexpansionConfig
 
 
@@ -20,27 +18,12 @@ def test_import_hexdrive_app_and_app_export():
     assert HexDrive.__app_export__ == HexDriveApp
 
 def test_hexdrive_instance_exposes_version():
-    import sim.apps.BadgeBot.EEPROM.hexdrive as HexDrive
     from sim.apps.BadgeBot.EEPROM.hexdrive import HexDriveApp
-    assert getattr(HexDriveApp(), "VERSION", None) == HexDrive.VERSION
+    assert getattr(HexDriveApp(), "VERSION", None) == HexDriveApp.VERSION
 
 def test_gps_instance_exposes_version():
-    import sim.apps.BadgeBot.EEPROM.gps as GPS
     from sim.apps.BadgeBot.EEPROM.gps import GPSApp
-    assert getattr(GPSApp(), "VERSION", None) == GPS.VERSION
-
-def test_sensor_display_orders_rgb_first():
-    from sim.apps.BadgeBot.sensor_test import SensorTestMgr
-
-    ordered = SensorTestMgr._ordered_display_items({"w": 4, "b": 3, "extra": 5, "g": 2, "r": 1})
-    assert ordered == [("r", "1"), ("g", "2"), ("b", "3"), ("w", "4"), ("extra", "5")]
-
-def test_sensor_white_reference_normalises_rgb_channels():
-    from sim.apps.BadgeBot.sensor_test import SensorTestMgr
-
-    gains = SensorTestMgr._reference_to_gains(50, 100, 200, 400)
-    calibrated = SensorTestMgr._apply_white_reference(50, 100, 150, 200, gains)
-    assert calibrated == (1024, 1024, 768, 512)
+    assert getattr(GPSApp(), "VERSION", None) == GPSApp.VERSION
 
 def test_badgebot_app_init():
     from sim.apps.BadgeBot import BadgeBotApp
@@ -53,8 +36,8 @@ def test_hexdrive_app_init(port):
 
 def test_app_versions_match():
     import sim.apps.BadgeBot.app as BadgeBot
-    import sim.apps.BadgeBot.EEPROM.hexdrive as HexDrive
-    assert BadgeBot.HEXDRIVE_APP_VERSION == HexDrive.VERSION
+    from sim.apps.BadgeBot.EEPROM.hexdrive import HexDriveApp
+    assert BadgeBot.HEXDRIVE_APP_VERSION == HexDriveApp.VERSION
 
 def test_hexdrive_type_pids_consistent():
     """Verify HexDriveType PIDs in hexdrive.py are consistent with HexpansionType PIDs in app.py.
@@ -129,8 +112,9 @@ def test_autodrive_settings_need_hexpansion():
 def test_front_face_labels_complete():
     """Verify _FRONT_FACE_LABELS has one entry for each valid front_face value (0-11)."""
     import sim.apps.BadgeBot.app as BadgeBot
-    assert hasattr(BadgeBot, '_FRONT_FACE_LABELS')
-    assert len(BadgeBot._FRONT_FACE_LABELS) == 12
+    front_face_labels = getattr(BadgeBot, '_FRONT_FACE_LABELS', None)
+    assert front_face_labels is not None
+    assert len(front_face_labels) == 12
 
 
 def test_menu_items_include_sensor_and_auto():

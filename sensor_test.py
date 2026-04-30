@@ -963,6 +963,8 @@ class SensorTestMgr:
                     self._display_data["Distance"] = distance_str
                 except Exception as e:    # pylint: disable=broad-exception-caught
                     print(f"S:Distance processing error: {e}")
+            elif self._page_selected == _PAGE_RAW:
+                self._display_data = self._ordered_display_data(self._sensor_data)
         elif self._page_selected == _PAGE_RAW:
             self._display_data = self._ordered_display_data(self._sensor_data)
 
