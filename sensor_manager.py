@@ -18,8 +18,8 @@ from .sensors.sensor_base import SensorBase
 
 
 _LED_PIN = 2        # LED to illumiinate area under colour sensor to measure reflected light from surface below.
-_INTERRUPT_PIN = 1  # Not currently used, but we can set it up as an input for future interrupt-based drivers
-
+_COLOUR_INT_PIN = 1  # Not currently used, but we can set it up as an input for future interrupt-based drivers
+_DIST_INT_PIN = 3  # Not currently used, but we can set it up as an input for future interrupt-based drivers
 
 class SensorManager:
     def __init__(self, logging: bool = False):
@@ -87,7 +87,7 @@ class SensorManager:
                 if address not in found_addrs:
                     continue
                 try:
-                    sensor = cls(i2c_addr=address)
+                    sensor = cls(i2c_addr=address, logging=self.logging)
                 except TypeError:
                     sensor = cls()
                 if sensor.begin(self._i2c):
@@ -116,7 +116,8 @@ class SensorManager:
                 print(f"SM:LED On port {port} pin {config.ls_pin[_LED_PIN]} for colour sensor")
             config.ls_pin[_LED_PIN].init(mode=Pin.OUT)
             config.ls_pin[_LED_PIN].value(1)
-            config.ls_pin[_INTERRUPT_PIN].init(mode=Pin.IN)
+            config.ls_pin[_COLOUR_INT_PIN].init(mode=Pin.IN)
+            config.ls_pin[_DIST_INT_PIN].init(mode=Pin.IN)
 
         return len(self._sensors) > 0
 
@@ -126,8 +127,10 @@ class SensorManager:
         if self._port is None:
             return False
         config = HexpansionConfig(self._port)
-        v = config.ls_pin[_INTERRUPT_PIN].value()
-        print(f"[{self._port}] INT pin value: {v}")
+        v = config.ls_pin[_COLOUR_INT_PIN].value()
+        print(f"[{self._port}] COLOUR INT pin value: {v}")
+        v = config.ls_pin[_DIST_INT_PIN].value()
+        print(f"[{self._port}] DIST INT pin value: {v}")
 
 
     def close(self):
@@ -181,6 +184,7 @@ class SensorManager:
         if not self._sensors:
             return {"Error": "no sensors"}
         self._last_data = self._sensors[self._index].read()
+        self.report_interrupt()
         return self._last_data
 
 

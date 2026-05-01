@@ -11,6 +11,7 @@ Datasheet: https://www.st.com/resource/en/datasheet/vl53l0x.pdf
 """
 
 import time
+from ..diagnostics import diagnostics_output
 from .sensor_base import SensorBase
 
 
@@ -109,7 +110,8 @@ class VL53L0X(SensorBase):
     def _init(self) -> bool:
         who = self._read_u8(_WHO_AM_I_REG)
         if who != _WHO_AM_I_EXPECT:
-            print(f"S:VL53L0X unexpected ID 0x{who:02X} (expected 0x{_WHO_AM_I_EXPECT:02X})")
+            if self._logging:
+                print(f"S:VL53L0X unexpected ID 0x{who:02X} (expected 0x{_WHO_AM_I_EXPECT:02X})")
             return False
 
         # The VL53L0X needs a substantial startup sequence before single-shot
@@ -176,6 +178,7 @@ class VL53L0X(SensorBase):
         return True
 
     def _measure(self) -> dict:
+        diagnostics_output(1,0)
         self._prepare_single_shot()
         self._write_u8(_SYSRANGE_START, 0x01)
 
@@ -192,11 +195,13 @@ class VL53L0X(SensorBase):
         # ST's register map; this offset matches the reference driver.
         dist_mm = self._read_u16_be(_RESULT_RANGE_STATUS + 10)
 
-        print(f"S:VL53L0X measured {dist_mm} mm")
+        if self._logging:
+            print(f"S:VL53L0X measured {dist_mm} mm")
 
         self._write_u8(_SYSTEM_INTERRUPT_CLEAR, 0x01)
+        diagnostics_output(1,1)
 
-        return {"dist_mm": f"{dist_mm}"}
+        return {"dist": f"{dist_mm}"}
 
     def _open_stop_variable_window(self):
         self._write_u8(0x80, 0x01)

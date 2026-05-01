@@ -13,6 +13,7 @@ import settings as platform_settings
 from events.input import BUTTON_TYPES
 from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
+from .app import SETTINGS_NAME_PREFIX
 
 MENU_ENTRY_NAME = "Settings"
 
@@ -103,9 +104,9 @@ class MySetting:
         """Persist the setting value to platform storage.  If the value is equal to the default, the setting will be removed from storage to save space."""
         try:
             if self.v != self.d:
-                platform_settings.set(f"badgebot.{self._index()}", self.v)
+                platform_settings.set(f"{SETTINGS_NAME_PREFIX}.{self._index()}", self.v)
             else:
-                platform_settings.set(f"badgebot.{self._index()}", None)
+                platform_settings.set(f"{SETTINGS_NAME_PREFIX}.{self._index()}", None)
         except Exception as e:          # pylint: disable=broad-except
             print(f"H:Failed to persist setting {self._index()}: {e}")
 
@@ -133,7 +134,7 @@ class SettingsMgr:
     def logging(self) -> bool:
         """Whether to print debug logs to the console."""
         return self._logging
-    
+
     @logging.setter
     def logging(self, value: bool):
         self._logging = value

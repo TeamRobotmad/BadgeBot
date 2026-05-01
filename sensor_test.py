@@ -21,7 +21,8 @@ except ImportError:
     class ePin:  # pylint: disable=invalid-name
         """Simulator stub for egpio.ePin – used only for ePin.PWM mode constant."""
         PWM = None
-from .app import DEFAULT_BACKGROUND_UPDATE_PERIOD, MOTOR_PWM_FREQ
+from .app import SETTINGS_NAME_PREFIX, DEFAULT_BACKGROUND_UPDATE_PERIOD, MOTOR_PWM_FREQ
+
 try:
     from machine import Pin, mem32, disable_irq, enable_irq
 except ImportError:
@@ -138,14 +139,14 @@ class SensorTestMgr:
         self._display_data: dict = {}
         self._page_selected: int = _PAGE_RAW
         self._page_count: int = 3
-        self._white_gains: dict[tuple[int, int], tuple[int, int, int, int]] = {}
         self._logging: bool = logging
         self._read_timer: int = 0    # ms since last sensor read
         self._sample_count: int = 0
         self._count_timer: int = 0  # ms
         self._sample_rate: int = 0  # Hz
         self._new_sample: bool = False
-        self._colour: tuple = (1.0, 1.0, 0.0)  # default to yellow for non-colour sensors
+        self._colour: tuple[float, float, float] = (1.0, 1.0, 0.0)  # default to yellow for non-colour sensors
+        self._white_gains: tuple[int, int, int, int] | None = None  # white reference gains for RGBC channels, scaled by _WHITE_CAL_SCALE
 
         self._rotation_rate_emitter_duty: int = _DEFAULT_ROTATION_RATE_EMITTER_DUTY # duty cycle for the IR emitter when doing rate testing, 0-255 (0=off, 255=full on)
         self._rotation_rate_counters = []                           # hardware counters used to count photodiode pulses for rate testing
@@ -418,18 +419,16 @@ class SensorTestMgr:
 
 
     @staticmethod
-    def _apply_white_reference(r: int, g: int, b: int, clear: int = 0,
-                               white_gains: tuple[int, int, int, int] | None = None) -> tuple[int, int, int, int]:
+    def _apply_white_reference(r: int, g: int, b: int, w: int = 0, white_gains: tuple[int, int, int, int] | None = None) -> tuple[int, int, int, int]:
         if white_gains is None:
-            return r, g, b, clear
+            return (r, g, b, w)
 
-        gain_r, gain_g, gain_b, gain_clear = white_gains
-
+        """Apply white reference gains to raw RGBC values and return adjusted RGBC tuple."""
         return (
-            max(0, ((r * gain_r) + (_WHITE_CAL_SCALE // 2)) // _WHITE_CAL_SCALE),
-            max(0, ((g * gain_g) + (_WHITE_CAL_SCALE // 2)) // _WHITE_CAL_SCALE),
-            max(0, ((b * gain_b) + (_WHITE_CAL_SCALE // 2)) // _WHITE_CAL_SCALE),
-            max(0, ((clear * gain_clear) + (_WHITE_CAL_SCALE // 2)) // _WHITE_CAL_SCALE) if clear > 0 else 0,
+            max(0, ((r * white_gains[0]) + (_WHITE_CAL_SCALE // 2)) // _WHITE_CAL_SCALE),
+            max(0, ((g * white_gains[1]) + (_WHITE_CAL_SCALE // 2)) // _WHITE_CAL_SCALE),
+            max(0, ((b * white_gains[2]) + (_WHITE_CAL_SCALE // 2)) // _WHITE_CAL_SCALE),
+            max(0, ((w * white_gains[3]) + (_WHITE_CAL_SCALE // 2)) // _WHITE_CAL_SCALE) if w > 0 else 0,
         )
 
 
@@ -710,8 +709,6 @@ class SensorTestMgr:
                 print(f"S:Motor-Power: {self._rotation_rate_motor_power}")
 
 
-
-
     def _update_select_port(self, delta: int):   # pylint: disable=unused-argument
         app = self._app
         if app.button_states.get(BUTTON_TYPES["RIGHT"]):
@@ -745,6 +742,11 @@ class SensorTestMgr:
                     app.update_period = sensor_mgr.read_interval
                     if self.logging:
                         print(f"Opened sensor port {self._port_selected} with read_interval {sensor_mgr.read_interval}ms")
+                    # Sensor specific setup
+                    if sensor_mgr.type == "Colour":
+                        self._white_gains = self._load_white_gains("ref")
+                        if self._white_gains is not None and self.logging:
+                            print(f"S:Loaded white gains from settings: {self._white_gains}")
                     self._sub_state = _SUB_READING
                 else:
                     app.notification = Notification("      No      Sensors", port=self._port_selected)
@@ -782,49 +784,34 @@ class SensorTestMgr:
                 items.append((key, str(value)))
         return items
 
-    def _sensor_reference_key(self) -> tuple[int, int] | None:
-        sensor_mgr = self._sensor_mgr
-        if sensor_mgr is None:
-            return None
-        return (self._port_selected, sensor_mgr.current_sensor_index)
-
     @staticmethod
-    def _white_gain_setting_keys(reference_key: tuple[int, int]) -> tuple[str, str, str, str]:
-        port, sensor_index = reference_key
-        base = f"{_WHITE_CAL_GAIN_PREFIX}{port}{sensor_index}"
+    def _white_gain_setting_keys(key: str) -> tuple[str, str, str, str]:
+        base = f"{_WHITE_CAL_GAIN_PREFIX}_{key}_"
         return (f"{base}r", f"{base}g", f"{base}b", f"{base}w")
 
     @staticmethod
-    def _reference_to_gains(r: int, g: int, b: int, clear: int = 0) -> tuple[int, int, int, int]:
+    def _reference_to_gains(r: int, g: int, b: int, w: int = 0) -> tuple[int, int, int, int]:
         ref_r = max(int(r), 1)
         ref_g = max(int(g), 1)
         ref_b = max(int(b), 1)
-        ref_clear = max(int(clear), 1) if clear > 0 else _WHITE_CAL_SCALE
+        ref_w = max(int(w), 1) if w > 0 else _WHITE_CAL_SCALE
         gain_scale = _WHITE_CAL_SCALE * _WHITE_CAL_SCALE
         return (
             (gain_scale + (ref_r // 2)) // ref_r,
             (gain_scale + (ref_g // 2)) // ref_g,
             (gain_scale + (ref_b // 2)) // ref_b,
-            (gain_scale + (ref_clear // 2)) // ref_clear,
+            (gain_scale + (ref_w // 2)) // ref_w,
         )
 
-    def _get_white_gains(self) -> tuple[int, int, int, int] | None:
-        key = self._sensor_reference_key()
-        if key is None:
-            return None
-        if key in self._white_gains:
-            return self._white_gains[key]
-
+    def _load_white_gains(self, key: str) -> tuple[int, int, int, int] | None:
         setting_keys = self._white_gain_setting_keys(key)
         values = []
         for setting_key in setting_keys:
-            value = platform_settings.get(f"badgebot.{setting_key}", None)
+            value = platform_settings.get(f"{SETTINGS_NAME_PREFIX}.{setting_key}", None)
             if value is None:
                 return None
             values.append(int(value))
-
         gains = (values[0], values[1], values[2], values[3])
-        self._white_gains[key] = gains
         return gains
 
     def _update_page_count(self) -> None:
@@ -840,22 +827,21 @@ class SensorTestMgr:
         if not all(key in self._sensor_data for key in ("r", "g", "b")):
             return False
 
-        key = self._sensor_reference_key()
-        if key is None:
-            return False
-
         gains = self._reference_to_gains(
             int(self._sensor_data["r"]),
             int(self._sensor_data["g"]),
             int(self._sensor_data["b"]),
             int(self._sensor_data.get("w", 0)),
         )
-        self._white_gains[key] = gains
-        setting_keys = self._white_gain_setting_keys(key)
+        # Update white gains in this manager
+        self._white_gains = gains
+
+        # Save white gains to platform settings for persistence across sessions and availability in other modules
+        setting_keys = self._white_gain_setting_keys("ref")
         for setting_key, gain in zip(setting_keys, gains):
-            platform_settings.set(f"badgebot.{setting_key}", gain)
+            platform_settings.set(f"{SETTINGS_NAME_PREFIX}.{setting_key}", gain)
         if self._logging:
-            print(f"S:Stored white gains for port {key[0]} sensor {key[1]}: {gains}")
+            print(f"S:Stored white gains: {gains}")
         self._app.notification = Notification("White Cal Saved", port=self._port_selected)
         return True
 
@@ -896,7 +882,7 @@ class SensorTestMgr:
                         self._display_data = self._ordered_display_data(self._sensor_data)
                     elif self._page_selected == _PAGE_CAL:
                         self._display_data["mode"] = "XYZ sensor"
-                        self._display_data["ref"] = "N/A"
+                        #self._display_data["ref"] = "N/A"
                         self._display_data["press"] = "Use Raw/Data"
 
                     #convert CIE1931 XYZ to RGB using a simple matrix transform
@@ -914,22 +900,16 @@ class SensorTestMgr:
                     r = int(self._sensor_data["r"])
                     g = int(self._sensor_data["g"])
                     b = int(self._sensor_data["b"])
-                    clear = int(self._sensor_data.get("w", 0))
-                    white_gains = self._get_white_gains()
-                    calibrated_r, calibrated_g, calibrated_b, calibrated_clear = self._apply_white_reference(
-                        r, g, b, clear, white_gains
-                    )
+                    w = int(self._sensor_data.get("w", 0))
+                    calibrated_r, calibrated_g, calibrated_b, calibrated_w = self._apply_white_reference(r, g, b, w, self._white_gains)
 
                     if self._page_selected == _PAGE_DATA:
-                        colour_name = self.lookup_colour_RGB(calibrated_r, calibrated_g, calibrated_b, calibrated_clear)
+                        colour_name = self.lookup_colour_RGB(calibrated_r, calibrated_g, calibrated_b, calibrated_w)
                         self._display_data["colour"] = colour_name
-                        if white_gains is not None:
-                            self._display_data["cal"] = "white ref"
                     elif self._page_selected == _PAGE_RAW:
                         self._display_data = self._ordered_display_data(self._sensor_data)
                     elif self._page_selected == _PAGE_CAL:
-                        self._display_data["ref"] = "saved" if white_gains is not None else "none"
-                        self._display_data["hold"] = "white card"
+                        self._display_data["ref"] = "white"
                         self._display_data["press"] = "CONFIRM"
 
                 except Exception as e:    # pylint: disable=broad-exception-caught

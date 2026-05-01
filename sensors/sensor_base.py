@@ -20,10 +20,11 @@ class SensorBase:
     READ_INTERVAL_MS = 250
     TYPE = "Generic"
 
-    def __init__(self, i2c_addr: int | None = None):
+    def __init__(self, i2c_addr: int | None = None, logging: bool = False):
         self._i2c = None
         self._ready = False
         self._i2c_addr = self.I2C_ADDR if i2c_addr is None else i2c_addr
+        self._logging = logging
 
     # ------------------------------------------------------------------
     # Public API (called by SensorManager / app.py)

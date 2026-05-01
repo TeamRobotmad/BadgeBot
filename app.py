@@ -31,10 +31,8 @@ from .utils import draw_logo_animated, parse_version
 
 HEXDRIVE_APP_VERSION = 6
 
-_SETTINGS_NAME_PREFIX = "badgebot."  # Prefix for settings keys in EEPROM
+SETTINGS_NAME_PREFIX = "badgebot."  # Prefix for settings keys in EEPROM
 APP_VERSION = "1.5" # BadgeBot App Version Number
-
-_DIAG_PORT = None  # Hexpansion port to use for diagnostic timing measurements
 
 # If you change the URL then you will need to regenerate the QR code
 # using the generate_qr_code.py script, and update the _QR_CODE constant below with the new code generated for your URL
@@ -151,14 +149,14 @@ def _try_import(module_name, *attr_names):
     return nones
 
 HexpansionMgr, HexpansionType, _hexpansion_init_settings = _try_import('hexpansion_mgr', 'HexpansionMgr', 'HexpansionType', 'init_settings')
-SettingsMgr, MySetting                                    = _try_import('settings_mgr',   'SettingsMgr', 'MySetting')
-MotorMovesMgr, _motor_moves_init_settings                 = _try_import('motor_moves',    'MotorMovesMgr', 'init_settings')
-ServoTestMgr, _servo_test_init_settings                   = _try_import('servo_test',     'ServoTestMgr', 'init_settings')
-LineFollowMgr, _line_follow_init_settings                 = _try_import('line_follow',    'LineFollowMgr', 'init_settings')
-(AutotuneMgr,)                                            = _try_import('autotune_mgr',   'AutotuneMgr')
-SensorTestMgr, _sensor_test_init_settings                 = _try_import('sensor_test',    'SensorTestMgr', 'init_settings')
-AutoDriveMgr, _autodrive_init_settings                    = _try_import('autodrive',      'AutoDriveMgr', 'init_settings')
-
+SettingsMgr, MySetting                                    = _try_import('settings_mgr',  'SettingsMgr', 'MySetting')
+MotorMovesMgr, _motor_moves_init_settings                 = _try_import('motor_moves',   'MotorMovesMgr', 'init_settings')
+ServoTestMgr, _servo_test_init_settings                   = _try_import('servo_test',    'ServoTestMgr', 'init_settings')
+LineFollowMgr, _line_follow_init_settings                 = _try_import('line_follow',   'LineFollowMgr', 'init_settings')
+(AutotuneMgr,)                                            = _try_import('autotune_mgr',  'AutotuneMgr')
+SensorTestMgr, _sensor_test_init_settings                 = _try_import('sensor_test',   'SensorTestMgr', 'init_settings')
+AutoDriveMgr, _autodrive_init_settings                    = _try_import('autodrive',     'AutoDriveMgr', 'init_settings')
+emit_diagnostics_output, set_diagnostics_output           = _try_import('diagnostics',   'diagnostics_output', 'set_diagnostics_output')
 
 class BadgeBotApp(app.App):         # pylint: disable=no-member
     """Main application class for BadgeBot.  Manages overall state, user input, and delegates to functional area managers for specific features."""
@@ -283,11 +281,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         # including timing measurements for the rotation rate measurement feature in the Sensor Test
         self.hextest_port = None
 
-        # GPS hexpansion
-        #self.hexgps_port = None
-
         # Diagnostics hexpansion
-        self.hexdiag_port = _DIAG_PORT
+        self.hexdiag_port = None
         self._diag_config = None
         self.hexdiag_setup()
 
@@ -428,9 +423,9 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         while True:
             cur_time = time.ticks_ms()
             delta_ticks = time.ticks_diff(cur_time, last_time)
-            self.diagnostics_output(0, 1)
+            diagnostics_output(0, 1)
             self.background_update(delta_ticks)
-            self.diagnostics_output(0, 0)
+            diagnostics_output(0, 0)
             await asyncio.sleep_ms(max (1, self.update_period - (time.ticks_ms() - cur_time)))  # sleep for the remainder of the update period, accounting for time taken by background_update
             last_time = cur_time
 
@@ -508,7 +503,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if self.logging:
             print("Updating settings from EEPROM")
         for s in self.settings:
-            self.settings[s].v = settings.get(f"{_SETTINGS_NAME_PREFIX}{s}", self.settings[s].d)
+            self.settings[s].v = settings.get(f"{SETTINGS_NAME_PREFIX}{s}", self.settings[s].d)
             if self.logging:
                 print(f"Setting {s} = {self.settings[s].v}")
 
@@ -553,7 +548,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
     def update(self, delta: int):
         """Main update function called from the main loop. Handles state transitions, user input, and delegates to functional area managers."""
-        self.diagnostics_output(1, 1)
+        diagnostics_output(1, 1)
 
         if self.notification:
             self.notification.update(delta)
@@ -618,7 +613,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 except OSError as e:
                     if self.logging:
                         print(f"Error writing to LEDs: {e}")
-        self.diagnostics_output(1, 0)
+        diagnostics_output(1, 0)
 
 
 
@@ -772,7 +767,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
     def draw(self, ctx):
         """Main draw function called from the main loop. Handles drawing the current state, including any notifications."""
-        self.diagnostics_output(2, 1)
+        diagnostics_output(2, 1)
 
         if self.current_state == STATE_MENU and self.menu is not None:
             # These need to be drawn every frame as they contain animations
@@ -825,7 +820,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if self.notification:
             self.notification.draw(ctx)
 
-        self.diagnostics_output(2, 0)
+        diagnostics_output(2, 0)
 
 
 
@@ -1108,6 +1103,17 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             self.minimise()
         # for submenus, just return to the main menu
         self.set_menu()
+
+def diagnostics_output(index: int, value: int):
+    """Output diagnostic values to the HS pins on the diagnostics hexpansion, for measurement with an oscilloscope"""
+    if emit_diagnostics_output is not None:
+        emit_diagnostics_output(index, value)
+
+
+def __app_init__(app_instance):
+    """Register the active app instance as the shared diagnostics sink."""
+    if set_diagnostics_output is not None:
+        set_diagnostics_output(app_instance.diagnostics_output)
 
 
 __app_export__ = BadgeBotApp

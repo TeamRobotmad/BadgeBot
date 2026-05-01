@@ -90,7 +90,6 @@ _SINGLE_PORT_HEXPANSION_REFS = (
     ("hexsense_port", "HexSense", "HEXSENSE_HEXPANSION_INDEX"),
     ("hextest_port", "HexTest", "HEXTEST_HEXPANSION_INDEX"),
     ("hexdiag_port", "HexDiag", "HEXDIAG_HEXPANSION_INDEX"),
-    #("hexgps_port", "HexGPS", "HEXGPS_HEXPANSION_INDEX"),
 )
 
 # ---- Settings initialisation -----------------------------------------------

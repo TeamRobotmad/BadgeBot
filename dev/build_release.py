@@ -17,6 +17,7 @@ RUNTIME_MODULES = {
     "motor_moves",
     "servo_test",
     "utils",
+    "diagnostics",
     "motor_controller",
     "sensor_manager",
     "sensor_test",
@@ -27,10 +28,10 @@ RUNTIME_MODULES = {
 SENSOR_MODULES = {
     "sensors/__init__",
     "sensors/sensor_base",
-    "sensors/tcs3430",
-    "sensors/tcs3472",
+    #"sensors/tcs3430",
+    #"sensors/tcs3472",
     "sensors/vl53l0x",
-    "sensors/vl6180x",
+    #"sensors/vl6180x",
     "sensors/opt4060",
     "sensors/ina226",
 }
