@@ -611,19 +611,20 @@ class HexpansionMgr:
         if not self._logging:
             return
         app = self._app
+        print("H:Current Hexpansion States:")
         for port in range(0, _NUM_HEXPANSION_SLOTS):
             type_idx = self._hexpansion_type_by_slot[port]
             type_name = app.HEXPANSION_TYPES[type_idx].name if type_idx is not None else "None"
             state_name = _HEXPANSION_STATE_NAMES[self._hexpansion_state_by_slot[port]]
             print(f"Port {port+1}: Type={type_name}, State={state_name}")
-        print(f"Ports to initialise: {self._ports_to_initialise}")
-        print(f"Ports to check app: {self._ports_to_check_app}")
-        print(f"hexsense_port:{app.hexsense_port}")
-        print(f"hextest_port:{app.hextest_port}")
-        print(f"hexdiag_port:{app.hexdiag_port}")
-        print(f"hexdrive_ports:{app.hexdrive_ports}")
-        print(f"hexpansion_update_required = {app.hexpansion_update_required}")
-        print(f"mode = {self._mode}")
+        print(f"\tPorts to initialise: {self._ports_to_initialise}")
+        print(f"\tPorts to check app: {self._ports_to_check_app}")
+        print(f"\thexsense_port:{app.hexsense_port}")
+        print(f"\thextest_port:{app.hextest_port}")
+        print(f"\thexdiag_port:{app.hexdiag_port}")
+        print(f"\thexdrive_ports:{app.hexdrive_ports}")
+        print(f"\thexpansion_update_required = {app.hexpansion_update_required}")
+        print(f"\tmode = {self._mode}")
 
 
 

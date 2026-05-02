@@ -12,9 +12,7 @@ from machine import UART, Pin
 
 # Minimal length method names to make the mpy file as small as possible so it might fit in the 2k hexpansion EEPROM.
 # Minimal functionality to get a GPS fix
-# This version is NOT for the App Store
 
-VERSION = 1
 
 # Hardware defintions:
 TX_PIN  = 1    # HS_G for TX
@@ -28,6 +26,8 @@ ENABLE_PIN  = 0  # First LS pin used to enable the SMPSU
 
 class GPSApp(app.App):         # pylint: disable=no-member
     """ App to get GPS data from a GPS module connected to the hexpansion and display it on the badge. """
+    VERSION = 1         # Increment this when making changes to the app that require the hexpansion app to be re-flashed with the new code.
+
     def __init__(self, config: HexpansionConfig | None = None):
         super().__init__()
         # If run from EEPROM on the hexpansion, the config will be passed in with the correct pin objects
