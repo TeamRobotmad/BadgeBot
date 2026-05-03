@@ -20,6 +20,9 @@ RX_PIN  = 0    # HS_F for RX
 RESET_PIN = 2  # HS_H for reset
 PPS_PIN = 3    # HS_I for PPS
 
+GREEN_LED_PIN = 2   # LS_C for green LED control
+RED_LED_PIN   = 3   # LS_D for red LED control
+
 ###JUST FOR USE WITH MY PROTOTYPE BOARD
 ENABLE_PIN  = 0  # First LS pin used to enable the SMPSU
 ###JUST FOR USE WITH MY PROTOTYPE BOARD
