@@ -306,23 +306,21 @@ class HexpansionMgr:
 
     def _update_detail_page_count(self):
         """Set page count to 3 if the selected port has a recognised type with sub_type or app_name, else 2, or 1 if blank EEPROM."""
-        app = self._app
-        type_idx = self._hexpansion_type_by_slot[self._port_selected - 1] if 1 <= self._port_selected <= _NUM_HEXPANSION_SLOTS else None
-        if type_idx is not None and 0 <= type_idx <= app.BLANK_HEXPANSION_INDEX:
-            ht = app.HEXPANSION_TYPES[type_idx]
-            if ht.sub_type or ht.app_name:
-                # Recognised type with sub_type or app_name, so show details page
-                self._port_detail_page_count = 3
-                self._port_detail_page = self._PAGE_DETAILS
-            elif type_idx == app.BLANK_HEXPANSION_INDEX:
-                # Blank EEPROM - no details to show, so only show the EEPROM page
-                self._port_detail_page_count = 0
-            elif type_idx == app.UNRECOGNISED_HEXPANSION_INDEX:
-                # Unrecognised type - show vid/pid page and EEPROM page
+        state_idx = self._hexpansion_state_by_slot[self._port_selected - 1] if 1 <= self._port_selected <= _NUM_HEXPANSION_SLOTS else None
+        if state_idx is not None:
+            if state_idx == self.HEXPANSION_STATE_UNRECOGNISED:
+                # Unrecognised type - show vid/pid page and EEPROM page but not details page
                 self._port_detail_page_count = 2
                 self._port_detail_page = self._PAGE_VID_PID
+            elif state_idx >= self.HEXPANSION_STATE_RECOGNISED:
+                # Recognised type - show vid/pid page and details page
+                self._port_detail_page_count = 3
+                self._port_detail_page = self._PAGE_DETAILS
+            else:
+                # Empty, Faulty or Blank
+                self._port_detail_page_count = 0
         else:
-            # Empty
+            # No state information
             self._port_detail_page_count = 0
 
 
@@ -483,11 +481,11 @@ class HexpansionMgr:
             self._sub_state = _SUB_INIT if self._mode == _MODE_INIT else _SUB_CHECK
         elif app.button_states.get(BUTTON_TYPES["UP"]):
             app.button_states.clear()
-            self._hexpansion_init_type = (self._hexpansion_init_type + 1) % app.UNRECOGNISED_HEXPANSION_INDEX
+            self._hexpansion_init_type = (self._hexpansion_init_type + 1) % len(app.HEXPANSION_TYPES)
             app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["DOWN"]):
             app.button_states.clear()
-            self._hexpansion_init_type = (self._hexpansion_init_type - 1) % app.UNRECOGNISED_HEXPANSION_INDEX
+            self._hexpansion_init_type = (self._hexpansion_init_type - 1) % len(app.HEXPANSION_TYPES)
             app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["LEFT"]):
             app.button_states.clear()
@@ -548,7 +546,6 @@ class HexpansionMgr:
                               eeprom_total_size,
                               eeprom_page_size):
             app.notification = Notification("Erased", port=erase_port)
-            self._hexpansion_type_by_slot[erase_port - 1] = app.BLANK_HEXPANSION_INDEX
             self._hexpansion_state_by_slot[erase_port - 1] = _HEXPANSION_STATE_BLANK
             hexpansion_type = self._type_name_for_port(erase_port)
             app.show_message([hexpansion_type, f"in slot {erase_port}:", "Erased"], [(1,1,0), (1,1,1), (0,1,0)], "hexpansion")
@@ -1016,7 +1013,6 @@ class HexpansionMgr:
             #    return False
             if self._logging:
                 print(f"H:Found EEPROM on port {port}")
-            self._hexpansion_type_by_slot[port - 1] = app.BLANK_HEXPANSION_INDEX
             self._hexpansion_state_by_slot[port - 1] = _HEXPANSION_STATE_BLANK
             self._ports_to_initialise.add(port)
             return True
@@ -1046,7 +1042,6 @@ class HexpansionMgr:
         if self._logging:
             # report VID/PID in hexadecimal
             print(f"H:Port {port} - VID/PID {hex(hexpansion_header.vid)}/{hex(hexpansion_header.pid)} not recognised")
-        self._hexpansion_type_by_slot[port - 1] = app.UNRECOGNISED_HEXPANSION_INDEX
         self._hexpansion_state_by_slot[port - 1] = _HEXPANSION_STATE_UNRECOGNISED
         return False
 
