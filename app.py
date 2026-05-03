@@ -254,9 +254,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                                  HexpansionType(0x12CE, "HexDrive2",   vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2,           sub_type="Right Motor" ),
                                  HexpansionType(0x2000, "HexSense",    vid=0xCBCB, eeprom_total_size=65536, eeprom_page_size=128,                                                                                                sensors=2,  sub_type="2 Line Sensors"),
                                  HexpansionType(0x3000, "HexTest",     vid=0xCBCB, eeprom_total_size=65536, eeprom_page_size=128),
-                                 HexpansionType(0x4000, "HexDiag",     vid=0xCBCB, eeprom_total_size=65536, eeprom_page_size=128),
-                                 HexpansionType(0x0000, "Unknown",   sub_type=""),       # Virtual type to represent unrecognised hexpansions
-                                 HexpansionType(0xFFFF, "Blank",     sub_type="")]       # Virtual type to represent blank EEPROMs
+                                 HexpansionType(0x4000, "HexDiag",     vid=0xCBCB, eeprom_total_size=65536, eeprom_page_size=128)]
 
         self.HEXDRIVE_HEXPANSION_INDEX = 0      # Index in the HEXPANSION_TYPES list which corresponds to the basic HexDrive type
         self.HEXDRIVE_V2_HEXPANSION_INDEX = 4   # Index in the HEXPANSION_TYPES list which corresponds to the basic HexDrive2 type
@@ -264,8 +262,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.HEXTEST_HEXPANSION_INDEX = 10      # Index in the HEXPANSION_TYPES list which corresponds to the HexTest type
         self.HEXDIAG_HEXPANSION_INDEX = 11      # Index in the HEXPANSION_TYPES list which corresponds to the HexDiag type
 
-        self.UNRECOGNISED_HEXPANSION_INDEX = len(self.HEXPANSION_TYPES) - 2 # Index in the HEXPANSION_TYPES list which corresponds to unrecognised hexpansion types MUST BE LAST NON-BLANK ENTRY IN THE LIST
-        self.BLANK_HEXPANSION_INDEX = len(self.HEXPANSION_TYPES) - 1        # Index in the HEXPANSION_TYPES list which corresponds to blank EEPROMs
         self.hexpansion_update_required: bool = False # flag from async to main loop
 
         self.hexdrive_hexpansion_types = [0,1,2,3,4,5,6,7,8] # indices in the HEXPANSION_TYPES list which correspond to HexDrive variants - used to check if a detected hexpansion is a HexDrive and to set up the motor and servo counts accordingly
