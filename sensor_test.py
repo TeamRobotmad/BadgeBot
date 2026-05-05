@@ -68,8 +68,7 @@ _ROTATION_RATE_EMITTER_PINS = [2, 4]             # LS_C & LS_D pins used to driv
 _ROTATION_RATE_SENSOR_PINS = [0, 1]             # HS_F & HS_G pins used to read the phottransistors for rotation rate testing
 _ROTATION_RATE_SENSOR_ENABLE_PINS = [3]         # LS_D pins used to enable the phototransistors for rotation rate testing (set to output and high to enable, input to disable)
 _IR_EMITTER_PWM_STEP_SIZE = 2                   # Step size for adjusting IR emitter brightness in manual mode, 0-255 (0=off, 255=full on)
-# Temporary - while there is no EEPROM on the Test Hexpansion
-_ROTATION_RATE_PORT = 1                         # Hexpansion slot used for rotation rate measurement
+
 
 # Local sub-states (internal to Sensor Test)
 _SUB_SELECT_PORT = 0
@@ -130,7 +129,7 @@ class SensorTestMgr:
         Reference to the main application instance.
     """
 
-    def __init__(self, app, hextest_port: int | None = _ROTATION_RATE_PORT, logging: bool = False):
+    def __init__(self, app, hextest_port: int | None = None, logging: bool = False):
         self._app = app
         self._sub_state = _SUB_SELECT_PORT
         self._sensor_mgr = None  # SensorManager instance (lazy-imported)
@@ -172,7 +171,7 @@ class SensorTestMgr:
         self._ina226_reading: dict[str, int] = {}
         self._ina226_sum_current_ma: int = 0
         self._ina226_sum_bus_mv: int = 0
-        self._ina226_sum_power_mw: int = 0
+        #self._ina226_sum_power_mw: int = 0
         self._ina226_sample_count: int = 0
 
         # Use HS pins on a spare Hexpansion to measure rotation rate
@@ -241,7 +240,7 @@ class SensorTestMgr:
         self._display_data = {}
         app.refresh = True
         sensor_mgr = self._ensure_sensor_mgr()
-        self.colour = (1.0, 1.0, 0.0)  # reset to yellow when starting sensor test
+        self._colour = (1.0, 1.0, 0.0)  # reset to yellow when starting sensor test
         # If a HexDrive is present, try its port first
         if app.hexdrive_ports is not None:
             for port in app.hexdrive_ports:
@@ -420,10 +419,9 @@ class SensorTestMgr:
 
     @staticmethod
     def _apply_white_reference(r: int, g: int, b: int, w: int = 0, white_gains: tuple[int, int, int, int] | None = None) -> tuple[int, int, int, int]:
+        """Apply white reference gains to raw RGBC values and return adjusted RGBC tuple."""
         if white_gains is None:
             return (r, g, b, w)
-
-        """Apply white reference gains to raw RGBC values and return adjusted RGBC tuple."""
         return (
             max(0, ((r * white_gains[0]) + (_WHITE_CAL_SCALE // 2)) // _WHITE_CAL_SCALE),
             max(0, ((g * white_gains[1]) + (_WHITE_CAL_SCALE // 2)) // _WHITE_CAL_SCALE),
@@ -445,7 +443,7 @@ class SensorTestMgr:
             # need per sensor read timing here to balance responsiveness with CPU load, since some sensors can be slow to read and we don't want to bog down the system by reading too frequently.  We also want to update the displayed sample rate at a regular interval (e.g. every second) based on the number of samples read in that time.
             #self._read_timer += delta
             #if self._read_timer >= self._sensor_mgr.read_interval:
-                #print(f"S:Reading sensor (S:read_timer={self._read_timer}ms, count_timer={self._count_timer}ms, sample_count={self.sample_count})")
+                #print(f"ST:Reading sensor (S:read_timer={self._read_timer}ms, count_timer={self._count_timer}ms, sample_count={self.sample_count})")
                 #self._count_timer += self._read_timer
                 #self._read_timer = 0
             # Read sensor data in the background and update sample count and rate calculation
@@ -524,42 +522,44 @@ class SensorTestMgr:
             pass  # Simulator Pin stubs lack .init()
         return True
 
+
     def _init_ina226_for_motor_test(self) -> bool:
         self._ina226 = None
         self._ina226_sensor_mgr = None
         self._ina226_reading = {}
         self._reset_ina226_accumulators()
-        if self._test_support_hexpansion_config is None:
-            return False
         try:
             from .sensor_manager import SensorManager
             mgr = SensorManager(logging=self._logging)
-            port = self._test_support_hexpansion_config.port
-            if not mgr.open(port):
+            # The INA226 sensor can't be on a port with an EEPROM because that would clash with the UUT EEPROM.
+            for port in range(1, 7):
+                if not mgr.open(port):
+                    mgr.close()
+                    if self._logging:
+                        print(f"ST:INA226 - no sensors found on port {port}")
+                    continue
+                # Find the first INA226 sensor in the discovered list
+                sensor = mgr.get_sensor_by_name("INA226")
+                if sensor is not None:
+                    self._ina226 = sensor
+                    self._ina226_sensor_mgr = mgr
+                    if self._logging:
+                        print(f"ST:INA226 found @ 0x{sensor.i2c_addr:02X} on port {port}")
+                    return True
+                # No INA226 found; close the manager
                 mgr.close()
-                if self._logging:
-                    print(f"S:INA226 – no sensors found on port {port}")
-                return False
-            # Find the first INA226 sensor in the discovered list
-            sensor = mgr.get_sensor_by_name("INA226")
-            if sensor is not None:
-                self._ina226 = sensor
-                self._ina226_sensor_mgr = mgr
-                if self._logging:
-                    print(f"S:INA226 found @ 0x{sensor.i2c_addr:02X}")
-                return True
-            # No INA226 found; close the manager
-            mgr.close()
         except Exception as e:      # pylint: disable=broad-exception-caught
             if self._logging:
-                print(f"S:INA226 init failed: {e}")
+                print(f"ST:INA226 init failed: {e}")
         return False
+
 
     def _reset_ina226_accumulators(self) -> None:
         self._ina226_sum_current_ma = 0
         self._ina226_sum_bus_mv = 0
-        self._ina226_sum_power_mw = 0
+        #self._ina226_sum_power_mw = 0
         self._ina226_sample_count = 0
+
 
     def _sample_ina226_in_background(self) -> None:
         sensor = self._ina226
@@ -569,14 +569,15 @@ class SensorTestMgr:
         if data is None:
             return
         try:
-            self._ina226_sum_current_ma += int(data.get("current_mA", 0))
-            self._ina226_sum_bus_mv += int(data.get("bus_mV", 0))
-            self._ina226_sum_power_mw += int(data.get("power_mW", 0))
+            self._ina226_sum_current_ma += int(data.get("mA", 0))
+            self._ina226_sum_bus_mv += int(data.get("mV", 0))
+            #self._ina226_sum_power_mw += int(data.get("mW", 0))
             self._ina226_sample_count += 1
         except Exception as e:       # pylint: disable=broad-exception-caught
             if self._logging:
-                print(f"S:INA226 sample error: {e}")
+                print(f"ST:INA226 sample error: {e}")
             return
+
 
     def _consume_ina226_average(self) -> int | None:
         if self._ina226_sample_count <= 0:
@@ -584,10 +585,10 @@ class SensorTestMgr:
             return None
         count = self._ina226_sample_count
         current_ma = self._ina226_sum_current_ma // count
+        voltage_mv = self._ina226_sum_bus_mv // count
         self._ina226_reading = {
-            "current_mA": current_ma,
-            "bus_mV": self._ina226_sum_bus_mv // count,
-            "power_mW": self._ina226_sum_power_mw // count,
+            "mA": current_ma,
+            "mV": voltage_mv,
         }
         self._reset_ina226_accumulators()
         return current_ma
@@ -668,6 +669,8 @@ class SensorTestMgr:
                             if current_abs > self._auto_max_current_ma:
                                 self._auto_max_current_ma = current_abs
                         power = self._rotation_rate_motor_power
+                        if self._logging:
+                            print(f"ST:Auto Scan Step {self._auto_step}/{_AUTO_SCAN_STEPS} - Power: {power}, Rate: {rate} rpm, Current: {current_ma}mA")
                         self._auto_results.append((power, rate, current_ma))
                         self._auto_rotation_rate_step()
             # In auto mode, no manual button control for power/IR
@@ -684,29 +687,55 @@ class SensorTestMgr:
                 self._rotation_rate_measurement_period_elapsed = 0
                 self._consume_ina226_average()
                 if self.logging:
-                    print(f"S:Rotation Rates: {self._rotation_rate_rpms}")
+                    print(f"ST:Rotation Rates: {self._rotation_rate_rpms}")
 
         # Manual mode button handling
         if app.button_states.get(BUTTON_TYPES["UP"]):
             app.button_states.clear()
             self.rotation_rate_emitter_duty = min(255, self.rotation_rate_emitter_duty + _IR_EMITTER_PWM_STEP_SIZE)
             if self.logging:
-                print(f"S:IR+Emitter Duty: {self.rotation_rate_emitter_duty}")
+                print(f"ST:IR+Emitter Duty: {self.rotation_rate_emitter_duty}")
         elif app.button_states.get(BUTTON_TYPES["DOWN"]):
             app.button_states.clear()
             self.rotation_rate_emitter_duty = max(0, self.rotation_rate_emitter_duty - _IR_EMITTER_PWM_STEP_SIZE)
             if self.logging:
-                print(f"S:IR-Emitter Duty: {self.rotation_rate_emitter_duty}")
+                print(f"ST:IR-Emitter Duty: {self.rotation_rate_emitter_duty}")
         elif app.button_states.get(BUTTON_TYPES["RIGHT"]):
             app.button_states.clear()
             self._rotation_rate_motor_power = min(65535, self._rotation_rate_motor_power + 1000)
             if self.logging:
-                print(f"S:Motor+Power: {self._rotation_rate_motor_power}")
+                print(f"ST:Motor+Power: {self._rotation_rate_motor_power}")
         elif app.button_states.get(BUTTON_TYPES["LEFT"]):
             app.button_states.clear()
             self._rotation_rate_motor_power = max(-65535, self._rotation_rate_motor_power - 1000)
             if self.logging:
-                print(f"S:Motor-Power: {self._rotation_rate_motor_power}")
+                print(f"ST:Motor-Power: {self._rotation_rate_motor_power}")
+
+
+    def _setup_for_sensor_type(self):
+        sensor_mgr = self._sensor_mgr
+        if sensor_mgr is None:
+            return
+
+        if self.logging:
+            print(f"ST:Opened sensor port {self._port_selected} with read_interval {sensor_mgr.read_interval}ms")
+        self._app.update_period = sensor_mgr.read_interval
+
+        # Reset all sensor and display data when starting to read a new sensor
+        self._sensor_data = {}
+        self._display_data = {}
+        self._read_timer = 0
+        self._count_timer = 0
+        self._sample_rate = 0
+        self._sample_count = 0
+        self._new_sample = False
+        self._colour = (1.0, 1.0, 0.0)  # reset to yellow when switching sensors
+
+        # Sensor specific setup
+        if sensor_mgr.type == "Colour":
+            self._white_gains = self._load_white_gains("ref")
+            if self._white_gains is not None and self.logging:
+                print(f"ST:Loaded white gains from settings: {self._white_gains}")
 
 
     def _update_select_port(self, delta: int):   # pylint: disable=unused-argument
@@ -722,31 +751,19 @@ class SensorTestMgr:
         elif app.button_states.get(BUTTON_TYPES["CONFIRM"]):
             app.button_states.clear()
             motor_test_port = self._test_support_hexpansion_config.port if self._test_support_hexpansion_config is not None else 0
-            if self._port_selected == motor_test_port and self._start_motor_test_mode():
-                app.notification = Notification("Motor Test", port=self._port_selected)
-                if self.logging:
-                    print(f"S:Entering Motor Test mode on port {self._port_selected}")
-                self._sub_state = _SUB_MOTOR_TEST
-                app.refresh = True
+            if self._port_selected == motor_test_port:
+                if self._start_motor_test_mode():
+                    app.notification = Notification("Motor Test", port=self._port_selected)
+                    if self.logging:
+                        print(f"ST:Entering Motor Test mode on port {self._port_selected}")
+                    self._sub_state = _SUB_MOTOR_TEST
+                    app.refresh = True
             else:
                 sensor_mgr = self._ensure_sensor_mgr()
-                self._sensor_data = {}
-                self._display_data = {}
-                self._read_timer = 0
-                self._count_timer = 0
-                self._sample_rate = 0
-                self._sample_count = 0
-                self._new_sample = False
                 app.refresh = True
                 if sensor_mgr.open(self._port_selected):
-                    app.update_period = sensor_mgr.read_interval
-                    if self.logging:
-                        print(f"Opened sensor port {self._port_selected} with read_interval {sensor_mgr.read_interval}ms")
-                    # Sensor specific setup
-                    if sensor_mgr.type == "Colour":
-                        self._white_gains = self._load_white_gains("ref")
-                        if self._white_gains is not None and self.logging:
-                            print(f"S:Loaded white gains from settings: {self._white_gains}")
+
+                    self._setup_for_sensor_type()
                     self._sub_state = _SUB_READING
                 else:
                     app.notification = Notification("      No      Sensors", port=self._port_selected)
@@ -761,18 +778,8 @@ class SensorTestMgr:
 
 
     @staticmethod
-    def _ordered_display_data(sensor_data: dict) -> dict:
-        ordered = {}
-        for key in ("r", "g", "b"):
-            if key in sensor_data:
-                ordered[key] = str(sensor_data[key])
-        for key, value in sensor_data.items():
-            if key not in ordered:
-                ordered[key] = str(value)
-        return ordered
-
-    @staticmethod
     def _ordered_display_items(display_data: dict) -> list[tuple[str, str]]:
+        """ with dicts not maintinaing order we need to force into a list in the order we want to display"""
         items = []
         seen = set()
         for key in ("r", "g", "b"):
@@ -784,10 +791,12 @@ class SensorTestMgr:
                 items.append((key, str(value)))
         return items
 
+
     @staticmethod
     def _white_gain_setting_keys(key: str) -> tuple[str, str, str, str]:
         base = f"{_WHITE_CAL_GAIN_PREFIX}_{key}_"
         return (f"{base}r", f"{base}g", f"{base}b", f"{base}w")
+
 
     @staticmethod
     def _reference_to_gains(r: int, g: int, b: int, w: int = 0) -> tuple[int, int, int, int]:
@@ -803,6 +812,7 @@ class SensorTestMgr:
             (gain_scale + (ref_w // 2)) // ref_w,
         )
 
+
     def _load_white_gains(self, key: str) -> tuple[int, int, int, int] | None:
         setting_keys = self._white_gain_setting_keys(key)
         values = []
@@ -814,11 +824,13 @@ class SensorTestMgr:
         gains = (values[0], values[1], values[2], values[3])
         return gains
 
+
     def _update_page_count(self) -> None:
         sensor_mgr = self._sensor_mgr
         self._page_count = 4 if sensor_mgr is not None and sensor_mgr.type == "Colour" else 3
         if self._page_selected >= self._page_count:
             self._page_selected = _PAGE_RAW
+
 
     def _capture_white_reference(self) -> bool:
         sensor_mgr = self._sensor_mgr
@@ -841,7 +853,7 @@ class SensorTestMgr:
         for setting_key, gain in zip(setting_keys, gains):
             platform_settings.set(f"{SETTINGS_NAME_PREFIX}.{setting_key}", gain)
         if self._logging:
-            print(f"S:Stored white gains: {gains}")
+            print(f"ST:Stored white gains: {gains}")
         self._app.notification = Notification("White Cal Saved", port=self._port_selected)
         return True
 
@@ -879,11 +891,10 @@ class SensorTestMgr:
                             colour_name = f"x={x_f:.2f}, y={y_f:.2f}"
                         self._display_data["colour"] = colour_name
                     elif self._page_selected == _PAGE_RAW:
-                        self._display_data = self._ordered_display_data(self._sensor_data)
+                        self._display_data = self._sensor_data
                     elif self._page_selected == _PAGE_CAL:
-                        self._display_data["mode"] = "XYZ sensor"
-                        #self._display_data["ref"] = "N/A"
-                        self._display_data["press"] = "Use Raw/Data"
+                        self._display_data["ref"] = "white"
+                        self._display_data["press"] = "CONFIRM"
 
                     #convert CIE1931 XYZ to RGB using a simple matrix transform
                     r = int( 3.2406 * x - 1.5372 * y - 0.4986 * z)
@@ -892,7 +903,7 @@ class SensorTestMgr:
 
 
                 except Exception as e:    # pylint: disable=broad-exception-caught
-                    print(f"S:Colour conversion error: {e}")
+                    print(f"ST:Colour conversion error: {e}")
                     r = g = b = 0
 
             elif all(k in self._sensor_data for k in ("r", "g", "b")):
@@ -907,13 +918,13 @@ class SensorTestMgr:
                         colour_name = self.lookup_colour_RGB(calibrated_r, calibrated_g, calibrated_b, calibrated_w)
                         self._display_data["colour"] = colour_name
                     elif self._page_selected == _PAGE_RAW:
-                        self._display_data = self._ordered_display_data(self._sensor_data)
+                        self._display_data = self._sensor_data
                     elif self._page_selected == _PAGE_CAL:
                         self._display_data["ref"] = "white"
                         self._display_data["press"] = "CONFIRM"
 
                 except Exception as e:    # pylint: disable=broad-exception-caught
-                    print(f"S:Colour conversion error: {e}")
+                    print(f"ST:Colour conversion error: {e}")
                     r = g = b = 0
             else:
                 r = g = b = 0
@@ -925,28 +936,29 @@ class SensorTestMgr:
                 red_f   = r / max_channel
                 green_f = g / max_channel
                 blue_f  = b / max_channel
-                self.colour = (red_f, green_f, blue_f)
+                self._colour = (red_f, green_f, blue_f)
             else:
-                self.colour = (1.0,1.0,0.0)  # default to yellow if all channels are zero to avoid divide-by-zero and to provide a visible colour for non-colour sensors
+                self._colour = (1.0,1.0,0.0)  # default to yellow if all channels are zero to avoid divide-by-zero and to provide a visible colour for non-colour sensors
         elif self._sensor_mgr and self._sensor_mgr.type == "Distance":
-            if self._page_selected == _PAGE_DATA and "dist_mm" in self._sensor_data:
+            if self._page_selected == _PAGE_DATA and "dist" in self._sensor_data:
                 try:
-                    dist_mm = int(self._sensor_data["dist_mm"])
+                    dist_mm = int(self._sensor_data["dist"])
                     if dist_mm < 20:
-                        distance_str = f"{dist_mm}mm (Very Close)"
+                        distance_str = "V Close"
                     elif dist_mm < 100:
-                        distance_str = f"{dist_mm}mm (Close)"
+                        distance_str = "Close"
                     elif dist_mm < 500:
-                        distance_str = f"{dist_mm}mm (Medium)"
+                        distance_str = "Medium"
                     else:
-                        distance_str = f"{dist_mm}mm (Far)"
-                    self._display_data["Distance"] = distance_str
+                        distance_str = "Far"
+                    self._display_data["Range"] = distance_str
+                    self._display_data["Dist"] = f"{dist_mm}mm"
                 except Exception as e:    # pylint: disable=broad-exception-caught
-                    print(f"S:Distance processing error: {e}")
+                    print(f"ST:Distance processing error: {e}")
             elif self._page_selected == _PAGE_RAW:
-                self._display_data = self._ordered_display_data(self._sensor_data)
+                self._display_data = self._sensor_data
         elif self._page_selected == _PAGE_RAW:
-            self._display_data = self._ordered_display_data(self._sensor_data)
+            self._display_data = self._sensor_data
 
         if self._page_selected == _PAGE_STATS:
             if self._sample_rate > 0:
@@ -962,17 +974,13 @@ class SensorTestMgr:
 
         if app.button_states.get(BUTTON_TYPES["RIGHT"]) and self._sensor_mgr and self._sensor_mgr.num_sensors > 1:
             app.button_states.clear()
-            self.colour = (1.0, 1.0, 0.0)  # reset to yellow when switching sensors
             self._sensor_mgr.next_sensor()
-            self._sensor_data = {}
-            self._display_data = {}
+            self._setup_for_sensor_type()  # reset any sensor-specific settings for the new sensor
             app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["LEFT"]) and self._sensor_mgr and self._sensor_mgr.num_sensors > 1:
             app.button_states.clear()
-            self.colour = (1.0, 1.0, 0.0)  # reset to yellow when switching sensors
             self._sensor_mgr.prev_sensor()
-            self._sensor_data = {}
-            self._display_data = {}
+            self._setup_for_sensor_type()  # reset any sensor-specific settings for the new sensor
             app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["UP"]):
             app.button_states.clear()
@@ -1002,13 +1010,13 @@ class SensorTestMgr:
 
 
     def _start_motor_test_mode(self) -> bool:
-        # enable HexDrive power
+        # enable HexDrive power, ...
         app = self._app
         if len(app.hexdrive_apps) > 0 and self._test_support_hexpansion_config is not None:
             app.hexdrive_apps[0].set_logging(True)
             if app.hexdrive_apps[0].initialise() and app.hexdrive_apps[0].set_power(True) and app.hexdrive_apps[0].set_freq(MOTOR_PWM_FREQ):
                 app.hexdrive_apps[0].set_keep_alive(2000)   # Updates can be quite slow as we are using the draw function
-                app.hexdrive_apps[0].set_motors((-1,-1))    # Try forcing PWM to be reinitialised by swapping direction.
+                #app.hexdrive_apps[0].set_motors((-1,-1))    # Try forcing PWM to be reinitialised by swapping direction.
                 # Enable the IR emitter for measuring wheel rotation rate
                 self._rotation_rate_enable(True)
 
@@ -1022,7 +1030,7 @@ class SensorTestMgr:
                         self._rotation_rate_counters.append(counter)
                     else:
                         if self.logging:
-                            print(f"S:Failed to allocate PCNT counter for pin {pin_num} (GPIO {gpio_num})")
+                            print(f"ST:Failed to allocate PCNT counter for pin {pin_num} (GPIO {gpio_num})")
                         app.notification = Notification("PCNT Init Failed")
                         # deinit any counters we did manage to create before returning
                         for c in self._rotation_rate_counters:
@@ -1031,21 +1039,21 @@ class SensorTestMgr:
                         self._rotation_rate_counters = []
                         return False
                 if self.logging:
-                    print(f"S:Rate counter {self._rotation_rate_counters}")
+                    print(f"ST:Rate counter {self._rotation_rate_counters}")
                 self._rotation_rate_measurement_period_elapsed = 0
                 self._rotation_rate_rpms = [0] * len(self._rotation_rate_counters)
                 self._init_ina226_for_motor_test()
                 app.update_period = _MOTOR_TEST_BACKGROUND_UPDATE_PERIOD  # update every 1000ms to give a responsive display without overwhelming the CPU with updates
                 return True
         if self.logging:
-            print("H:Failed to initialise HexDrive for motor test mode")
+            print("ST:Failed to initialise HexDrive for motor test mode")
         app.notification = Notification("HexDrive Init Failed")
         return False
 
 
     def _stop_motor_test_mode(self):
         if self._logging:
-            print("Stopping Motor Test mode and cleaning up")
+            print("ST:Stopping Motor Test mode and cleaning up")
         app = self._app
         self._auto_mode = False
         self._auto_done = False
@@ -1063,7 +1071,7 @@ class SensorTestMgr:
         self._ina226 = None
 
         if len(app.hexdrive_apps) > 0:
-            app.hexdrive_apps[0].set_pwm((0, 0, 0, 0))
+            app.hexdrive_apps[0].set_freq(0)
             app.hexdrive_apps[0].set_power(False)
 
         for c in self._rotation_rate_counters:
@@ -1112,9 +1120,9 @@ class SensorTestMgr:
                 lines += [f"{index}: {rpm}rpm"]
                 colours += [(1, 0, 1)]
         if self._ina226_reading:
-            lines += [f"I:{self._ina226_reading.get('current_mA', 0)}mA"]
+            lines += [f"I:{self._ina226_reading.get('mA', 0)}mA"]
             colours += [(1, 0.3, 0.3)]
-            lines += [f"V:{self._ina226_reading.get('bus_mV', 0)}mV"]
+            lines += [f"V:{self._ina226_reading.get('mV', 0)}mV"]
             colours += [(0.3, 0.8, 1.0)]
         self._app.draw_message(ctx, lines, colours, label_font_size)
         button_labels(ctx, up_label="IR+", down_label="IR-", cancel_label="Back",
@@ -1127,7 +1135,7 @@ class SensorTestMgr:
         chart_left = -90
         chart_right = 90
         chart_top = -65
-        chart_bottom = 65
+        chart_bottom = 35
         chart_w = chart_right - chart_left
         chart_h = chart_bottom - chart_top
 
@@ -1160,28 +1168,31 @@ class SensorTestMgr:
                             ctx.rgb(0.0, 1.0, 0.5)
                         else:
                             ctx.rgb(1.0, 0.5, 0.0)
-                        ctx.rectangle(x, chart_bottom - h, bar_w, h).fill()
+                        ctx.rectangle(x, chart_bottom - h - 1, bar_w, 2).fill()
                 if current_ma is not None:
                     current_h = (abs(current_ma) * chart_h) // max_current_ma
                     marker_y = chart_bottom - current_h
                     ctx.rgb(1.0, 0.2, 0.2)
-                    ctx.rectangle(x + bar_w, marker_y - 1, 2, 2).fill()
+                    ctx.rectangle(x, marker_y - 1, bar_w, 2).fill()
 
         # Title and max RPM label
         ctx.rgb(1, 1, 0)
         ctx.font_size = label_font_size
         if self._auto_done:
-            ctx.move_to(-55, chart_top - 5).text("Complete")
+            ctx.move_to(-50, chart_top - 25).text("Complete")
         else:
             progress = (self._auto_step * 100) // _AUTO_SCAN_STEPS
-            ctx.move_to(-55, chart_top - 5).text(f"Scan {progress}%")
+            ctx.move_to(-50, chart_top - 25).text(f"Scan {progress}%")
+            # Instantaneous current label (updated live during the scan)
+            ctx.font_size = label_font_size - 10
+            ctx.rgb(1.0, 0.2, 0.2).move_to(-50, chart_bottom + label_font_size + 2).text(f"{self._auto_last_current_ma}mA")
 
-        ctx.rgb(0, 1, 1)
-        ctx.move_to(-60, chart_bottom + label_font_size + 2).text(f"Max:{max_rpm}rpm")
-        ctx.rgb(1.0, 0.2, 0.2)
-        ctx.move_to(15, chart_bottom + label_font_size + 2).text(f"Ipk:{max_current_ma}mA")
+        # Y axis Maximum RPM and Current labels
+        ctx.font_size = label_font_size - 10
+        ctx.rgb(0.0, 1.0, 1.0).move_to(chart_left, chart_top - 5).text(f"rpm:{max_rpm}")
+        ctx.rgb(1.0, 0.2, 0.2).move_to(15, chart_top - 5).text(f"mA:{max_current_ma}")
 
-        button_labels(ctx, cancel_label="Back", confirm_label="Manual")
+        #button_labels(ctx, cancel_label="Back", confirm_label="Manual")
 
 
     def _draw_select_port(self, ctx):
@@ -1212,7 +1223,7 @@ class SensorTestMgr:
         if self._display_data:
             for label, value in self._ordered_display_items(self._display_data):
                 lines += [f"{label}:{value}"]
-                colours += [self.colour]
+                colours += [self._colour]
         else:
             lines += ["Reading..."]
             colours += [(0.5, 0.5, 0.5)]

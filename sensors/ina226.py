@@ -105,7 +105,7 @@ _SHUNT_RESISTOR_MILLIOHM = 100
 _CALIBRATION_VALUE = 0x0200    # 512 => 0.1 mA current register LSB with 100 mΩ shunt
 _CURRENT_LSB_UA = 100          # 0.1 mA current LSB in microamps
 _POWER_LSB_UW = 2500           # 2.5 mW power LSB in microwatts
-_READ_TIMEOUT_MS = 10
+_READ_TIMEOUT_MS = 50
 
 # Default operating configuration:
 #  - shunt conversion: 8.244 ms
@@ -131,19 +131,19 @@ class INA226(SensorBase):
     def _measure_from_registers(self) -> dict[str, int]:
         bus_raw = self._read_u16_be(_REG_BUS_VOLTAGE)
         current_raw = self._read_s16_be(_REG_CURRENT)
-        power_raw = self._read_u16_be(_REG_POWER)
+        #power_raw = self._read_u16_be(_REG_POWER)
 
         # Bus LSB = 1.25 mV
         bus_mv = (bus_raw * 125) // 100
         # Current LSB from calibration = 100 uA (0.1 mA)
         current_ma = (current_raw * _CURRENT_LSB_UA) // 1000
         # Power LSB from calibration = 2500 uW (2.5 mW)
-        power_mw = (power_raw * _POWER_LSB_UW) // 1000
-
+        #power_mw = (power_raw * _POWER_LSB_UW) // 1000
+        print(f"S:{self.NAME} {bus_mv}mV, {current_ma}mA")
         return {
-            "bus_mV": bus_mv,
-            "current_mA": current_ma,
-            "power_mW": power_mw,
+            "mV": bus_mv,
+            "mA": current_ma,
+            #"power_mW": power_mw,
         }
 
     def read_sample_if_ready(self) -> dict[str, int] | None:
@@ -160,6 +160,7 @@ class INA226(SensorBase):
             print(f"S:{self.NAME} sample not ready (status=0x{status:04X})")
             return None
         return self._measure_from_registers()
+
 
     def _init(self) -> bool:
         manufacturer = self._read_u16_be(_REG_MANUFACTURER_ID)
@@ -178,9 +179,9 @@ class INA226(SensorBase):
             sample = self.read_sample_if_ready()
             if sample is not None:
                 return {
-                    "bus_mV": str(sample["bus_mV"]),
-                    "current_mA": str(sample["current_mA"]),
-                    "power_mW": str(sample["power_mW"]),
+                    "mV": str(sample["mV"]),
+                    "mA": str(sample["mA"]),
+                    #"power_mW": str(sample["power_mW"]),
                 }
             if _ticks_diff(deadline, _ticks_ms()) <= 0:
                 return {"Error": "timeout"}

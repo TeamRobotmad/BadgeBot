@@ -318,7 +318,7 @@ class MotorMovesMgr:
         #else:
         # Legacy power-plan path
         if self._sub_state == _SUB_RUN:
-            print("Running motor moves with power plan iterator")
+            #print("Running motor moves with power plan iterator")
             output = self._get_current_power_level(delta)
         else:
             output = None

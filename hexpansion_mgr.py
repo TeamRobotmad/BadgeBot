@@ -86,10 +86,12 @@ _MODE_IDLE = 1          # Idle mode with no hexpansion-related activity, waiting
 _MODE_UPDATE = 2        # Normal mode for responding to hexpansion-related events (insertion/removal)
 _MODE_INTERACTIVE = 3   # Interactive mode for user interactions for initialisation/upgrade/erasure of hexpansions
 
+
+# WHEN Badge hexpansion handling has stabillised - revisit this and make much much simpler...
 _SINGLE_PORT_HEXPANSION_REFS = (
     ("hexsense_port", "HexSense", "HEXSENSE_HEXPANSION_INDEX"),
-    ("hextest_port", "HexTest", "HEXTEST_HEXPANSION_INDEX"),
-    ("hexdiag_port", "HexDiag", "HEXDIAG_HEXPANSION_INDEX"),
+    ("hextest_port",  "HexTest",  "HEXTEST_HEXPANSION_INDEX"),
+    ("hexdiag_port",  "HexDiag",  "HEXDIAG_HEXPANSION_INDEX"),
 )
 
 # ---- Settings initialisation -----------------------------------------------
@@ -179,7 +181,6 @@ class HexpansionMgr:
         """Clear app references for single-port hexpansions assigned to *port*."""
         if port is None:
             return
-
         app = self._app
         for attr_name, display_name, _ in _SINGLE_PORT_HEXPANSION_REFS:
             if getattr(app, attr_name, None) == port:
@@ -193,6 +194,7 @@ class HexpansionMgr:
         app = self._app
         for attr_name, _, _ in _SINGLE_PORT_HEXPANSION_REFS:
             if getattr(app, attr_name, None) == port:
+                print(f"H:Found hexpansion {attr_name} on port {port}")
                 return True
         return False
 
@@ -202,6 +204,7 @@ class HexpansionMgr:
         app = self._app
         previous_ports = {}
 
+        print("H:Refreshing hexpansion assignments...")
         for attr_name, _, type_index_attr in _SINGLE_PORT_HEXPANSION_REFS:
             previous_port = getattr(app, attr_name, None)
             previous_ports[attr_name] = previous_port
@@ -229,7 +232,7 @@ class HexpansionMgr:
     # Async event handlers (registered directly on eventbus)
     # ------------------------------------------------------------------
 
-    async def _handle_removal(self, event):
+    async def _handle_removal(self, event: HexpansionRemovalEvent):
         app = self._app
         port = event.port
         self._hexpansion_type_by_slot[port - 1] = None
@@ -253,7 +256,7 @@ class HexpansionMgr:
                 print(f"H:Hexpansion removed from port {port}")
 
 
-    async def _handle_insertion(self, event):
+    async def _handle_insertion(self, event: HexpansionInsertionEvent):
         if self._check_port_for_known_hexpansions(event.port) or event.port == self._port_selected:
             # A known hexpansion type has been detected on the inserted port, so trigger an update of
             # the hexpansion management state machine to handle it. Or the inserted port is the one
@@ -308,11 +311,11 @@ class HexpansionMgr:
         """Set page count to 3 if the selected port has a recognised type with sub_type or app_name, else 2, or 1 if blank EEPROM."""
         state_idx = self._hexpansion_state_by_slot[self._port_selected - 1] if 1 <= self._port_selected <= _NUM_HEXPANSION_SLOTS else None
         if state_idx is not None:
-            if state_idx == self.HEXPANSION_STATE_UNRECOGNISED:
+            if state_idx == _HEXPANSION_STATE_UNRECOGNISED:
                 # Unrecognised type - show vid/pid page and EEPROM page but not details page
                 self._port_detail_page_count = 2
                 self._port_detail_page = self._PAGE_VID_PID
-            elif state_idx >= self.HEXPANSION_STATE_RECOGNISED:
+            elif state_idx >= _HEXPANSION_STATE_RECOGNISED:
                 # Recognised type - show vid/pid page and details page
                 self._port_detail_page_count = 3
                 self._port_detail_page = self._PAGE_DETAILS
@@ -328,7 +331,7 @@ class HexpansionMgr:
     # Per-tick update  (state machine for hexpansion management)
     # ------------------------------------------------------------------
 
-    def update(self, delta) -> bool:
+    def update(self, delta: int) -> bool:
         """Per-tick update for hexpansion management state machine."""
         app = self._app
 
@@ -404,7 +407,7 @@ class HexpansionMgr:
     # Individual state handlers
     # ------------------------------------------------------------------
 
-    def _update_state_programming(self, delta):     # pylint: disable=unused-argument
+    def _update_state_programming(self, delta: int):     # pylint: disable=unused-argument
         app = self._app
 
         if self._upgrade_port is not None:
@@ -429,12 +432,14 @@ class HexpansionMgr:
                     self._message_being_shown = True
                     self._sub_state = _SUB_CHECK
                 else:
+                    #Easisest way to cope with there being a new EEPROM image is to ask the user to reboop
+                    #otherwise we actually need to do a lot to get the old module and mount removed first...
                     #upgrade_text = "Upgraded" if result == _APP_EEPROM_RESULT_SUCCESSFUL_UPGRADE else "Programmed"
                     #app.notification = Notification(upgrade_text, port=self._upgrade_port)
                     # No point showing "Programmed" vs "Upgraded" as the Hexpansion Insertion Notification will cover it up
-                    eventbus.emit(HexpansionInsertionEvent(self._upgrade_port))
+                    #eventbus.emit(HexpansionInsertionEvent(self._upgrade_port))
                     #app.show_message([f"{upgrade_text}:", "Please", "reboop"], [(0,1,0),(1,1,1),(1,1,1)], "reboop")
-                    #self._reboop_required = True
+                    self._reboop_required = True
                     self._hexpansion_state_by_slot[self._upgrade_port - 1] = _HEXPANSION_STATE_RECOGNISED_APP_OK
                     self._sub_state = _SUB_CHECK
             self._upgrade_port = None
@@ -467,7 +472,7 @@ class HexpansionMgr:
             self._sub_state = _SUB_INIT if self._mode == _MODE_INIT else _SUB_CHECK
 
 
-    def _update_state_detected(self, delta):        # pylint: disable=unused-argument
+    def _update_state_detected(self, delta: int):        # pylint: disable=unused-argument
         """ Allow User to select which sub-type they want to initialise the hexpansion as (if there are multiple sub-types with the same PID), and confirm or cancel the initialisation."""
         app = self._app
         if app.button_states.get(BUTTON_TYPES["CONFIRM"]):
@@ -487,19 +492,19 @@ class HexpansionMgr:
             app.button_states.clear()
             self._hexpansion_init_type = (self._hexpansion_init_type - 1) % len(app.HEXPANSION_TYPES)
             app.refresh = True
-        elif app.button_states.get(BUTTON_TYPES["LEFT"]):
-            app.button_states.clear()
-            # "Left" is a shortcut button to HexDrive
-            self._hexpansion_init_type = app.HEXDRIVE_HEXPANSION_INDEX
-            app.refresh = True
-        elif app.button_states.get(BUTTON_TYPES["RIGHT"]):
-            app.button_states.clear()
-            # "Right" is a shortcut button to HexSense
-            self._hexpansion_init_type = app.HEXSENSE_HEXPANSION_INDEX
-            app.refresh = True
+        #elif app.button_states.get(BUTTON_TYPES["LEFT"]):
+        #    app.button_states.clear()
+        #    # "Left" is a shortcut button to HexDrive
+        #    self._hexpansion_init_type = app.HEXDRIVE_HEXPANSION_INDEX
+        #    app.refresh = True
+        #elif app.button_states.get(BUTTON_TYPES["RIGHT"]):
+        #    app.button_states.clear()
+        #    # "Right" is a shortcut button to HexSense
+        #    self._hexpansion_init_type = app.HEXSENSE_HEXPANSION_INDEX
+        #    app.refresh = True
 
 
-    def _update_state_erase_confirm(self, delta):       # pylint: disable=unused-argument
+    def _update_state_erase_confirm(self, delta: int):       # pylint: disable=unused-argument
         """ Allow User to confirm or cancel EEPROM erasure."""
         # not used in _MODE_INIT
         app = self._app
@@ -516,7 +521,7 @@ class HexpansionMgr:
             self._sub_state = _SUB_CHECK
 
 
-    def _update_state_erase(self, delta):       # pylint: disable=unused-argument
+    def _update_state_erase(self, delta: int):       # pylint: disable=unused-argument
         """ Perform EEPROM erasure, and update app state accordingly (e.g. if the erased hexpansion is currently in use or being initialised/upgraded, reset those states).
             Unresponsive to buttons during the erasure process."""
         # not used in _MODE_INIT
@@ -527,8 +532,9 @@ class HexpansionMgr:
             return
         if self._logging:
             print(f"H:Erasing EEPROM on port {erase_port}")
-        if self._hexpansion_type_by_slot[erase_port - 1] is not None:
-            self._hexpansion_init_type = self._hexpansion_type_by_slot[erase_port - 1]
+        existing_type = self._hexpansion_type_by_slot[erase_port - 1]
+        if existing_type is not None:
+            self._hexpansion_init_type = existing_type
         eeprom_page_size=app.HEXPANSION_TYPES[self._hexpansion_init_type].eeprom_page_size if self._hexpansion_init_type > 0 else _DEFAULT_EEPROM_PAGE_SIZE
         eeprom_total_size=app.HEXPANSION_TYPES[self._hexpansion_init_type].eeprom_total_size if self._hexpansion_init_type > 0 else _DEFAULT_EEPROM_TOTAL_SIZE
         erase_addr_len = self._hexpansion_eeprom_addr_len[erase_port - 1]
@@ -573,7 +579,7 @@ class HexpansionMgr:
         self._erase_port = None
 
 
-    def _update_state_upgrade(self, delta):     # pylint: disable=unused-argument
+    def _update_state_upgrade(self, delta: int):     # pylint: disable=unused-argument
         """ Allow User to confirm or cancel App upgrade."""
         app = self._app
         upgrade_port = self._upgrade_port
@@ -595,7 +601,7 @@ class HexpansionMgr:
             self._sub_state = _SUB_INIT if self._mode == _MODE_INIT else _SUB_CHECK
 
 
-    def _get_hexpansion_by_type(self, hexpansion_type) -> int | None:
+    def _get_hexpansion_by_type(self, hexpansion_type: int) -> int | None:
         """ Return the port number of a hexpansion of the given type, or None if no such hexpansion is currently detected."""
         for port in range(0, _NUM_HEXPANSION_SLOTS):
             if self._hexpansion_type_by_slot[port] == hexpansion_type:
@@ -660,6 +666,7 @@ class HexpansionMgr:
                 if self._mode == _MODE_UPDATE:
                     app.show_message([f"{name}","removed.","Please reinsert"], [(1,1,0),(1,1,1),(1,1,1)], "error")
                     self._message_being_shown = True
+                assert old_port is not None
                 app.notification = Notification(f"{name} removed", port=old_port)
 
         return port, hexpansion_app
@@ -671,7 +678,7 @@ class HexpansionMgr:
 
         self._report_hexpansion_states()
 
-        # For hexpansiosn of which we only need to know where one is we track movements between ports and update the assigned port accordingly
+        # For hexpansions of which we only need to know where one is we track movements between ports and update the assigned port accordingly
         self._refresh_single_port_hexpansion_assignments()
 
         # Build a new list of ports with HexDrives - to allow for more than one being present and used:
@@ -825,9 +832,9 @@ class HexpansionMgr:
             hexpansion_sub_type = app.HEXPANSION_TYPES[self._hexpansion_init_type].sub_type
             app.draw_message(ctx, ["Hexpansion", f"in slot {self._detected_port}:", "Init EEPROM as", hexpansion_type, f"{hexpansion_sub_type if hexpansion_sub_type else ''}?"], \
                                   [(1, 1, 0), (1, 1, 0), (1, 1, 0), (1, 0, 1), (1, 0, 1)], label_font_size)
-            button_labels(ctx, confirm_label="Yes", up_label=app.special_chars['up'], down_label="\u25BC", \
-                          left_label=app.HEXPANSION_TYPES[app.HEXDRIVE_HEXPANSION_INDEX].name, \
-                         right_label=app.HEXPANSION_TYPES[app.HEXSENSE_HEXPANSION_INDEX].name, cancel_label="No")
+            button_labels(ctx, confirm_label="Yes", up_label=app.special_chars['up'], down_label="\u25BC", cancel_label="No")
+            #            left_label=app.HEXPANSION_TYPES[app.HEXDRIVE_HEXPANSION_INDEX].name, \
+            #            right_label=app.HEXPANSION_TYPES[app.HEXSENSE_HEXPANSION_INDEX].name)
             return True
         elif self._sub_state == _SUB_PORT_SELECT:
             self._draw_port_select(ctx)

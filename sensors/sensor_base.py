@@ -58,6 +58,10 @@ class SensorBase:
             print(f"S:{self.NAME} read error: {e}")
             return {"Error": str(e)}
 
+    def read_sample_if_ready(self) -> dict | None:
+        """Optional non-blocking sample hook for sensors that support it."""
+        return None
+
     def reset(self):
         """Put the sensor into a low-power / safe state."""
         try:

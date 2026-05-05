@@ -100,7 +100,7 @@ class SensorManager:
         self._index = 0
         self._last_data = {}
 
-        # Set read interval from the first found sensor, or default to 250ms
+        # Set read interval from the first found sensor, or default to 250ms  TODO: support multiple sensors with different intervals?
         if self._sensors:
             self._read_interval_ms = getattr(self._sensors[0], 'READ_INTERVAL_MS', 250)
             self._type = getattr(self._sensors[0], 'TYPE', 'Generic')
@@ -184,7 +184,7 @@ class SensorManager:
         if not self._sensors:
             return {"Error": "no sensors"}
         self._last_data = self._sensors[self._index].read()
-        self.report_interrupt()
+        #self.report_interrupt()
         return self._last_data
 
 
@@ -213,18 +213,18 @@ class SensorManager:
         return self._last_data
 
     @property
-    def port(self):
+    def port(self) -> str | None:
         return self._port
 
     @property
     def is_open(self) -> bool:
         return self._i2c is not None and len(self._sensors) > 0
 
-    def sensor_list(self) -> list:
+    def sensor_list(self) -> list[tuple[int, str]]:
         """Return [(index, name), ...] for all found sensors."""
         return [(i, s.NAME) for i, s in enumerate(self._sensors)]
 
-    def get_sensor_by_name(self, name: str):
+    def get_sensor_by_name(self, name: str) -> SensorBase | None:
         """Return the first sensor instance whose NAME matches, or None."""
         for s in self._sensors:
             if s.NAME == name:
