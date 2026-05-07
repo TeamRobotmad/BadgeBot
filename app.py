@@ -185,6 +185,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.message: list = []
         self.message_colours: list = []
         self.message_type: str | None = None
+        self.message_return_state: int | None = None
         self.current_menu: str | None = None
         self.menu: Menu | None = None
         self.scroll_mode_enabled: bool = False  # Whether pressing the "C" button can toggle scroll mode on/off, which allows the user to scroll through lines on the display.
@@ -671,6 +672,10 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 self.button_states.clear()
                 # Reboot has been acknowledged by the user - unfortunately we can't actually reboot the badge from Python.
                 return # leave the message on screen.
+            elif self.message_return_state is not None:
+                self.button_states.clear()
+                self.current_state = self.message_return_state
+            #TODO rework to use the new message_return_state
             elif self.message_type == "error" or self.message_type == "warning" or self.message_type == "hexpansion":
                 # Message has been acknowledged by the user
                 self.button_states.clear()
@@ -686,6 +691,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             self.message = []
             self.message_colours = []
             self.message_type = None
+            self.message_return_state = None
         else:
             # "CANCEL" button is handled in common for all MINIMISE_VALID_STATES so no custom code here
             # Show the warning screen for 10 seconds
@@ -697,6 +703,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 self.message = []
                 self.message_colours = []
                 self.message_type = None
+                self.message_return_state = None
                 self.refresh = True
             elif self.current_state == STATE_LOGO:
                 # LED management - to match rotating logo:
@@ -836,8 +843,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         """Negate individual motor outputs as per settings."""
         output1, output2 = output
         output = (-output1 if self._motor1_reversed else output1, -output2 if self._motor2_reversed else output2)
-        if self.logging:
-            print(f"M:{output}")
+        #if self.logging:
+        #    print(f"M:{output}")
         return output
 
 
@@ -899,7 +906,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.refresh = True
 
 
-    def show_message(self, msg_content, msg_colours, msg_type = None):
+    def show_message(self, msg_content, msg_colours, msg_type = None, return_state: int | None = None):
         """Utility function to set the current state to the message display, and populate the message content and colours. The message_type can be used to indicate whether this is an 'error' (red) or 'warning' (green) message, which can affect both the display and the behaviour when the user acknowledges the message."""
         if self.logging:
             print(f"Showing message: '{msg_content}' with type {msg_type}")
@@ -907,6 +914,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.message = msg_content
         self.message_colours = msg_colours
         self.message_type = msg_type
+        self.message_return_state = return_state
         self.current_state = STATE_MESSAGE
         self.refresh = True
 

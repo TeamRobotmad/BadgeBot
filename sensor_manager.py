@@ -81,10 +81,13 @@ class SensorManager:
         if self.logging:
             print(f"SM:Port {port} scan: {[hex(a) for a in found_addrs]}")
 
+        used_addrs = set()
         for cls in ALL_SENSOR_CLASSES:
             addresses = getattr(cls, "I2C_ADDRS", (getattr(cls, "I2C_ADDR", 0),))
             for address in addresses:
                 if address not in found_addrs:
+                    continue
+                if address in used_addrs:
                     continue
                 try:
                     sensor = cls(i2c_addr=address, logging=self.logging)
@@ -92,6 +95,7 @@ class SensorManager:
                     sensor = cls()
                 if sensor.begin(self._i2c):
                     self._sensors.append(sensor)
+                    used_addrs.add(address)
                     if self.logging:
                         print(f"SM:  + {cls.NAME} @ 0x{sensor.i2c_addr:02X} {cls.TYPE}")
                 elif self.logging:
@@ -213,7 +217,7 @@ class SensorManager:
         return self._last_data
 
     @property
-    def port(self) -> str | None:
+    def port(self) -> int | None:
         return self._port
 
     @property

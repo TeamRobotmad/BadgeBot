@@ -14,6 +14,7 @@ bus, then calls read() periodically while the sensor is selected in the UI.
 
 
 class SensorBase:
+    """Abstract base class for BadgeBot I2C sensor drivers."""
     # Sub-classes must override these
     I2C_ADDR = 0x00
     NAME = "Unknown"
@@ -45,7 +46,7 @@ class SensorBase:
             self._ready = False
         return self._ready
 
-    def read(self) -> dict:
+    def read(self, timeout: int | None = None) -> dict:
         """Return the latest measurement as {label: value_string}.
 
         Returns an empty dict or {'Error': 'msg'} on failure.
@@ -53,7 +54,7 @@ class SensorBase:
         if not self._ready:
             return {"Error": "not ready"}
         try:
-            return self._measure()
+            return self._measure(timeout=timeout) if timeout is not None else self._measure()
         except Exception as e:          # pylint: disable=broad-exception-caught
             print(f"S:{self.NAME} read error: {e}")
             return {"Error": str(e)}
@@ -81,10 +82,12 @@ class SensorBase:
 
     @property
     def is_ready(self) -> bool:
+        """True if the sensor is initialised and ready for measurements."""
         return self._ready
 
     @property
     def i2c_addr(self) -> int:
+        """Return the I2C address of the sensor."""
         return self._i2c_addr
 
     # ------------------------------------------------------------------
@@ -95,7 +98,7 @@ class SensorBase:
         """Hardware initialisation. Return True on success."""
         raise NotImplementedError
 
-    def _measure(self) -> dict:
+    def _measure(self, timeout: int = 0) -> dict:
         """Perform measurement. Return dict of {label: value_str}."""
         raise NotImplementedError
 

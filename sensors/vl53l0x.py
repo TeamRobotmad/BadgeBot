@@ -69,35 +69,8 @@ _DEFAULT_TUNING_SETTINGS = (
     (0xFF, 0x00), (0x80, 0x00),
 )
 
-
-def _ticks_ms() -> int:
-    ticks_ms = getattr(time, "ticks_ms", None)
-    if ticks_ms is not None:
-        return ticks_ms()
-    return int(getattr(time, "monotonic")() * 1000)
-
-
-def _ticks_add(base: int, delta: int) -> int:
-    if hasattr(time, "ticks_add"):
-        return time.ticks_add(base, delta)
-    return base + delta
-
-
-def _ticks_diff(finish: int, now: int) -> int:
-    if hasattr(time, "ticks_diff"):
-        return time.ticks_diff(finish, now)
-    return finish - now
-
-
-def _sleep_ms(delay_ms: int):
-    sleep_ms = getattr(time, "sleep_ms", None)
-    if sleep_ms is not None:
-        sleep_ms(delay_ms)
-        return
-    getattr(time, "sleep")(delay_ms / 1000)
-
-
 class VL53L0X(SensorBase):
+    """VL53L0X Time-of-Flight distance sensor driver."""
     I2C_ADDR = 0x29
     NAME = "VL53L0X"
     READ_INTERVAL_MS = 100
@@ -177,16 +150,16 @@ class VL53L0X(SensorBase):
 
         return True
 
-    def _measure(self) -> dict:
+    def _measure(self, timeout: int = _RANGE_TIMEOUT_MS) -> dict:
         diagnostics_output(1,0)
         self._prepare_single_shot()
         self._write_u8(_SYSRANGE_START, 0x01)
 
-        deadline = _ticks_add(_ticks_ms(), _RANGE_TIMEOUT_MS)
+        deadline = time.ticks_add(time.ticks_ms(), timeout)
         while self._read_u8(_SYSRANGE_START) & 0x01:
-            if _ticks_diff(deadline, _ticks_ms()) <= 0:
+            if time.ticks_diff(deadline, time.ticks_ms()) <= 0:
                 return {"dist_mm": "timeout"}
-            _sleep_ms(1)
+            time.sleep_ms(1)
 
         if not self._wait_for_interrupt_ready():
             return {"dist_mm": "timeout"}
@@ -219,11 +192,11 @@ class VL53L0X(SensorBase):
         self._close_stop_variable_window()
 
     def _wait_for_interrupt_ready(self) -> bool:
-        deadline = _ticks_add(_ticks_ms(), _RANGE_TIMEOUT_MS)
+        deadline = time.ticks_add(time.ticks_ms(), _RANGE_TIMEOUT_MS)
         while (self._read_u8(_RESULT_INTERRUPT_STATUS) & _INTERRUPT_READY_MASK) == 0:
-            if _ticks_diff(deadline, _ticks_ms()) <= 0:
+            if time.ticks_diff(deadline, time.ticks_ms()) <= 0:
                 return False
-            _sleep_ms(1)
+            time.sleep_ms(1)
         return True
 
     def _perform_single_ref_calibration(self, vhv_init_byte: int) -> bool:
@@ -250,11 +223,11 @@ class VL53L0X(SensorBase):
         self._write_u8(0x94, 0x6B)
         self._write_u8(_SPAD_POLL_REG, 0x00)
 
-        deadline = _ticks_add(_ticks_ms(), _RANGE_TIMEOUT_MS)
+        deadline = time.ticks_add(time.ticks_ms(), _RANGE_TIMEOUT_MS)
         while self._read_u8(_SPAD_POLL_REG) == 0x00:
-            if _ticks_diff(deadline, _ticks_ms()) <= 0:
+            if time.ticks_diff(deadline, time.ticks_ms()) <= 0:
                 return None
-            _sleep_ms(1)
+            time.sleep_ms(1)
 
         self._write_u8(_SPAD_POLL_REG, 0x01)
         spad_info = self._read_u8(_SPAD_INFO_REG)

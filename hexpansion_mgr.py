@@ -20,7 +20,7 @@ from app_components.tokens import label_font_size, button_labels
 from events.input import BUTTON_TYPES
 from machine import I2C
 from system.eventbus import eventbus
-from system.hexpansion.events import HexpansionInsertionEvent
+from system.hexpansion.events import HexpansionInsertionEvent, HexpansionRemovalEvent
 from system.hexpansion.header import HexpansionHeader, write_header
 from system.hexpansion.util import get_hexpansion_block_devices, detect_eeprom_addr
 from system.scheduler import scheduler
@@ -151,14 +151,12 @@ class HexpansionMgr:
 
     def register_events(self):
         """Register hexpansion insertion/removal event handlers directly."""
-        from system.hexpansion.events import HexpansionRemovalEvent
         eventbus.on_async(HexpansionInsertionEvent, self._handle_insertion, self._app)
         eventbus.on_async(HexpansionRemovalEvent, self._handle_removal, self._app)
 
 
     def unregister_events(self):
         """Unregister hexpansion event handlers."""
-        from system.hexpansion.events import HexpansionRemovalEvent
         eventbus.remove(HexpansionInsertionEvent, self._handle_insertion, self._app)
         eventbus.remove(HexpansionRemovalEvent, self._handle_removal, self._app)
 
@@ -844,21 +842,24 @@ class HexpansionMgr:
                 return False
             hexpansion_type_name = self._type_name_for_port(self._erase_port, self._hexpansion_init_type)
             # If the EEPROM type is unknown, show the proposed type and later allow selecting from common options.
-            app.draw_message(ctx, [hexpansion_type_name, f"in slot {self._erase_port}:", "Erase EEPROM?"], [(1, 0, 1), (1, 1, 0), (1, 0, 0)], label_font_size)
+            app.draw_message(ctx, [hexpansion_type_name, f"in slot {self._erase_port}:", "Erase EEPROM?"], \
+                             [(1, 0, 1), (1, 1, 0), (1, 0, 0)], label_font_size)
             button_labels(ctx, confirm_label="Yes", cancel_label="No")
             return True
         elif self._sub_state == _SUB_ERASE:
             if self._erase_port is None:
                 return False
             hexpansion_type_name = self._type_name_for_port(self._erase_port, self._hexpansion_init_type)
-            app.draw_message(ctx, [hexpansion_type_name, f"in slot {self._erase_port}:", "Erasing..."], [(1, 0, 1), (1, 1, 0), (1, 0, 0)], label_font_size)
+            app.draw_message(ctx, [hexpansion_type_name, f"in slot {self._erase_port}:", "Erasing..."], \
+                              [(1, 0, 1), (1, 1, 0), (1, 0, 0)], label_font_size)
             return True
         elif self._sub_state == _SUB_UPGRADE_CONFIRM:
             if self._upgrade_port is None:
                 return False
             hexpansion_type_name = self._type_name_for_port(self._upgrade_port, self._hexpansion_init_type)
             upgrade_or_install = "Upgrade" if self._hexpansion_state_by_slot[self._upgrade_port-1] == _HEXPANSION_STATE_RECOGNISED_OLD_APP  else "Install"
-            app.draw_message(ctx, [hexpansion_type_name, f"in slot {self._upgrade_port}:", upgrade_or_install, f"{hexpansion_type_name} app?"], [(1, 0, 1), (1, 1, 0), (1, 1, 0), (1, 1, 0)], label_font_size)
+            app.draw_message(ctx, [hexpansion_type_name, f"in slot {self._upgrade_port}:", upgrade_or_install, f"{hexpansion_type_name} app?"], \
+                             [(1, 0, 1), (1, 1, 0), (1, 1, 0), (1, 1, 0)], label_font_size)
             button_labels(ctx, confirm_label="Yes", cancel_label="No")
             return True
         elif self._sub_state == _SUB_PROGRAMMING:
@@ -866,7 +867,8 @@ class HexpansionMgr:
             if self._upgrade_port is None:
                 return False
             hexpansion_type_name = self._type_name_for_port(self._upgrade_port, self._hexpansion_init_type)
-            app.draw_message(ctx, [f"{hexpansion_type_name}:", f"in slot {self._upgrade_port}:", "Programming", "Please wait..."], [(1, 0, 1), (1, 1, 0), (1, 1, 0), (1, 1, 0)], label_font_size)
+            app.draw_message(ctx, [f"{hexpansion_type_name}:", f"in slot {self._upgrade_port}:", "Programming", "Please wait..."], \
+                             [(1, 0, 1), (1, 1, 0), (1, 1, 0), (1, 1, 0)], label_font_size)
             return True
         return False
 

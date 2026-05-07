@@ -9,8 +9,8 @@ from machine import PWM, Pin
 from system.eventbus import eventbus
 from system.hexpansion.config import HexpansionConfig
 from system.scheduler.events import RequestStopAppEvent
-from tildagon import Pin as ePin
 import app
+from tildagon import Pin as ePin
 
 # Define the minimum BadgeOS version required to run this app (e.g. if we need features that are only available in a certain version of BadgeOS)
 _MIN_BADGEOS_VERSION = [1, 9, 0]     # v1.9.0 is required to be able to read the EEPROM with 16-bit addressing
@@ -150,10 +150,7 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
             return False
 
         # ensure SMPSU is turned off to start with
-        self.power = False
-
-        # ensure distance sensor is enabled to start with (if we have a version of the hardware with a distance sensor)
-        self.set_dist_xshut(True)
+        self.set_power(False)
 
         # allocate PWM outputs according to the type of HexDrive
         #return self._pwm_init()
@@ -173,17 +170,21 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
                 print(f"D:{self.config.port}:Servo {channel} on Physical channel {physical_channel}")
                 self._freq[physical_channel] = _DEFAULT_SERVO_FREQ
         self._pwm_setup = True
+
+        # ensure distance sensor is enabled to start with (if we have a version of the hardware with a distance sensor)
+        self.set_dist_xshut(True)
+
         return True
 
 
     def deinitialise(self) -> bool:
         """ De-initialise the app - return True if successful, False if failed."""
         # Turn off all PWM outputs & release resources
-        self.power = False
+        self.set_power(False)
         self._pwm_deinit()
         for hs_pin in self.config.pin:
             hs_pin.init(mode=Pin.IN)
-        if self._hexdrive_type.hw_ver >= 1:
+        if self._hw_ver >= 1:
             self._led_control.deinit()
             self._dist_xshut.deinit()
         return True
@@ -224,7 +225,7 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
 
     def get_status(self) -> bool:
         """ Get the current status of the app - True if the app is running and able to respond to commands, False if not. """
-        return (self._pwm_setup)
+        return self._pwm_setup
 
 
     def set_logging(self, state: bool):
@@ -322,14 +323,14 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
                     self.config.pin[this_channel].value(0)
                     if self._logging:
                         print(self._pwm_log_string(this_channel) + " disabled")
-                try:
-                    pwm.freq(freq)
-                    if self._logging:
-                        print(self._pwm_log_string(this_channel) + f"{freq}Hz set")
-                except Exception as e:  # pylint: disable=broad-except
-                    print(self._pwm_log_string(this_channel) + f"set freq {freq} failed {e}")
-                    print(f"pwm: {pwm}")
-                    return False
+                else:
+                    try:
+                        pwm.freq(freq)
+                        if self._logging:
+                            print(self._pwm_log_string(this_channel) + f"{freq}Hz set")
+                    except Exception as e:  # pylint: disable=broad-except
+                        print(self._pwm_log_string(this_channel) + f"set freq {freq} failed {e}")
+                        return False
         return True
 
 
@@ -550,7 +551,7 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
     def _check_port_for_hexdrive(self, port: int) -> tuple[HexDriveType | None, int]:
         #just read the part of the header which contains the VID & PID
         try:
-            vid_and_pid_bytes = self.config.i2c.readfrom_mem(_EEPROM_ADDR, _VID_ADDR, 4, addrsize = (8*_EEPROM_NUM_ADDRESS_BYTES))
+            vid_and_pid_bytes = self.config.i2c.readfrom_mem(_EEPROM_ADDR, _VID_ADDR, 4, addrsize = 8*_EEPROM_NUM_ADDRESS_BYTES)
         except OSError as e:      # pylint: disable=broad-except
             # no EEPROM on this port
             print(f"D:{port}:EEPROM error: {e}")
