@@ -35,7 +35,7 @@ class MySetting:
                 return k
         return None
 
-    def label(self, index: int = None):
+    def label(self, index: int | None = None):
         if index is not None:
             if self._labels is not None and index < len(self._labels):
                 return self._labels[int(index)]
@@ -123,7 +123,7 @@ class SettingsMgr:
     def __init__(self, app, logging: bool = False):
         self._app = app
         self._logging: bool = logging
-        self.edit_setting: int  = None
+        self.edit_setting: str | None = None
         self.edit_setting_value = None
         if self._logging:
             print("SettingsMgr initialised")
