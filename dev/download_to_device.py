@@ -16,7 +16,9 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -79,6 +81,7 @@ _ALWAYS_SHOWN = frozenset({"ERR", "WARN", "SUMMARY"})
 
 # Set to True by main() when --verbose is passed.
 _verbose: bool = False
+_tool_commands: dict[str, str] = {}
 
 
 def _log(level: str, message: str) -> None:
@@ -131,6 +134,64 @@ def _save_state(path: Path, state: dict[str, dict[str, str]]) -> None:
         file.write("\n")
 
 
+def _resolve_tool_command(tool_name: str, *, repo_root: Path) -> str:
+    resolved = _tool_commands.get(tool_name)
+    if resolved is not None:
+        return resolved
+
+    executable_dir = Path(sys.executable).resolve().parent
+    venv_dir_name = "Scripts" if os.name == "nt" else "bin"
+    alt_venv_dir_name = "bin" if os.name == "nt" else "Scripts"
+    candidate_dirs = [
+        executable_dir,
+        repo_root / ".venv" / venv_dir_name,
+        repo_root / ".venv" / alt_venv_dir_name,
+    ]
+    candidate_names = [tool_name]
+    if os.name == "nt":
+        candidate_names = [f"{tool_name}.exe", f"{tool_name}.cmd", f"{tool_name}.bat", tool_name]
+
+    searched_dirs: list[str] = []
+    seen_dirs: set[str] = set()
+    for directory in candidate_dirs:
+        directory_key = str(directory).lower() if os.name == "nt" else str(directory)
+        if directory_key in seen_dirs:
+            continue
+        seen_dirs.add(directory_key)
+        searched_dirs.append(str(directory))
+
+        for candidate_name in candidate_names:
+            candidate_path = directory / candidate_name
+            if candidate_path.exists():
+                resolved = str(candidate_path)
+                _tool_commands[tool_name] = resolved
+                return resolved
+
+    for candidate_name in candidate_names:
+        resolved = shutil.which(candidate_name)
+        if resolved is not None:
+            _tool_commands[tool_name] = resolved
+            return resolved
+
+    raise RuntimeError(
+        f"Could not find required tool '{tool_name}'. Checked {', '.join(searched_dirs)} and PATH. "
+        "Create the project .venv or install the tool globally."
+    )
+
+
+def _tool(tool_name: str) -> str:
+    resolved = _tool_commands.get(tool_name)
+    if resolved is None:
+        raise RuntimeError(f"Tool '{tool_name}' has not been initialised")
+    return resolved
+
+
+def _initialise_tool_commands(repo_root: Path) -> None:
+    for tool_name in ("mpy-cross", "mpremote"):
+        resolved = _resolve_tool_command(tool_name, repo_root=repo_root)
+        _log("INFO", f"using {tool_name}: {resolved}")
+
+
 def _format_command(command: list[str]) -> str:
     return " ".join(f'"{part}"' if " " in part else part for part in command)
 
@@ -155,6 +216,16 @@ def _run_command(
             check=False,
             timeout=timeout,
         )
+    except FileNotFoundError as exc:
+        raise CommandFailed(
+            "\n".join(
+                [
+                    "Command could not be started because the executable was not found",
+                    f"Command: {quoted}",
+                    f"Missing executable: {exc.filename or command[0]}",
+                ]
+            )
+        ) from exc
     except subprocess.TimeoutExpired as exc:
         stdout = (exc.stdout or "").rstrip() or "<empty>"
         stderr = (exc.stderr or "").rstrip() or "<empty>"
@@ -197,7 +268,7 @@ def _find_connect_arg(mpremote_args: list[str]) -> int | None:
 
 def _list_mpremote_devices() -> list[str]:
     completed = _run_command(
-        ["mpremote", "devs"],
+        [_tool("mpremote"), "devs"],
         dry_run=False,
         timeout=MPREMOTE_PROBE_TIMEOUT,
     )
@@ -217,7 +288,7 @@ def _list_mpremote_devices() -> list[str]:
 
 def _probe_mpremote_device(port: str) -> bool:
     command = [
-        "mpremote",
+        _tool("mpremote"),
         "connect",
         port,
         "exec",
@@ -307,7 +378,7 @@ def _ensure_device_dir(dir_path: str, *, mpremote_args: list[str], dry_run: bool
         "        os.mkdir(cur)"
     )
     _run_command(
-        ["mpremote", *mpremote_args, "exec", exec_code],
+        [_tool("mpremote"), *mpremote_args, "exec", exec_code],
         dry_run=dry_run,
         timeout=MPREMOTE_COMMAND_TIMEOUT,
     )
@@ -361,7 +432,7 @@ def _compile_changed_modules(
 
         _log("INFO", f"compile {spec.source} -> {spec.artifact}")
         _run_command(
-            ["mpy-cross", "-v", str(spec.source), "-o", str(spec.artifact)],
+            [_tool("mpy-cross"), "-v", str(spec.source), "-o", str(spec.artifact)],
             dry_run=dry_run,
         )
 
@@ -413,7 +484,7 @@ def _get_device_files(
         f"print(json.dumps(_ls('{safe_path}')))"
     )
 
-    command = ["mpremote", *mpremote_args, "exec", exec_code]
+    command = [_tool("mpremote"), *mpremote_args, "exec", exec_code]
     quoted = " ".join(f'"{p}"' if " " in p else p for p in command)
     _log("CMD", quoted)
 
@@ -492,7 +563,7 @@ def _upload_changed_artifacts(
             _log("INFO", f"upload {spec.artifact} -> {app_dir}/{spec.artifact.as_posix()}")
 
         destination = f"{app_dir}/{spec.artifact.as_posix()}"
-        command = ["mpremote", *mpremote_args, "cp", str(spec.artifact), destination]
+        command = [_tool("mpremote"), *mpremote_args, "cp", str(spec.artifact), destination]
         _run_command(command, dry_run=dry_run, timeout=MPREMOTE_COMMAND_TIMEOUT)
 
         state["uploaded"][artifact_key] = artifact_hash
@@ -539,7 +610,7 @@ def _upload_changed_static_files(
             _log("INFO", f"upload {path} -> {app_dir}/{path.as_posix()}")
 
         destination = f"{app_dir}/{path.as_posix()}"
-        command = ["mpremote", *mpremote_args, "cp", str(path), destination]
+        command = [_tool("mpremote"), *mpremote_args, "cp", str(path), destination]
         _run_command(command, dry_run=dry_run, timeout=MPREMOTE_COMMAND_TIMEOUT)
 
         state["uploaded"][file_key] = file_hash
@@ -617,6 +688,7 @@ def main() -> int:
 
     try:
         _validate_sources()
+        _initialise_tool_commands(repo_root)
 
         if options.clear_state and STATE_PATH.exists():
             _log("INF", f"clearing state file {STATE_PATH}")
