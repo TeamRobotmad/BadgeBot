@@ -438,11 +438,11 @@ class HexTestApp(app.App):         # pylint: disable=no-member
 
         # Find HexDrive to test
         for port in self.hexdrive_ports:
-            app = self._find_hexpansion_app(port)
-            if app is not None:
+            hexpansion_app = self._find_hexpansion_app(port)
+            if hexpansion_app is not None:
                 if self.logging:
                     print(f"T:Found HexDrive app to test on port {port}")
-                self.hexdrive_app = _as_hexdrive_app(app)
+                self.hexdrive_app = _as_hexdrive_app(hexpansion_app)
                 break
 
         if self.hexdrive_app is not None:
