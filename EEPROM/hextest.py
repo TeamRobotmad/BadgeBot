@@ -7,6 +7,11 @@
 import asyncio
 import time
 
+try:
+    from typing import TYPE_CHECKING
+except ImportError:
+    TYPE_CHECKING = False
+
 import ota
 from machine import I2C, Pin, mem32, disable_irq, enable_irq
 
@@ -25,6 +30,18 @@ from system.scheduler import scheduler
 import app
 from tildagon import Pin as ePin
 from micropython import const
+
+if TYPE_CHECKING:
+    from typing import cast
+    from hexdrive_protocol import HexDriveLike
+
+    def _as_hexdrive_app(value: object) -> HexDriveLike:
+        return cast(HexDriveLike, value)
+else:
+    HexDriveLike = object
+
+    def _as_hexdrive_app(value):
+        return value
 
 
 # Define the minimum BadgeOS version required to run this app (e.g. if we need features that are only available in a certain version of BadgeOS)
@@ -133,7 +150,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         # Overall app state (controls what is displayed and what user inputs are accepted)
         self.current_state = STATE_MENU
         self.previous_state = self.current_state
-        self.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD   # mS
+        self.update_period: int = DEFAULT_BACKGROUND_UPDATE_PERIOD   # mS
 
         # UI Feature Controls
         self.refresh: bool = True            # True so that we draw initial screen on first loop, then set to True whenever we want to trigger a screen update
@@ -154,13 +171,13 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         self._auto_repeat_count: int = 0
         self.auto_repeat_level: int = 0
 
-        self.hexdrive_ports = []
-        self.hextest_port = self.config.port
+        self.hexdrive_ports: list[int] = [4]
+        self.hextest_port: int = self.config.port
 
-        self.hexdrive_app = None
+        self.hexdrive_app: HexDriveLike | None = None
 
         self._rotation_rate_emitter_duty: int = _DEFAULT_ROTATION_RATE_EMITTER_DUTY # duty cycle for the IR emitter when doing rate testing, 0-255 (0=off, 255=full on)
-        self._rotation_rate_counters = []                           # hardware counters used to count photodiode pulses for rate testing
+        self._rotation_rate_counters: list[Counter] = []                           # hardware counters used to count photodiode pulses for rate testing
         self._rotation_rate_rpms: list[int] = []                    # computed RPM values derived from counter deltas
         self._rotation_rate_measurement_period: int = _ROTATION_RATE_MEASUREMENT_PERIOD_MS
         self._rotation_rate_measurement_period_elapsed: int = 0     # ticks since last rate check, used to compute pulse rate in Hz based on the change in the counter value
@@ -224,6 +241,10 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         eventbus.on_async(RequestForegroundPushEvent, self._gain_focus, self)
         eventbus.on_async(RequestForegroundPopEvent, self._lose_focus, self)
         eventbus.on_async(RequestStopAppEvent, self._handle_stop_app, self)
+
+        # Start with a Message state to show the app name and version
+        self.show_message(["HexTest", f"V{self.VERSION}", "By RobotMad"], [(0.2,1,0.2), (1,1,0), (1,1,1)], return_state=STATE_MENU)
+
 
 
     # ------------------------------------------------------------------
@@ -296,9 +317,19 @@ class HexTestApp(app.App):         # pylint: disable=no-member
 
     def deinitialise(self) -> bool:
         """ De-initialise the app - return True if successful, False if failed."""
+        # deinit any allocated Counters
+        for counter in self._rotation_rate_counters:
+            counter.deinit()
         for hs_pin in self.config.pin:
             hs_pin.init(mode=Pin.IN)
         return True
+
+
+    def _exit_app(self):
+        """ Clean up and exit the app, returning to the main menu."""
+        eventbus.remove(RequestForegroundPushEvent, self._gain_focus, self)
+        eventbus.remove(RequestForegroundPopEvent, self._lose_focus, self)
+        eventbus.emit(RequestStopAppEvent(self))
 
 
     ### ASYNC EVENT HANDLERS ###
@@ -332,11 +363,11 @@ class HexTestApp(app.App):         # pylint: disable=no-member
     async def background_task(self):
         """Background task loop for handling time-based updates. This runs independently of the main update/draw loop
            and is suitable for tasks that need to run at a consistent interval regardless of the current state or drawing performance."""
-        last_time = time.ticks_ms()
+        last_time: int = time.ticks_ms()
 
         while True:
-            cur_time = time.ticks_ms()
-            delta_ticks = time.ticks_diff(cur_time, last_time)
+            cur_time: int = time.ticks_ms()
+            delta_ticks: int = time.ticks_diff(cur_time, last_time)
             self._background_update(delta_ticks)
             await asyncio.sleep_ms(max (1, self.update_period - (time.ticks_ms() - cur_time)))  # sleep for the remainder of the update period, accounting for time taken by background_update
             last_time = cur_time
@@ -346,7 +377,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
 
     def _background_update(self, delta: int):
         """Perform background updates based on the current sub-state."""
-        self._sample_ina226_in_background()
+        self._sample_ina226_in_background(delta)
         # push motor outputs to HexDrive if we are in motor test mode
         if self.current_state == STATE_MOTOR_TEST:
             if self.hexdrive_app is not None:
@@ -401,70 +432,67 @@ class HexTestApp(app.App):         # pylint: disable=no-member
 
     def _motor_test_start(self) -> bool:
         """Enter the Sensor Test flow from the main menu."""
-        self.button_states.clear()
         self._sensor_data = {}
         self._display_data = {}
         self.refresh = True
 
         # Find HexDrive to test
-        self.hexdrive_app = self._find_hexpansion_app(4)    # HARD CODED we look for HexDrive on slot 4
-
-        # Setup INA226:
-        if self._init_ina226_for_motor_test():
-            if self._ina226 is not None and self.hexdrive_app is not None:
-                try:
-                    if self.hexdrive_app.initialise() and self.hexdrive_app.set_power(True):
-                        self.hexdrive_app.set_keep_alive(2000)   # Updates can be quite slow as we are using the draw function
-                except AttributeError:
-                    pass
-
-                # Enable the IR emitter for measuring wheel rotation rate
-                self._rotation_rate_enable(True)
-
-                # Enable the phototransistor input for measuring wheel rotation rate
-                for pin_num in _ROTATION_RATE_SENSOR_PINS:
-                    # configure the ESP32S3 hardware to count pulses on the HS_F pin
-                    # Counter not yet available in this Micropython port so we have created our own...
-                    gpio_num = _HS_PIN_TO_GPIO[self.config.port][pin_num]
-                    counter = Counter(None, gpio_num, filter_ns=1000000, logging=False)  # auto-select PCNT unit
-                    if counter is not None and counter.unit is not None:
-                        self._rotation_rate_counters.append(counter)
-                    else:
-                        if self.logging:
-                            print(f"T:Failed to allocate PCNT counter for pin {pin_num} (GPIO {gpio_num})")
-                        self.notification = Notification("PCNT Init     Failed")
-                        # deinit any counters we did manage to create before returning
-                        for c in self._rotation_rate_counters:
-                            if c is not None:
-                                c.deinit()
-                        self._rotation_rate_counters = []
-                        return False
+        for port in self.hexdrive_ports:
+            app = self._find_hexpansion_app(port)
+            if app is not None:
                 if self.logging:
-                    print(f"T:Rate counter {self._rotation_rate_counters}")
-                self._rotation_rate_measurement_period_elapsed = 0
-                self._rotation_rate_rpms = [0] * len(self._rotation_rate_counters)
+                    print(f"T:Found HexDrive app to test on port {port}")
+                self.hexdrive_app = _as_hexdrive_app(app)
+                break
 
-                #self.update_period = self._ina226.read_interval  # update at the sensor read interval
-                return True
+        if self.hexdrive_app is not None:
+            #Setup UUT = HexDrive
+            try:
+                if self.hexdrive_app.initialise() and self.hexdrive_app.set_power(True):
+                    self.hexdrive_app.set_keep_alive(2000)   # Updates can be quite slow as we are using the draw function
+            except AttributeError:
+                pass
+
+            # Setup INA226:
+            if self._init_ina226_for_motor_test():
+                if self._ina226_sensor_mgr is not None:
+                    self.update_period = self._ina226_sensor_mgr.read_interval   # update at the sensor read interval
+
+            # Enable the IR emitter for measuring wheel rotation rate
+            self._rotation_rate_enable(True)
+
+            # Enable the phototransistor input for measuring wheel rotation rate
+            for pin_num in _ROTATION_RATE_SENSOR_PINS:
+                # configure the ESP32S3 hardware to count pulses on the HS pin(s)
+                # Counter not yet available in this Micropython port so we have created our own...
+                gpio_num = _HS_PIN_TO_GPIO[self.config.port][pin_num]
+                counter = Counter(None, gpio_num, filter_ns=1000000, logging=False)  # auto-select PCNT unit
+                if counter is not None and counter.unit is not None:
+                    self._rotation_rate_counters.append(counter)
+                else:
+                    if self.logging:
+                        print(f"T:Failed to allocate PCNT counter for pin {pin_num} (GPIO {gpio_num})")
+                    self.notification = Notification("PCNT Init     Failed")
+                    # deinit any counters we did manage to create before returning
+                    for c in self._rotation_rate_counters:
+                        if c is not None:
+                            c.deinit()
+                    self._rotation_rate_counters = []
+                    return False
+                if self.logging:
+                    print(f"T:Rate counter {counter}")
+            self._rotation_rate_measurement_period_elapsed = 0
+            self._rotation_rate_rpms = [0] * len(self._rotation_rate_counters)
+            return True
         if self.logging:
-            print("T:Failed to initialise for motor test mode")
-        self.notification = Notification("Test Init     Failed")
+            print("T:Failed to initialise for motor test mode - no hexdrive to test")
+        self.notification = Notification("No HexDrive to Test")
         return False
 
 
     def _stop_motor_test_mode(self):
         if self._logging:
             print("T:Stopping Motor Test mode and cleaning up")
-
-        # Take voltage reading before we power down
-        if self._ina226 is not None:
-            ina226 = self._ina226
-            data = ina226.read(timeout=160)
-            try:
-                volts = int(data.get("mV", 0))
-            except Exception as e:              # pylint: disable=broad-exception-caught
-                print(f"T:Error reading INA226 data: {e}")
-
         self._auto_mode = False
         self._auto_done = False
         self._rotation_rate_motor_power = 0
@@ -532,7 +560,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         self._ina226_sample_count = -1
 
 
-    def _sample_ina226_in_background(self) -> None:
+    def _sample_ina226_in_background(self, delta: int) -> None:     # pylint: disable=unused-argument
         sensor = self._ina226
         if sensor is None:
             return
@@ -587,10 +615,10 @@ class HexTestApp(app.App):         # pylint: disable=no-member
     # HEXPANSION operations
     # ------------------------------------------------------------------
 
-    def _find_hexpansion_app(self, port: int) -> object | None:
+    def _find_hexpansion_app(self, port: int) -> HexDriveLike | None:
         """Find the app instance running from the hexpansion on the given port, if any.  Returns the app instance if found, None otherwise."""
         expected_app_name = "HexDriveApp"
-        candidate_app = None
+        candidate_app: HexDriveLike | None = None
         for an_app in scheduler.apps:
             if type(an_app).__name__ == expected_app_name:
                 if hasattr(an_app, "config"):
@@ -599,12 +627,12 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                     if hasattr(an_app.config, "port") and an_app.config.port == port:
                         #if self.logging:
                         #    print(f"H:App {expected_app_name} has matching port {port} in config - app found")
-                        return an_app
+                        return _as_hexdrive_app(an_app)
                 else:
                     # if app doesn't have a config we can't check the port - so assume it is a match
                     #if self.logging:
                     #    print(f"H:Found app with matching name {expected_app_name} on port {port}")
-                    candidate_app = an_app
+                    candidate_app = _as_hexdrive_app(an_app)
         return candidate_app
 
  ### MAIN APP CONTROL FUNCTIONS ###
@@ -673,16 +701,16 @@ class HexTestApp(app.App):         # pylint: disable=no-member
 
     def _update_state_message(self, delta: int):      # pylint: disable=unused-argument
         if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
+            if self.logging:
+                print("T:Message acknowledged by user")
+            self.button_states.clear()
             if self.message_type == "reboop":
-                self.button_states.clear()
                 # Reboot has been acknowledged by the user - unfortunately we can't actually reboot the badge from Python.
                 return # leave the message on screen.
             elif self.message_return_state is not None:
-                self.button_states.clear()
                 self.current_state = self.message_return_state
             else:
                 # Message has been acknowledged by the user - allow access to the menu
-                self.button_states.clear()
                 # refresh the menu in case available options have changed
                 self.set_menu()
                 self.refresh = True
@@ -696,10 +724,6 @@ class HexTestApp(app.App):         # pylint: disable=no-member
 
 
     def _motor_test_update(self, delta: int):  # pylint: disable=unused-argument
-        if self.config is None:
-            self._stop_motor_test_mode()
-            return
-
         # CANCEL always exits motor test mode
         if self.button_states.get(BUTTON_TYPES["CANCEL"]):
             self.button_states.clear()
@@ -866,7 +890,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                 if self.message_colours == []:
                     self.message_colours = [(1,0,0)]*len(self.message)
                 self.draw_message(ctx, self.message, self.message_colours, label_font_size)
-                if self.message_type is None or self.message_type == "warning" or self.message_type == "hexpansion":
+                if self.message_type is None or self.message_type == "warning":
                     button_labels(ctx, confirm_label="OK", cancel_label="Exit")
             elif self.current_state == STATE_SETTINGS:
                 self.settings_mgr_draw(ctx)
@@ -1114,24 +1138,24 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         if self.logging:
             print(f"T:Main Menu {item} at index {idx}")
         if item == MAIN_MENU_ITEMS[MENU_ITEM_MOTOR_TEST]:   # Motor Test
+            self.button_states.clear()
             if self._motor_test_start():
+                self.set_menu(None)
                 self.current_state = STATE_MOTOR_TEST
-        #elif item == MAIN_MENU_ITEMS[MENU_ITEM_SENSOR_TEST]: # Sensor Test
-        #    if self._sensor_test_start():
-        #        self.current_state = STATE_SENSOR
+        elif item == MAIN_MENU_ITEMS[MENU_ITEM_SENSOR_TEST]: # Sensor Test
+            self.button_states.clear()
+            self.set_menu(None)
+            self.show_message(["Sensor test","not implemented","yet"], [(1,0.5,0)]*3, msg_type="warning")
+            #if self._sensor_test_start():
+            #    self.current_state = STATE_SENSOR
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS]:   # Settings
             self.set_menu(MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS])
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_ABOUT]:      # About
-            self.set_menu(None)
             self.button_states.clear()
-            self.current_state = STATE_MESSAGE
-            self.message = ["HexTest", f"V{self.VERSION}", "By RobotMad"]
-            self.message_colours = [(1,1,1)]*len(self.message)
-            self.refresh = True
+            self.set_menu(None)
+            self.show_message(["HexTest", f"V{self.VERSION}", "By RobotMad"], [(0.2,1,0.2), (1,1,0), (1,1,1)])
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_EXIT]:       # Exit
-            eventbus.remove(RequestForegroundPushEvent, self._gain_focus, self)
-            eventbus.remove(RequestForegroundPopEvent, self._lose_focus, self)
-            eventbus.emit(RequestStopAppEvent(self))
+            self._exit_app()
 
 
     def _settings_menu_select_handler(self, item: str, idx: int):
@@ -1902,7 +1926,7 @@ class INA226(SensorBase):
     """INA226 sensor driver with integer fixed-point outputs."""
 
     I2C_ADDR = 0x40
-    I2C_ADDRS = tuple(range(0x40, 0x40))    # only allow the one address we actually expect
+    I2C_ADDRS = tuple(range(0x40, 0x43))    # only allow the addresses we actually expect (full range is to 0x50)
     NAME = "INA226"
     READ_INTERVAL_MS = 150
     TYPE = "Power"
@@ -1980,6 +2004,7 @@ _DIST_INT_PIN = 3  # Not currently used, but we can set it up as an input for fu
 ALL_SENSOR_CLASSES = [INA226]
 
 class SensorManager:
+    """Manages detection, initialisation, and reading of sensors on a hexpansion I2C port."""
     def __init__(self, logging: bool = False):
         self._logging: bool = logging
         self._i2c = None
@@ -1989,26 +2014,20 @@ class SensorManager:
         self._last_data = {}
         self._read_interval_ms = 10
         self._type = "Generic"
-        if self.logging:
+        if self._logging:
             print("T:SensorManager initialised")
 
 
     # ------------------------------------------------------------------
 
     @property
-    def logging(self) -> bool:
-        return self._logging
-
-    @logging.setter
-    def logging(self, value: bool):
-        self._logging = value
-
-    @property
     def read_interval(self) -> int:
+        """Return the recommended read interval in milliseconds for the currently selected sensor."""
         return self._read_interval_ms
 
     @property
     def type(self) -> str:
+        """Return the type of the currently selected sensor, or "Generic" if no sensors or only unknown sensors are found."""
         return self._type
 
 
@@ -2025,18 +2044,18 @@ class SensorManager:
         try:
             self._i2c = I2C(port)
         except Exception as e:      # pylint: disable=broad-exception-caught
-            if self.logging:
+            if self._logging:
                 print(f"T:Cannot open I2C port {port}: {e}")
             return False
 
         try:
             found_addrs = set(self._i2c.scan())
         except Exception as e:      # pylint: disable=broad-exception-caught
-            if self.logging:
+            if self._logging:
                 print(f"T:I2C scan failed on port {port}: {e}")
             return False
 
-        if self.logging:
+        if self._logging:
             print(f"T:Port {port} scan: {[hex(a) for a in found_addrs]}")
 
         used_addrs = set()
@@ -2048,15 +2067,15 @@ class SensorManager:
                 if address in used_addrs:
                     continue
                 try:
-                    sensor = cls(i2c_addr=address, logging=self.logging)
+                    sensor = cls(i2c_addr=address, logging=self._logging)
                 except TypeError:
                     sensor = cls()
                 if sensor.begin(self._i2c):
                     self._sensors.append(sensor)
                     used_addrs.add(address)
-                    if self.logging:
+                    if self._logging:
                         print(f"T:  + {cls.NAME} @ 0x{sensor.i2c_addr:02X} {cls.TYPE}")
-                elif self.logging:
+                elif self._logging:
                     print(f"T:  - {cls.NAME} @ 0x{address:02X} begin() failed")
 
         self._index = 0
@@ -2074,25 +2093,17 @@ class SensorManager:
         # (avoids pin conflicts with non-colour hexpansions such as the motor-test board)
         if len(self._sensors) > 0 and any(getattr(s, 'TYPE', '') == 'Colour' for s in self._sensors):
             config = HexpansionConfig(port)
-            if self.logging:
+            if self._logging:
                 print(f"T:LED On port {port} pin {config.ls_pin[_LED_PIN]} for colour sensor")
             config.ls_pin[_LED_PIN].init(mode=Pin.OUT)
             config.ls_pin[_LED_PIN].value(1)
             config.ls_pin[_COLOUR_INT_PIN].init(mode=Pin.IN)
             config.ls_pin[_DIST_INT_PIN].init(mode=Pin.IN)
 
+        if len(self._sensors) > 0 and any(getattr(s, 'TYPE', '') == 'Colour' for s in self._sensors):
+            config = HexpansionConfig(port)
+            config.ls_pin[_DIST_INT_PIN].init(mode=Pin.IN)
         return len(self._sensors) > 0
-
-
-    def report_interrupt(self):
-        """Check if the interrupt pin is active (low)."""
-        if self._port is None:
-            return False
-        config = HexpansionConfig(self._port)
-        v = config.ls_pin[_COLOUR_INT_PIN].value()
-        print(f"[{self._port}] COLOUR INT pin value: {v}")
-        v = config.ls_pin[_DIST_INT_PIN].value()
-        print(f"[{self._port}] DIST INT pin value: {v}")
 
 
     def close(self):
@@ -2104,7 +2115,7 @@ class SensorManager:
                 pass
         if self._port is not None:
             if len(self._sensors) > 0 and any(getattr(s, 'TYPE', '') == 'Colour' for s in self._sensors):
-                if self.logging:
+                if self._logging:
                     print(f"T:LED Off port {self._port}")
                 config = HexpansionConfig(self._port)
                 if config is not None:
@@ -2122,6 +2133,7 @@ class SensorManager:
     # ------------------------------------------------------------------
 
     def next_sensor(self):
+        """Select the next sensor in the list."""
         if self._sensors:
             self._index = (self._index + 1) % len(self._sensors)
             self._last_data = {}
@@ -2130,6 +2142,7 @@ class SensorManager:
 
 
     def prev_sensor(self):
+        """Select the previous sensor in the list."""
         if self._sensors:
             self._index = (self._index - 1) % len(self._sensors)
             self._last_data = {}
@@ -2156,10 +2169,12 @@ class SensorManager:
 
     @property
     def num_sensors(self) -> int:
+        """Return the number of initialised sensors."""
         return len(self._sensors)
 
     @property
     def current_sensor_name(self) -> str:
+        """Return the name of the currently selected sensor, or 'none' if no sensors."""
         if not self._sensors:
             return "none"
         sensor = self._sensors[self._index]
@@ -2168,18 +2183,22 @@ class SensorManager:
 
     @property
     def current_sensor_index(self) -> int:
+        """Return the index of the currently selected sensor."""
         return self._index
 
     @property
     def last_data(self) -> dict:
+        """Return the last data read from the currently selected sensor."""
         return self._last_data
 
     @property
     def port(self) -> int | None:
+        """Return the currently open port number, or None if no port is open."""
         return self._port
 
     @property
     def is_open(self) -> bool:
+        """True if the I2C bus is open and at least one sensor is initialised."""
         return self._i2c is not None and len(self._sensors) > 0
 
     def sensor_list(self) -> list[tuple[int, str]]:

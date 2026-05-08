@@ -258,7 +258,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                                  HexpansionType(0x10CF, "HexDrive2",   vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=1, servos=1, sub_type="1 Mot 1 Srvo" ),
 
                                  HexpansionType(0x2000, "HexSense",    vid=0xCBCB, eeprom_total_size=65536, eeprom_page_size=128,                                                                                                sensors=2,  sub_type="2 Line Sensors" ),
-                                 HexpansionType(0x3000, "HexTest",     vid=0xCBCB, eeprom_total_size=65536, eeprom_page_size=128, app_mpy_name="hextest", app_mpy_version=HEXTEST_APP_VERSION, app_name="HexTestApp",                        sub_type="Rotation" ),
+                                 HexpansionType(0x3000, "HexTest",     vid=0xCBCB, eeprom_total_size=65536, eeprom_page_size=128, app_mpy_name="hextest",  app_mpy_version=HEXTEST_APP_VERSION,  app_name="HexTestApp",                      sub_type="Motor Test" ),
                                  HexpansionType(0x4000, "HexDiag",     vid=0xCBCB, eeprom_total_size=65536, eeprom_page_size=128)]
 
         self.HEXDRIVE_HEXPANSION_INDEX = 0      # Index in the HEXPANSION_TYPES list which corresponds to the basic HexDrive type
