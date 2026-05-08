@@ -62,6 +62,8 @@ _ROTATION_RATE_EMITTER_PINS = [1, 2]            # LS_B & LS_C pins used to drive
 _ROTATION_RATE_SENSOR_PINS = [0, 1]             # HS_F & HS_G pins used to read the phottransistors for rotation rate testing
 _ROTATION_RATE_SENSOR_ENABLE_PINS = [3, 4]      # LS_D & LS_E pins used to enable the phototransistors for rotation rate testing (set to output and high to enable, input to disable)
 _IR_EMITTER_PWM_STEP_SIZE = 2                   # Step size for adjusting IR emitter brightness in manual mode, 0-255 (0=off, 255=full on)
+_POWER_SCALE_FACTOR = 66
+
 
 # Rotation Rate Auto scan configuration
 _AUTO_SCAN_STEPS       = 60     # Number of power levels to test during auto scan
@@ -784,7 +786,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                             self._rotation_rate_rpms = [0] * len(self._rotation_rate_counters)
                             if self._logging:
                                 print(f"T:Auto Scan Step {self._auto_step}/{_AUTO_SCAN_STEPS} - Power: {power}, Rate: 0 rpm, Current: {current_ma}mA")
-                            self._auto_results.append((power//66, [0] * len(self._rotation_rate_counters), current_ma))
+                            self._auto_results.append((power//_POWER_SCALE_FACTOR, [0] * len(self._rotation_rate_counters), current_ma))
                             self._auto_rotation_rate_step()
 
                         else:
@@ -818,7 +820,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                         power = self._rotation_rate_motor_power
                         if self._logging:
                             print(f"T:Auto Scan Step {self._auto_step}/{_AUTO_SCAN_STEPS} - Power: {power}, Rates: {self._rotation_rate_rpms} rpm, Current: {current_ma}mA")
-                        self._auto_results.append((power//66, self._rotation_rate_rpms, current_ma))
+                        self._auto_results.append((power//_POWER_SCALE_FACTOR, self._rotation_rate_rpms, current_ma))
                         self._auto_rotation_rate_step()
 
             # In auto mode, no manual button control for power/IR
@@ -987,7 +989,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
             bar_w = max(1, chart_w // _AUTO_SCAN_STEPS)
             for i in range(n):
                 power, rpms, current_ma = self._auto_results[i]
-                x = chart_left + (abs(power) * chart_w) // 100
+                x = chart_left + (abs(power) * chart_w) // (65536//_POWER_SCALE_FACTOR)
                 for index, rpm in enumerate(rpms):
                     h = (rpm * chart_h) // max_rpm
                     if h > 0:
