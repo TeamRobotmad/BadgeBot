@@ -542,7 +542,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
             return True
         if self.logging:
             print("T:Failed to initialise for motor test mode - no hexdrive to test")
-        self.notification = Notification("No HexDrive to Test")
+        self.notification = Notification("HexDrive   not Found")
         return False
 
 
@@ -801,6 +801,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                 # Switch back to manual
                 #self._show_auto_results_fit()
                 self._rotation_rate_measurement_period = _ROTATION_RATE_MEASUREMENT_PERIOD_MS
+                self._rotation_rate_rpms = [0] * len(self._rotation_rate_counters)
                 self._auto_mode = False
                 self._auto_done = False
             else:
