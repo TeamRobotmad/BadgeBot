@@ -22,9 +22,12 @@ from events.input import BUTTON_TYPES, Buttons
 
 from system.eventbus import eventbus
 from system.hexpansion.config import HexpansionConfig
+from system.hexpansion.events import HexpansionMountedEvent, HexpansionRemovalEvent
 from system.scheduler.events import (RequestForegroundPopEvent,
                                      RequestForegroundPushEvent,
                                      RequestStopAppEvent)
+from system.hexpansion.util import get_app_by_slot, get_slots_by_vid_pid
+from system.hexpansion.header import HexpansionHeader
 from system.scheduler import scheduler
 
 import app
@@ -141,7 +144,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
             else:
                 raise RuntimeError("HexTestApp requires BadgeOS Upgrade")
         except Exception as e:      # pylint: disable=broad-except
-            print(f"D:Ver check failed {e}!")
+            print(f"T:Ver check failed {e}!")
 
         self.config: HexpansionConfig = config
         self._logging: bool = True
@@ -173,8 +176,8 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         self._auto_repeat_count: int = 0
         self.auto_repeat_level: int = 0
 
-        self.hexdrive_ports: list[int] = [4]
-        self.hextest_port: int = self.config.port
+        self._hexdrive_ports: list[int] = []
+        self._hexdrive_in_use_port: int | None = None
 
         self.hexdrive_app: HexDriveLike | None = None
 
@@ -243,6 +246,8 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         eventbus.on_async(RequestForegroundPushEvent, self._gain_focus, self)
         eventbus.on_async(RequestForegroundPopEvent, self._lose_focus, self)
         eventbus.on_async(RequestStopAppEvent, self._handle_stop_app, self)
+        eventbus.on_async(HexpansionMountedEvent, self._handle_mounted, self)
+        eventbus.on_async(HexpansionRemovalEvent, self._handle_removal, self)
 
         # Start with a Message state to show the app name and version
         self.show_message(["HexTest", f"V{self.VERSION}", "By RobotMad"], [(0.2,1,0.2), (1,1,0), (1,1,1)], return_state=STATE_MENU)
@@ -319,6 +324,10 @@ class HexTestApp(app.App):         # pylint: disable=no-member
 
     def deinitialise(self) -> bool:
         """ De-initialise the app - return True if successful, False if failed."""
+        eventbus.remove(HexpansionMountedEvent, self._handle_mounted, self)
+        eventbus.remove(HexpansionRemovalEvent, self._handle_removal, self)
+        eventbus.remove(RequestForegroundPushEvent, self._gain_focus, self)
+        eventbus.remove(RequestForegroundPopEvent, self._lose_focus, self)        
         # deinit any allocated Counters
         for counter in self._rotation_rate_counters:
             counter.deinit()
@@ -329,19 +338,51 @@ class HexTestApp(app.App):         # pylint: disable=no-member
 
     def _exit_app(self):
         """ Clean up and exit the app, returning to the main menu."""
-        eventbus.remove(RequestForegroundPushEvent, self._gain_focus, self)
-        eventbus.remove(RequestForegroundPopEvent, self._lose_focus, self)
+
         eventbus.emit(RequestStopAppEvent(self))
 
 
-    ### ASYNC EVENT HANDLERS ###
+    # ------------------------------------------------------------------
+    # Async event handlers (registered directly on eventbus)
+    # ------------------------------------------------------------------
+
+    async def _handle_removal(self, event: HexpansionRemovalEvent):
+        if self._foreground:
+            if self._logging:
+                print(f"H:Hexpansion removed from port {event.port}")
+            if event.port == self._hexdrive_in_use_port:
+                if self.logging:
+                    print(f"H:HexDrive removed from port {event.port} during test - stopping test and returning to menu")
+                self._hexdrive_app = None
+                self._hexdrive_in_use_port = None
+                self._hexdrive_ports.remove(event.port)    
+                self.notification = Notification("HexDrive Removed")
+                self._stop_motor_test_mode()
+
+
+    async def _handle_mounted(self, event: HexpansionMountedEvent):
+        if self._foreground:
+            if self._logging:
+                print(f"H:Hexpansion mounted on port {event.port}")
+            # Check if it is a HexDrive we can use for testing
+            # make a simple list of vid, pid pairs that we can check against efficiently
+            vid_pid_pairs = [(type.vid, type.pid) for type in self.HEXPANSION_TYPES]
+            if (event.header.vid, event.header.pid) in vid_pid_pairs:
+                if self.logging:
+                    print(f"H:Attempting to use newly mounted HexDrive on port {event.port} for motor testing")
+                if self._motor_test_start():
+                    if self.logging:
+                        print(f"H:Successfully started motor test with newly mounted HexDrive on port {event.port}")
+                else:
+                    if self.logging:
+                        print(f"H:Failed to start motor test with newly mounted HexDrive on port {event.port}")
+
 
     async def _gain_focus(self, event: RequestForegroundPushEvent):
         if event.app is self:
             if self.logging:
                 print(f"HexTest gained focus in state {self.current_state}")
             self._foreground = True
-
 
 
     async def _lose_focus(self, event: RequestForegroundPopEvent):
@@ -439,9 +480,22 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         self.refresh = True
 
         # Find HexDrive to test
-        for port in self.hexdrive_ports:
-            hexpansion_app = self._find_hexpansion_app(port)
+        # look for any type of hexdrive (including HexDrive2 variants) in any port by their VID/PID
+        for type in self.HEXPANSION_TYPES:
+            if self.logging:
+                print(f"T:Looking for {type.name} (VID:PID {type.vid:04X}:{type.pid:04X}, Motors: {type.motors}, Servos: {type.servos})")
+            ports = get_slots_by_vid_pid(type.vid, type.pid)
+            if ports:
+                if self.logging:
+                    print(f"T:Found {type.name} on port(s): {ports}")
+                self._hexdrive_ports.extend(ports)
+                break                
+
+        for port in self._hexdrive_ports:
+            #hexpansion_app = self._find_hexpansion_app(port)
+            hexpansion_app = get_app_by_slot(port)
             if hexpansion_app is not None:
+                self._hexdrive_in_use_port = port
                 if self.logging:
                     print(f"T:Found HexDrive app to test on port {port}")
                 self.hexdrive_app = _as_hexdrive_app(hexpansion_app)
