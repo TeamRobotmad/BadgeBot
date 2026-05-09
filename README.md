@@ -1,6 +1,6 @@
 # BadgeBot app
 
-Companion app for the HexDrive hexpansion. Supports 2 brushed DC motors, 4 RC servos, 1 motor + 2 servos. Features Logo-style motor programming, PID line following with automatic gain tuning, I²C sensor testing, servo test mode, and persistent settings management.
+Companion app for the HexDrive hexpansion. Supports 2 brushed DC motors, 4 RC servos (2 for HexDrive2), 1 motor + 2 servos (1 for HexDrive2). Features Logo-style motor programming, PID line following with automatic gain tuning, I²C sensor testing, servo test mode, and persistent settings management.
 
 This guide is current for BadgeBot version 1.5
 
@@ -16,7 +16,6 @@ If your HexDrive software (stored on the EEPROM on the hexpansion) is not the la
 - 1 Motor and 2 Servos
 - Unknown
 
-The board can drive 2 brushed DC motors, 4 RC servos, 1 DC motor and 2 servos.
 Once you have selected the desired 'flavour' - please confirm by pressing the "C" (confirm) button.
  
 There must be a HexDrive board plugged in and running the latest software to use the BadgeBot app. If this is not the case then you will see a warning that you need a HexDrive with a reference to this repo. 
@@ -71,7 +70,7 @@ When running from badge power the current available is limited - the best way to
 
 The maximum allowed servo range is VERY WIDE - most Servos will not be able to cope with this, so you probably want to reduce the ```servo_range``` setting to suit your servos.
 
-Each Servo or Motor driver requires a PWM signals to control it, so a single HexDrive takes up four PWM resources on the ESP32.  As there are 8 such resources, the 'flavour' of your HexDrives will determine how many you can run simultaneously as long as you don't have any other hexpansions or applications using PWM resources. Two '4 Servo' or 'Unknown' flavour HexDrives will use up all the available PWM channels, whereas you can run up to 4 HexDrives in '2 Motor' flavour. (While each motor driver does actually require two PWM signals we have been able to reduce this to one by swapping it between the active signal when the motor direction changes.)
+Each Servo or Motor driver requires a PWM signal to control it, so a single HexDrive can take upto four PWM resources on the ESP32.  As there are 8 such resources, the 'flavour' of your HexDrives will determine how many you can run simultaneously as long as you don't have any other hexpansions or applications using PWM resources. Two '4 Servo' flavour HexDrives will use up all the available PWM channels, whereas you can run up to 4 HexDrives in '2 Motor' flavour. (While each motor driver does actually require two PWM signals we have been able to reduce this to one by swapping it between the active signal when the motor direction changes.)
 
 If you unplug a HexDrive the PWM resources will be released immediately so you can move them around the badge easily. 
 
@@ -85,6 +84,7 @@ This repo contains lots of files that you don't need on your badge to use a HexD
 + metadata.json
 + app.py or app.mpy
 + EEPROM/hexdrive.mpy
++ EEPROM/hexdrive2.mpy
 + utils.mpy
 + hexpansion_mgr.mpy
 + motor_controller.mpy
@@ -100,10 +100,7 @@ This repo contains lots of files that you don't need on your badge to use a HexD
 + sensors/__init__.mpy
 + sensors/sensor_base.mpy
 + sensors/vl53l0x.mpy
-+ sensors/vl6180x.mpy
-+ sensors/tcs3472.mpy
-+ sensors/tcs3430.mpy
-+ sensors/opt4048.mpy
++ sensors/opt4060.mpy
 
 
 ### Hexpansion Recovery ###
