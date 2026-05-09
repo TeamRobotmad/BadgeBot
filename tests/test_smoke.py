@@ -1,10 +1,19 @@
+import re
 import sys
+from pathlib import Path
 
 # Add badge software to pythonpath
 sys.path.append("../../../")
 
 import sim.run as _sim_run
 from system.hexpansion.config import HexpansionConfig
+
+
+def _extract_version_from_source(path: Path) -> int:
+    content = path.read_text(encoding="utf-8")
+    match = re.search(r"^\s*VERSION\s*=\s*(\d+)", content, re.MULTILINE)
+    assert match is not None, f"Could not find VERSION in {path}"
+    return int(match.group(1))
 
 
 def test_import_badgebot_app_and_app_export():
@@ -38,6 +47,25 @@ def test_app_versions_match():
     import sim.apps.BadgeBot.app as BadgeBot
     from sim.apps.BadgeBot.EEPROM.hexdrive import HexDriveApp
     assert BadgeBot.HEXDRIVE_APP_VERSION == HexDriveApp.VERSION
+
+
+def test_hexdrive2_metadata_matches_vendor_source():
+    import sim.apps.BadgeBot.app as BadgeBot
+    from sim.apps.BadgeBot import BadgeBotApp
+
+    source_version = _extract_version_from_source(
+        Path(__file__).resolve().parents[1] / "vendor" / "HexDrive2" / "hexdrive2.py"
+    )
+    assert BadgeBot.HEXDRIVE2_APP_VERSION == source_version
+
+    app_instance = BadgeBotApp()
+    hexdrive2_entries = [
+        ht for ht in app_instance.HEXPANSION_TYPES if ht.name == "HexDrive2"
+    ]
+    assert hexdrive2_entries, "No HexDrive2 entries found in BadgeBot metadata"
+    for entry in hexdrive2_entries:
+        assert entry.app_mpy_name == "hexdrive2"
+        assert entry.app_mpy_version == BadgeBot.HEXDRIVE2_APP_VERSION
 
 def test_hexdrive_type_pids_consistent():
     """Verify HexDriveType PIDs in hexdrive.py are consistent with HexpansionType PIDs in app.py.
