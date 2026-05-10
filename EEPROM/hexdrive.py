@@ -1,13 +1,18 @@
 """HexDrive Hexpansion App for BadgeBot."""
 
 # This is the app to be installed from the HexDrive Hexpansion EEPROM.
-# it is copied onto the EEPROM and renamed as app.py/mpy
+# it is compiled and copied onto the EEPROM app.mpy
 # It is then run from the EEPROM by the BadgeOS.
 
 import ota
 from machine import PWM, Pin
 from system.eventbus import eventbus
 from system.hexpansion.config import HexpansionConfig
+try:
+    # only introduced in Badge v2.?.?
+    from system.hexpansion import app as hexpansion_app
+except ImportError:
+    hexpansion_app = None
 from system.scheduler.events import RequestStopAppEvent
 import app
 from tildagon import Pin as ePin
@@ -18,12 +23,6 @@ _MIN_BADGEOS_VERSION = [1, 9, 0]     # v1.9.0 is required to be able to read the
 # HexDrive Hexpansion constants
 # Hardware defintions:
 _ENABLE_PIN  = 0     # First LS pin used to enable the SMPSU
-
-# Hardware Version 2
-_COLOUR_INT_PIN = 1  # Second LS pin used to detect interrupts from the colour sensor to trigger readings without polling
-_LED_PIN  = 2        # Third LS pin used to control an LED to illuminate the area under the colour sensor for better readings of reflected light from the surface below.
-_DIST_INT_PIN = 3    # Fourth LS pin used to detect interrupts from the distance sensor to trigger readings without polling
-_DIST_XSHUT_PIN = 4  # Fifth LS pin used to control the XSHUT pin of the distance sensor to allow it to be power cycled for reset or power saving
 
 # Default values and limits:
 _DEFAULT_PWM_FREQ = 20000           # 20kHz is a good default for motors as it is above the audible range for most people and works with most motors and ESCs
@@ -50,21 +49,17 @@ class HexDriveType:
     __slots__ = ("pid", "name", "motors", "servos", "servo_pin_map")
 
     def __init__(self, pid_byte: int, motors: int = 0, servos: int = 0, name: str = "Uncommitted", servo_pins: tuple[int, int, int, int] = (-1, -1, -1, -1)):
-        self.pid: int = pid_byte         # Product ID byte read from the EEPROM to identify the type of HexDrive
+        self.pid: int = pid_byte       # Product ID byte read from the EEPROM to identify the type of HexDrive
         self.name: str = name            # A friendly name for the type of HexDrive
         self.motors: int = motors        # Number of motor channels supported by this type of HexDrive (0, 1 or 2)
         self.servos: int = servos        # Number of servo channels supported by this type of HexDrive (0, 2 or 4)
         self.servo_pin_map: tuple[int, int, int, int] = servo_pins # Map the logical servo channels to the physical pin index according to hardware version
 
 _HEXDRIVE_TYPES = (
-    HexDriveType(0xC8, motors=2, servos=2, servo_pins=(3, 1, -1, -1)),  # uncommitted version (2) can be used for anything
-    HexDriveType(0xC9, servos=2, name="2 Servo", servo_pins=(3, 1, -1, -1)),
     HexDriveType(0xCA, motors=2, name="2 Motor"),
     HexDriveType(0xCB, motors=2, servos=4, servo_pins=(3, 2, 1, 0)),    # uncommitted version can be used for anything
     HexDriveType(0xCC, servos=4, name="4 Servo", servo_pins=(3, 2, 1, 0)),
     HexDriveType(0xCD, motors=1, servos=2, name="1 Mot 2 Srvo", servo_pins=(1, 0, -1, -1)),
-    HexDriveType(0xCE, motors=1, name="1 Motor"),
-    HexDriveType(0xCF, motors=1, servos=1, name="1 Mot 1 Srvo", servo_pins=(1, -1, -1, -1)),
 )
 
 
@@ -90,16 +85,14 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
         except Exception as e:      # pylint: disable=broad-except
             print(f"D:Ver check failed {e}!")
 
-        # read hexpansion header from EEPROM to find out which sub-type we are
-        _hexdrive_type, hw_ver = self._check_port_for_hexdrive(self.config.port)
+        # read hexpansion header (from EEPROM if necesssary) to find out which sub-type we are
+        _hexdrive_type = self._check_port_for_hexdrive(self.config.port)
         if _hexdrive_type is None:
             #print(f"D:{self.config.port}:Unknown HexDrive type - initialisation failed")
             raise RuntimeError("Unknown HexDrive type")
 
-        self._hw_ver = hw_ver
-
         # report app starting and which port it is running on
-        print(f"D:HexDrive{'2' if 2 == self._hw_ver  else ''} Type:'{_hexdrive_type.name}' App V{self.VERSION} by RobotMad on port {self.config.port}")
+        print(f"D:HexDrive Type:'{_hexdrive_type.name}' App V{self.VERSION} by RobotMad on port {self.config.port}")
 
         self._hexdrive_type: HexDriveType = _hexdrive_type
         self._servo_pin_map: tuple[int, int, int, int] = self._hexdrive_type.servo_pin_map
@@ -114,9 +107,6 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
 
         # LS Pins
         self._power_control: ePin = self.config.ls_pin[_ENABLE_PIN]
-        if self._hw_ver > 1:
-            self._led_control:   ePin = self.config.ls_pin[_LED_PIN]
-            self._dist_xshut:    ePin = self.config.ls_pin[_DIST_XSHUT_PIN]
 
         # Servo related
         self._servo_pin_map: tuple[int, int, int, int] = self._hexdrive_type.servo_pin_map
@@ -140,9 +130,6 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
         # Initialise LS Pins
         try:
             self._power_control.init(mode=Pin.OUT)
-            if self._hw_ver > 1:
-                self._led_control.init(mode=Pin.OUT)
-                self._dist_xshut.init(mode=Pin.OUT)
         except Exception as e:      # pylint: disable=broad-except
             print(f"D:{self.config.port}:ls_pin setup failed {e}")
             return False
@@ -150,8 +137,6 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
         # ensure SMPSU is turned off to start with
         self.set_power(False)
 
-        # allocate PWM outputs according to the type of HexDrive
-        #return self._pwm_init()
         # We delay the PWM initialisation until we actually need to set a servo position or motor speed
         # because there are a limited number of PWM resources and we want to leave them available for
         # other apps to use if the HexDrive is not actively being used.
@@ -169,22 +154,6 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
                 self._freq[physical_channel] = _DEFAULT_SERVO_FREQ
         self._pwm_setup = True
 
-        # ensure distance sensor is enabled to start with (if we have a version of the hardware with a distance sensor)
-        self.set_dist_xshut(True)
-
-        return True
-
-
-    def deinitialise(self) -> bool:
-        """ De-initialise the app - return True if successful, False if failed."""
-        # Turn off all PWM outputs & release resources
-        self.set_power(False)
-        self._pwm_deinit()
-        for hs_pin in self.config.pin:
-            hs_pin.init(mode=Pin.IN)
-        if self._hw_ver >= 1:
-            self._led_control.deinit()
-            self._dist_xshut.deinit()
         return True
 
 
@@ -194,7 +163,8 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
             if event.app == self:
                 if self._logging:
                     print(f"D:{self.config.port}:Stop")
-                self.deinitialise()
+                self._pwm_deinit()
+                # the badge HexpansionManagerApp tidies up the LS and HS pins when a hexpansion app is removed
         except (AttributeError, TypeError):
             pass
 
@@ -245,36 +215,6 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
             return False
         self._power_state = state
         return True
-
-
-    def set_dist_xshut(self, state: bool) -> bool:
-        """ Set the state of the distance sensor XSHUT pin to power cycle it for reset or power saving. Returns success or failure. """
-        if self._hw_ver <= 1:
-            return False
-        try:
-            self._dist_xshut.init(mode=Pin.OUT)
-            self._dist_xshut.value(state)
-            if self._logging:
-                print(f"D:{self.config.port}:Distance Sensor XSHUT={'On' if state else 'Off'}")
-            return True
-        except Exception as e:      # pylint: disable=broad-except
-            #print(f"D:{self.config.port}:Distance Sensor XSHUT control failed {e}")
-            return False
-
-
-    def set_sensor_led(self, state: bool) -> bool:
-        """ Set the state of the colour sensor LED pin to turn on or off the LED to illuminate the area under the colour sensor. Returns success or failure. """
-        if self._hw_ver <= 1:
-            return False
-        try:
-            self._led_control.init(mode=Pin.OUT)
-            self._led_control.value(state)
-            if self._logging:
-                print(f"D:{self.config.port}:Colour Sensor LED={'On' if state else 'Off'}")
-            return True
-        except Exception as e:      # pylint: disable=broad-except
-            #print(f"D:{self.config.port}:Colour Sensor LED control failed {e}")
-            return False
 
 
     def set_keep_alive(self, period: int):
@@ -505,22 +445,6 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
     # all been turned off one at a time, but all this means is you would then get a spuriour Timeout if the
     # keep alive isn't being refreshed by commands.
 
-    # are any of the PWM outputs energised?
-    #def _check_outputs_energised(self):
-    #    energised_output = False
-    #    for channel, pwm in enumerate(self.PWMOutput):
-    #        if pwm is not None:
-    #            try:
-    #                if 0 < pwm.duty_ns():
-    #                    energised_output = True
-    #                    break
-    #            except Exception as e:        # pylint: disable=broad-except
-    #                print(self._pwm_log_string(channel) + f"Check failed {e}")
-    #    if self._outputs_energised != energised_output:
-    #        if self._logging:
-    #            print(f"D:{self.config.port}:Outputs {'Energised' if energised_output else 'De-energised'}")
-    #        self._outputs_energised = energised_output
-
 
     # Set a single PWM duty cycle (0-65535) for a specific MOTOR output
     # if the channel has not been setup yet then we initialise it from scratch, otherwise we just change the duty cycle
@@ -547,21 +471,38 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
         return True
 
 
-    def _check_port_for_hexdrive(self, port: int) -> tuple[HexDriveType | None, int]:
-        #just read the part of the header which contains the VID & PID
+    def _check_port_for_hexdrive(self, port: int) -> HexDriveType | None:
+        
+        pid: int = 0
         try:
-            vid_and_pid_bytes = self.config.i2c.readfrom_mem(_EEPROM_ADDR, _VID_ADDR, 4, addrsize = 8*_EEPROM_NUM_ADDRESS_BYTES)
-        except OSError as e:      # pylint: disable=broad-except
-            # no EEPROM on this port
-            print(f"D:{port}:EEPROM error: {e}")
-            return (None, 0)
+            if hexpansion_app is not None:
+                manager = hexpansion_app._hexpansion_manager
+                if manager is not None:
+                    headers = manager.hexpansion_headers
+                    if headers[port] is not None:
+                        pid = headers[port].pid
+                        if self._logging:
+                            print(f"D:{port}:PID={pid:#04x}")
+                    else:
+                        if self._logging:
+                            print(f"D:{port}:No hexpansion header found")
+                        return None
+        except Exception as e:      # pylint: disable=broad-except
+            print(f"D:{port}:use of hexpansion manager headers failed {e}") 
+            #just read the part of the header which contains the PID
+            try:
+                pid = int.from_bytes(self.config.i2c.readfrom_mem(_EEPROM_ADDR, _PID_ADDR, 2, addrsize = 8*_EEPROM_NUM_ADDRESS_BYTES), "little")
+            except OSError as e:
+                # no EEPROM on this port
+                print(f"D:{port}:EEPROM error: {e}")
+                return None
         # check which type of HexDrive this is by scanning the HEXDRIVE_TYPES list
         for _, hexpansion_type in enumerate(_HEXDRIVE_TYPES):
             # we only use the LSByte of the PID to identify the type of HexDrive, as the MSByte is used for other things
-            if vid_and_pid_bytes[2] == hexpansion_type.pid:
-                return (hexpansion_type, 2 if vid_and_pid_bytes[:2] == b'\xCB\xCB' else 0)   # Hardware Version 2 if VID is 0xCBCB, otherwise Hardware Version 1
-        # we are not interested in this type of hexpansion
-        return (None, 0)
+            if pid & 0xFF == hexpansion_type.pid:
+                return hexpansion_type
+        # we are not interested in this type of hexpansion as it was not recognised
+        return None
 
 
     def _parse_version(self, version):
