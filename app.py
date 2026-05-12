@@ -234,7 +234,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
         # make use of special characters if running on compatible badge s/w version
         version_triplet = tuple(part if isinstance(part, int) else 0 for part in (ver[:3] if ver is not None else []))
-        if len(version_triplet) == 3 and version_triplet > (1, 10, 0):
+        if len(version_triplet) == 3 and version_triplet > (3, 0, 0):   # font has not yet been updated...
             self.special_chars = { 'up': "\u25B2",        # up arrow
                                 # 'down': "\u25BC",     # down arrow - has always existed
                                   'left': "\u25C0",     # left arrow

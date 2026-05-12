@@ -102,13 +102,14 @@ class MySetting:
 
     def persist(self):
         """Persist the setting value to platform storage.  If the value is equal to the default, the setting will be removed from storage to save space."""
+        index = self._index()
+        if index is None:
+            return
+        key = f"{SETTINGS_NAME_PREFIX}.{index}"
         try:
-            if self.v != self.d:
-                platform_settings.set(f"{SETTINGS_NAME_PREFIX}.{self._index()}", self.v)
-            else:
-                platform_settings.set(f"{SETTINGS_NAME_PREFIX}.{self._index()}", None)
+            platform_settings.set(key, self.v if self.v != self.d else None)
         except Exception as e:          # pylint: disable=broad-except
-            print(f"H:Failed to persist setting {self._index()}: {e}")
+            print(f"H:Failed to persist setting {key}: {e}")
 
 
 class SettingsMgr:

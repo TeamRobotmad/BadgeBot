@@ -327,7 +327,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         eventbus.remove(HexpansionMountedEvent, self._handle_mounted, self)
         eventbus.remove(HexpansionRemovalEvent, self._handle_removal, self)
         eventbus.remove(RequestForegroundPushEvent, self._gain_focus, self)
-        eventbus.remove(RequestForegroundPopEvent, self._lose_focus, self)        
+        eventbus.remove(RequestForegroundPopEvent, self._lose_focus, self)
         # deinit any allocated Counters
         for counter in self._rotation_rate_counters:
             counter.deinit()
@@ -355,7 +355,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                     print(f"H:HexDrive removed from port {event.port} during test - stopping test and returning to menu")
                 self._hexdrive_app = None
                 self._hexdrive_in_use_port = None
-                self._hexdrive_ports.remove(event.port)    
+                self._hexdrive_ports.remove(event.port)
                 self.notification = Notification("HexDrive Removed")
                 self._stop_motor_test_mode()
 
@@ -489,7 +489,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                 if self.logging:
                     print(f"T:Found {type.name} on port(s): {ports}")
                 self._hexdrive_ports.extend(ports)
-                break                
+                break
 
         for port in self._hexdrive_ports:
             #hexpansion_app = self._find_hexpansion_app(port)
@@ -1461,13 +1461,14 @@ class MySetting:
 
     def persist(self):
         """Persist the setting value to platform storage.  If the value is equal to the default, the setting will be removed from storage to save space."""
+        index = self._index()
+        if index is None:
+            return
+        key = f"{SETTINGS_NAME_PREFIX}.{index}"
         try:
-            if self.v != self.d:
-                platform_settings.set(f"{SETTINGS_NAME_PREFIX}.{self._index()}", self.v)
-            else:
-                platform_settings.set(f"{SETTINGS_NAME_PREFIX}.{self._index()}", None)
+            platform_settings.set(key, self.v if self.v != self.d else None)
         except Exception as e:          # pylint: disable=broad-except
-            print(f"H:Failed to persist setting {self._index()}: {e}")
+            print(f"H:Failed to persist setting {key}: {e}")
 
     # ------------------------------------------------------------------
 
