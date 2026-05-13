@@ -17,8 +17,8 @@ If your HexDrive software (stored on the EEPROM on the hexpansion) is not the la
 - Unknown
 
 Once you have selected the desired 'flavour' - please confirm by pressing the "C" (confirm) button.
- 
-There must be a HexDrive board plugged in and running the latest software to use the BadgeBot app. If this is not the case then you will see a warning that you need a HexDrive with a reference to this repo. 
+
+There must be a HexDrive board plugged in and running the latest software to use the BadgeBot app. If this is not the case then you will see a warning that you need a HexDrive with a reference to this repo.
 
 ### Main Menu ###
 
@@ -72,7 +72,7 @@ The maximum allowed servo range is VERY WIDE - most Servos will not be able to c
 
 Each Servo or Motor driver requires a PWM signal to control it, so a single HexDrive can take upto four PWM resources on the ESP32.  As there are 8 such resources, the 'flavour' of your HexDrives will determine how many you can run simultaneously as long as you don't have any other hexpansions or applications using PWM resources. Two '4 Servo' flavour HexDrives will use up all the available PWM channels, whereas you can run up to 4 HexDrives in '2 Motor' flavour. (While each motor driver does actually require two PWM signals we have been able to reduce this to one by swapping it between the active signal when the motor direction changes.)
 
-If you unplug a HexDrive the PWM resources will be released immediately so you can move them around the badge easily. 
+If you unplug a HexDrive the PWM resources will be released immediately so you can move them around the badge easily.
 
 
 ### Install guide
@@ -108,7 +108,7 @@ This repo contains lots of files that you don't need on your badge to use a HexD
 If you have issues with a HexDrive, or for that matter any hexpansion fitted with an EEPROM, e.g. a software incompatibility with a particular badge software version, you can reset the EEPROM back to blank as follows:
 1) Plug in the hexpansion to Slot 1 (will work with any slot but you have to change the "1" below to the slot number.
 2) Connect your favourite Terminal program to the COM port presented by the Badge over USB.
-3) Press "Ctrl" & "C" simultaneously. i.e. "Ctrl-C" 
+3) Press "Ctrl" & "C" simultaneously. i.e. "Ctrl-C"
 4) You should now be presented with a prompt ">>>" which is called the python REPL. At this type in the following lines (the HexDrive EEPROM is 8kbytes so requires 16 bit addressing, hence the ```addrsize=16``` other hexpansions may use smaller EEPROMS where this is not required):
    ```
 		from machine import I2C
@@ -210,6 +210,39 @@ PYTHONPATH=/path/to/badge-2024-software ../.venv-wsl310/bin/python -m pytest tes
 
 ### Best practise
 Run `isort` on in-app python files. Check `pylint` for linting errors.
+
+### Minification
+
+Hexpansion apps stored on EEPROM are minified before being compiled to `.mpy` to reduce their on-badge footprint.  The following files are minified:
+
+| Source | Artifact |
+|--------|----------|
+| `vendor/HexDrive2/hexdrive2.py` | `EEPROM/hexdrive2.mpy` |
+| `EEPROM/hexdrive.py` | `EEPROM/hexdrive.mpy` |
+| `EEPROM/hextest.py` | `EEPROM/hextest.mpy` |
+
+The pipeline uses `dev/minify.py` which:
+1. Renames internal `self.*` attributes to short names via an AST transform (source stays readable)
+2. Strips docstrings with `python-minifier`
+3. Compiles with `mpy-cross -O2`
+
+Typical savings are ~5% compared with compiling from source directly.
+
+The minifier is invoked **automatically** by `dev/download_to_device.py` for any `ModuleSpec` that has `minify=True`.  You do not need to run it manually during normal development.
+
+To run it standalone and see a before/after size comparison for all minified modules:
+```
+python dev/minify.py
+```
+
+Or to minify a single file (as `download_to_device.py` does):
+```
+python dev/minify.py --source EEPROM/hexdrive.py --artifact EEPROM/hexdrive.mpy
+```
+
+`python-minifier` is listed in `dev/dev_requirements.txt` and is installed as part of the standard dev-environment setup.
+
+Intermediate build artefacts (`*.min.py`, `*.renamed.py`) are listed in `.gitignore` and should not be committed.
 
 ### Regenerating QR Code
 QR generation is a development-time task and is intentionally kept out of normal

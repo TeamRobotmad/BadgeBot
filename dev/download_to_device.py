@@ -35,13 +35,14 @@ MPREMOTE_PROBE_MARKER = "__badgebot_mpremote_ok__"
 class ModuleSpec:
     source: Path
     artifact: Path
+    minify: bool = False
 
 
 # Add new runtime modules here as the project grows.
 MODULES: tuple[ModuleSpec, ...] = (
-    ModuleSpec(Path("EEPROM/hexdrive.py"), Path("EEPROM/hexdrive.mpy")),
-    ModuleSpec(Path("vendor/HexDrive2/hexdrive2.py"), Path("EEPROM/hexdrive2.mpy")),
-    ModuleSpec(Path("EEPROM/hextest.py"), Path("EEPROM/hextest.mpy")),
+    ModuleSpec(Path("EEPROM/hexdrive.py"), Path("EEPROM/hexdrive.mpy"), minify=True),
+    ModuleSpec(Path("vendor/HexDrive2/hexdrive2.py"), Path("EEPROM/hexdrive2.mpy"), minify=True),
+    ModuleSpec(Path("EEPROM/hextest.py"), Path("EEPROM/hextest.mpy"), minify=True),
     ModuleSpec(Path("app.py"), Path("app.mpy")),
     ModuleSpec(Path("autotune.py"), Path("autotune.mpy")),
     ModuleSpec(Path("autotune_mgr.py"), Path("autotune_mgr.mpy")),
@@ -431,11 +432,20 @@ def _compile_changed_modules(
             _log("SKP", f"compile {spec.source} (source unchanged)")
             continue
 
-        _log("INFO", f"compile {spec.source} -> {spec.artifact}")
-        _run_command(
-            [_tool("mpy-cross"), "-v", str(spec.source), "-o", str(spec.artifact)],
-            dry_run=dry_run,
-        )
+        if spec.minify:
+            _log("INFO", f"minify+compile {spec.source} -> {spec.artifact}")
+            _run_command(
+                [sys.executable, "dev/minify.py",
+                 "--source", str(spec.source),
+                 "--artifact", str(spec.artifact)],
+                dry_run=dry_run,
+            )
+        else:
+            _log("INFO", f"compile {spec.source} -> {spec.artifact}")
+            _run_command(
+                [_tool("mpy-cross"), "-v", str(spec.source), "-o", str(spec.artifact)],
+                dry_run=dry_run,
+            )
 
         if not dry_run and not spec.artifact.exists():
             raise RuntimeError(f"mpy-cross did not produce {spec.artifact}")
