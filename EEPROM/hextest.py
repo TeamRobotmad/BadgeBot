@@ -7,6 +7,7 @@
 import asyncio
 import time
 
+
 try:
     from typing import TYPE_CHECKING
 except ImportError:
@@ -26,9 +27,50 @@ from system.hexpansion.events import HexpansionMountedEvent, HexpansionRemovalEv
 from system.scheduler.events import (RequestForegroundPopEvent,
                                      RequestForegroundPushEvent,
                                      RequestStopAppEvent)
-from system.hexpansion.util import get_app_by_slot, get_slots_by_vid_pid
 from system.hexpansion.header import HexpansionHeader
 from system.scheduler import scheduler
+try:
+    from system.hexpansion.util import get_app_by_slot, get_slots_by_vid_pid
+except ImportError:
+    # In case we are running on old version of BadgeOS, where these functions are not available, define stubs that return None or empty lists.
+    from system.hexpansion.util import detect_eeprom_addr
+
+    def get_app_by_slot(slot):
+        """Find the app instance running from the hexpansion on the given port, if any.  Returns the app instance if found, None otherwise."""
+        for an_app in scheduler.apps:
+            if hasattr(an_app, "config"):
+                if hasattr(an_app.config, "port") and an_app.config.port == slot:
+                    return an_app
+        return None
+
+    def get_slots_by_vid_pid(vid, pid):
+        """Find all hexpansion ports with the given VID/PID. Returns a list of port numbers."""
+        ports_with_hexpansion = []
+        for port in range(1, _NUM_HEXPANSION_SLOTS + 1):
+            try:
+                i2c = I2C(port)
+                # Autodetect eeprom addr
+                eeprom_addr, addr_len = detect_eeprom_addr(i2c)
+                if eeprom_addr is None:
+                    continue
+                # Do we have a header?
+                header_bytes = i2c.readfrom_mem(eeprom_addr, 0x00, 32, addrsize=8*addr_len)
+                hexpansion_header = HexpansionHeader.from_bytes(header_bytes)
+            except OSError:
+                # OSError just means there is no hexpansion EEPROM on this port
+                continue
+            except RuntimeError:
+                # RuntimeError means there is a blank EEPROM
+                continue
+            except Exception:      # pylint: disable=broad-except
+                continue
+            if hexpansion_header is None:
+                continue
+            if hexpansion_header.vid == vid and hexpansion_header.pid == pid:
+                ports_with_hexpansion.append(port)
+        return ports_with_hexpansion
+
+
 
 import app
 from tildagon import Pin as ePin
@@ -179,7 +221,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         self._hexdrive_ports: list[int] = []
         self._hexdrive_in_use_port: int | None = None
 
-        self.hexdrive_app: HexDriveLike | None = None
+        self._hexdrive_app: HexDriveLike | None = None
 
         self._rotation_rate_emitter_duty: int = _DEFAULT_ROTATION_RATE_EMITTER_DUTY # duty cycle for the IR emitter when doing rate testing, 0-255 (0=off, 255=full on)
         self._rotation_rate_counters: list[Counter] = []                           # hardware counters used to count photodiode pulses for rate testing
@@ -367,7 +409,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
             # Check if it is a HexDrive we can use for testing
             # make a simple list of vid, pid pairs that we can check against efficiently
             vid_pid_pairs = [(type.vid, type.pid) for type in self.HEXPANSION_TYPES]
-            if (event.header.vid, event.header.pid) in vid_pid_pairs:
+            if hasattr(event, "header") and (event.header.vid, event.header.pid) in vid_pid_pairs:
                 if self.logging:
                     print(f"H:Attempting to use newly mounted HexDrive on port {event.port} for motor testing")
                 if self._motor_test_start():
@@ -376,6 +418,11 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                 else:
                     if self.logging:
                         print(f"H:Failed to start motor test with newly mounted HexDrive on port {event.port}")
+            else:
+                # Old BadgeOS didn't include the header in the event - so assume it is a HexDrive
+                if self._motor_test_start():
+                    if self.logging:
+                        print(f"H:Successfully started motor test with newly mounted HexDrive on port {event.port} (no header in event, assumed HexDrive)")
 
 
     async def _gain_focus(self, event: RequestForegroundPushEvent):
@@ -423,9 +470,9 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         self._sample_ina226_in_background(delta)
         # push motor outputs to HexDrive if we are in motor test mode
         if self.current_state == STATE_MOTOR_TEST:
-            if self.hexdrive_app is not None:
+            if self._hexdrive_app is not None:
                 try:
-                    if not self.hexdrive_app.set_motors((self._rotation_rate_motor_power, self._rotation_rate_motor_power)):
+                    if not self._hexdrive_app.set_motors((self._rotation_rate_motor_power, self._rotation_rate_motor_power)):
                         if self.logging:
                             print("Failed to set motor outputs to HexDrive app")
                 except AttributeError:
@@ -481,31 +528,30 @@ class HexTestApp(app.App):         # pylint: disable=no-member
 
         # Find HexDrive to test
         # look for any type of hexdrive (including HexDrive2 variants) in any port by their VID/PID
-        for type in self.HEXPANSION_TYPES:
+        for hexpansion_type in self.HEXPANSION_TYPES:
             if self.logging:
-                print(f"T:Looking for {type.name} (VID:PID {type.vid:04X}:{type.pid:04X}, Motors: {type.motors}, Servos: {type.servos})")
-            ports = get_slots_by_vid_pid(type.vid, type.pid)
+                print(f"T:Looking for {hexpansion_type.name} (VID:PID {hexpansion_type.vid:04X}:{hexpansion_type.pid:04X}, Motors: {hexpansion_type.motors}, Servos: {hexpansion_type.servos})")
+            ports = get_slots_by_vid_pid(hexpansion_type.vid, hexpansion_type.pid)
             if ports:
                 if self.logging:
-                    print(f"T:Found {type.name} on port(s): {ports}")
+                    print(f"T:Found {hexpansion_type.name} on port(s): {ports}")
                 self._hexdrive_ports.extend(ports)
                 break
 
         for port in self._hexdrive_ports:
-            #hexpansion_app = self._find_hexpansion_app(port)
-            hexpansion_app = get_app_by_slot(port)
+            hexpansion_app = _as_hexdrive_app(get_app_by_slot(port))
             if hexpansion_app is not None:
                 self._hexdrive_in_use_port = port
                 if self.logging:
                     print(f"T:Found HexDrive app to test on port {port}")
-                self.hexdrive_app = _as_hexdrive_app(hexpansion_app)
+                self._hexdrive_app = hexpansion_app
                 break
 
-        if self.hexdrive_app is not None:
+        if self._hexdrive_app is not None:
             #Setup UUT = HexDrive
             try:
-                if self.hexdrive_app.initialise() and self.hexdrive_app.set_power(True):
-                    self.hexdrive_app.set_keep_alive(2000)   # Updates can be quite slow as we are using the draw function
+                if self._hexdrive_app.initialise() and self._hexdrive_app.set_power(True):
+                    self._hexdrive_app.set_keep_alive(2000)   # Updates can be quite slow as we are using the draw function
             except AttributeError:
                 pass
 
@@ -564,10 +610,10 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                 self._ina226_sensor_mgr = None
         self._ina226 = None
 
-        if self.hexdrive_app is not None:
+        if self._hexdrive_app is not None:
             try:
-                self.hexdrive_app.set_freq(0)
-                self.hexdrive_app.set_power(False)
+                self._hexdrive_app.set_freq(0)
+                self._hexdrive_app.set_power(False)
             except AttributeError:
                 pass
 
@@ -671,25 +717,6 @@ class HexTestApp(app.App):         # pylint: disable=no-member
     # HEXPANSION operations
     # ------------------------------------------------------------------
 
-    def _find_hexpansion_app(self, port: int) -> HexDriveLike | None:
-        """Find the app instance running from the hexpansion on the given port, if any.  Returns the app instance if found, None otherwise."""
-        expected_app_name = "HexDriveApp"
-        candidate_app: HexDriveLike | None = None
-        for an_app in scheduler.apps:
-            if type(an_app).__name__ == expected_app_name:
-                if hasattr(an_app, "config"):
-                    # if app has a config attribute, check if it has a port and if it matches the port we are checking
-                    # - this is to avoid accidentally matching an app from a different hexpansion slot if there are multiple of the same type.
-                    if hasattr(an_app.config, "port") and an_app.config.port == port:
-                        #if self.logging:
-                        #    print(f"H:App {expected_app_name} has matching port {port} in config - app found")
-                        return _as_hexdrive_app(an_app)
-                else:
-                    # if app doesn't have a config we can't check the port - so assume it is a match
-                    #if self.logging:
-                    #    print(f"H:Found app with matching name {expected_app_name} on port {port}")
-                    candidate_app = _as_hexdrive_app(an_app)
-        return candidate_app
 
  ### MAIN APP CONTROL FUNCTIONS ###
 
