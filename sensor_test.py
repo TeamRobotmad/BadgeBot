@@ -1432,7 +1432,8 @@ class SensorTestMgr:
         self._ina226 = None
 
         if len(app.hexdrive_apps) > 0:
-            app.hexdrive_apps[0].set_freq(0)
+            #app.hexdrive_apps[0].set_freq(0)
+            app.hexdrive_apps[0].set_motors((0,0))
             app.hexdrive_apps[0].set_power(False)
 
         for c in self._rotation_rate_counters:

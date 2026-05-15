@@ -108,11 +108,11 @@ _ROTATION_RATE_SENSOR_PINS = [0, 1]             # HS_F & HS_G pins used to read 
 _ROTATION_RATE_SENSOR_ENABLE_PINS = [3, 4]      # LS_D & LS_E pins used to enable the phototransistors for rotation rate testing (set to output and high to enable, input to disable)
 _IR_EMITTER_PWM_STEP_SIZE = 2                   # Step size for adjusting IR emitter brightness in manual mode, 0-255 (0=off, 255=full on)
 _POWER_SCALE_FACTOR = 66
-
+_MOTOR_PWM_FREQUENCY = 20000                    # Default PWM frequency to set on the HexDrive for testing, in Hz.
 
 # Rotation Rate Auto scan configuration
 _AUTO_SCAN_STEPS       = 60     # Number of power levels to test during auto scan
-_AUTO_SCAN_SETTLE_MS   = 320    # ms to wait after setting power before starting actual measurement period
+_AUTO_SCAN_SETTLE_MS   = 500    # ms to wait after setting power before starting actual measurement period
 _AUTO_SCAN_MEASURE_MS  = 5000   # ms measurement window per step (maximum)
 _AUTO_RESULTS_FILENAME = "mtrtst.csv"
 _AUTO_RESULTS_DEST_LABELS = ("badge fs", "hex fs")
@@ -389,21 +389,21 @@ class HexTestApp(app.App):         # pylint: disable=no-member
     # ------------------------------------------------------------------
 
     async def _handle_removal(self, event: HexpansionRemovalEvent):
-        if self._foreground:
+        if event.port == self._hexdrive_in_use_port:
             if self._logging:
                 print(f"H:Hexpansion removed from port {event.port}")
-            if event.port == self._hexdrive_in_use_port:
-                if self.logging:
-                    print(f"H:HexDrive removed from port {event.port} during test - stopping test and returning to menu")
-                self._hexdrive_app = None
-                self._hexdrive_in_use_port = None
-                self._hexdrive_ports.remove(event.port)
-                self.notification = Notification("HexDrive Removed")
+            self._hexdrive_app = None
+            self._hexdrive_in_use_port = None
+            self._hexdrive_ports.remove(event.port)
+            self.notification = Notification("HexDrive Removed")
+            if self.current_state == STATE_MOTOR_TEST:
                 self._stop_motor_test_mode()
+            elif self.current_state == STATE_SENSOR:
+                self._stop_sensor_test_mode()
 
 
     async def _handle_mounted(self, event: HexpansionMountedEvent):
-        if self._foreground:
+        if self._foreground and self.current_state in [STATE_MESSAGE, STATE_MENU]:
             if self._logging:
                 print(f"H:Hexpansion mounted on port {event.port}")
             # Check if it is a HexDrive we can use for testing
@@ -411,10 +411,13 @@ class HexTestApp(app.App):         # pylint: disable=no-member
             vid_pid_pairs = [(type.vid, type.pid) for type in self.HEXPANSION_TYPES]
             if hasattr(event, "header") and (event.header.vid, event.header.pid) in vid_pid_pairs:
                 if self.logging:
-                    print(f"H:Attempting to use newly mounted HexDrive on port {event.port} for motor testing")
+                    print(f"H:Attempting to use newly mounted HexDrive on port {event.port}")
+
                 if self._motor_test_start():
                     if self.logging:
                         print(f"H:Successfully started motor test with newly mounted HexDrive on port {event.port}")
+                    self.current_state = STATE_MOTOR_TEST
+                    self.set_menu(None)
                 else:
                     if self.logging:
                         print(f"H:Failed to start motor test with newly mounted HexDrive on port {event.port}")
@@ -423,6 +426,8 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                 if self._motor_test_start():
                     if self.logging:
                         print(f"H:Successfully started motor test with newly mounted HexDrive on port {event.port} (no header in event, assumed HexDrive)")
+                    self.current_state = STATE_MOTOR_TEST
+                    self.set_menu(None)
 
 
     async def _gain_focus(self, event: RequestForegroundPushEvent):
@@ -525,7 +530,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         self._sensor_data = {}
         self._display_data = {}
         self.refresh = True
-
+        hexpansion_type: HexpansionType | None = None
         # Find HexDrive to test
         # look for any type of hexdrive (including HexDrive2 variants) in any port by their VID/PID
         for hexpansion_type in self.HEXPANSION_TYPES:
@@ -550,7 +555,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         if self._hexdrive_app is not None:
             #Setup UUT = HexDrive
             try:
-                if self._hexdrive_app.initialise() and self._hexdrive_app.set_power(True):
+                if self._hexdrive_app.initialise() and self._hexdrive_app.set_power(True) and self._hexdrive_app.set_freq(_MOTOR_PWM_FREQUENCY):
                     self._hexdrive_app.set_keep_alive(2000)   # Updates can be quite slow as we are using the draw function
             except AttributeError:
                 pass
@@ -568,6 +573,14 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                 # configure the ESP32S3 hardware to count pulses on the HS pin(s)
                 # Counter not yet available in this Micropython port so we have created our own...
                 gpio_num = _HS_PIN_TO_GPIO[self.config.port][pin_num]
+                # Is there a motor to test that we can measure the rotation rate of with the phototransistor sensors?
+                # If so, set up a counter to measure the rotation rate based on the phototransistor pulses.
+                # Assume first rotation rate sensor pin is for motor 1 and second (if present) is for motor 2.
+                # could be extended to cope with HexDrive variants for Left and Right motors...
+                if hexpansion_type is not None and hexpansion_type.motors < (pin_num + 1):
+                    if self.logging:
+                        print(f"T:Not setting up rotation rate counter on pin {pin_num} (GPIO {gpio_num}) as this HexDrive type only has {hexpansion_type.motors} motors")
+                    continue
                 counter = Counter(None, gpio_num, filter_ns=1000000, logging=False)  # auto-select PCNT unit
                 if counter is not None and counter.unit is not None:
                     self._rotation_rate_counters.append(counter)
@@ -592,6 +605,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         return False
 
 
+
     def _stop_motor_test_mode(self):
         if self._logging:
             print("T:Stopping Motor Test mode and cleaning up")
@@ -605,17 +619,17 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                 try:
                     self._ina226_sensor_mgr.close()
                 except Exception as exc:          # pylint: disable=broad-exception-caught
-                    if self._logging:
-                        print("T:INA226 sensor manager close failed:", exc)
+                    print("T:INA226 sensor manager close failed:", exc)
                 self._ina226_sensor_mgr = None
         self._ina226 = None
 
         if self._hexdrive_app is not None:
             try:
-                self._hexdrive_app.set_freq(0)
+                self._hexdrive_app.set_motors((0, 0))
                 self._hexdrive_app.set_power(False)
-            except AttributeError:
-                pass
+            except AttributeError as e:
+                print(f"T:Failed to set motor outputs off {e}")
+        self._hexdrive_in_use_port = None
 
         for c in self._rotation_rate_counters:
             if c is not None:
@@ -623,7 +637,16 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         self._rotation_rate_counters = []
         self.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
         self._rotation_rate_enable(False)
-        self.refresh = True
+        self.return_to_menu()
+
+
+    def _stop_sensor_test_mode(self):
+        if self._logging:
+            print("T:Stopping Sensor Test mode and cleaning up")
+        self._sensor_data = {}
+        self._display_data = {}
+        self._hexdrive_in_use_port = None
+        self.return_to_menu()
 
 
     def _init_ina226_for_motor_test(self) -> bool:
@@ -725,7 +748,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         if not self._foreground:
             # This triggers the automatic foreground display
             eventbus.emit(RequestForegroundPushEvent(self))
-            self._foreground = True
+            #self._foreground = True
 
         if self.notification:
             self.notification.update(delta)
@@ -839,8 +862,8 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                 self._rotation_rate_measurement_period = _AUTO_SCAN_MEASURE_MS
                 self._auto_settling = True
                 self._auto_results = []
-                self._auto_max_rpm = 10
-                self._auto_max_current_ma = 50
+                self._auto_max_rpm = 0
+                self._auto_max_current_ma = 0
                 self._rotation_detected = False
             self.refresh = True
             return
@@ -1036,6 +1059,9 @@ class HexTestApp(app.App):         # pylint: disable=no-member
             colours += [(0.3, 0.8, 1.0)]
             #lines += [f"V:{self._ina226_reading.get('mV', 0)}mV"]
             #colours += [(0.3, 0.8, 1.0)]
+        else:
+            lines += [""]
+            colours += [(0.3, 0.8, 1.0)]
         self.draw_message(ctx, lines, colours, label_font_size)
         button_labels(ctx, up_label="IR+", down_label="IR-", cancel_label="Back",
                       left_label="Pwr-", right_label="Pwr+", confirm_label="Auto")
@@ -1134,8 +1160,9 @@ class HexTestApp(app.App):         # pylint: disable=no-member
 
         # Y axis Maximum RPM and Current labels
         ctx.font_size = label_font_size - 8
-        ctx.rgb(0.0, 1.0, 0.5).move_to(chart_left+20, chart_top - 5).text(f"rpm:{max_rpm}")
-        ctx.rgb(1.0, 0.2, 0.2).move_to(5, chart_top - 5).text(f"mA:{max_current_ma}")
+        ctx.rgb(1.0, 1.0, 0.0).move_to(-15, chart_top - 5).text("Max")
+        ctx.rgb(0.0, 1.0, 0.5).move_to(chart_left+10, chart_top - 5).text(f"rpm:{self._auto_max_rpm}")
+        ctx.rgb(1.0, 0.2, 0.2).move_to(20, chart_top - 5).text(f"mA:{self._auto_max_current_ma}")
 
         #button_labels(ctx, cancel_label="Back", confirm_label="Manual")
 
@@ -1390,13 +1417,31 @@ class HexpansionType:
     def __init__(self, pid: int, name: str, vid: int =0xCAFE, motors: int =0, servos: int =0, sensors: int =0, sub_type: str | None =None):
         self.vid: int = vid
         self.pid: int = pid
-        self.name: str = name
-        self.sub_type: str | None = sub_type
-        self.motors: int = motors
-        self.servos: int = servos
-        self.sensors: int = sensors
+        self._name: str = name
+        self._sub_type: str | None = sub_type
+        self._motors: int = motors
+        self._servos: int = servos
+        self._sensors: int = sensors
 
+    @property
+    def name(self):
+        return self._name
 
+    @property
+    def sub_type(self):
+        return self._sub_type
+
+    @property
+    def motors(self):
+        return self._motors
+
+    @property
+    def servos(self):
+        return self._servos
+
+    @property
+    def sensors(self):
+        return self._sensors
 
 
 

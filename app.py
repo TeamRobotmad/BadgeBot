@@ -30,7 +30,7 @@ import app
 from .utils import draw_logo_animated, parse_version
 
 HEXDRIVE_APP_VERSION = 7
-HEXDRIVE2_APP_VERSION = 7
+HEXDRIVE2_APP_VERSION = 1
 HEXTEST_APP_VERSION = 1
 
 SETTINGS_NAME_PREFIX = "badgebot."  # Prefix for settings keys in EEPROM
