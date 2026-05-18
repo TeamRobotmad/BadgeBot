@@ -37,18 +37,20 @@ _TICK_MS       =  10
 _LONG_PRESS_MS = 750
 
 # Default user timings for drive and turn steps (can be configured in settings)
-_DEFAULT_ACCELERATION  = 2500
-DEFAULT_MAX_POWER      = 50000  # exposed for use in other modules
+_ACCELERATION_SCALE_FACTOR = 512
+_POWER_SCALE_FACTOR        = 512
+_DEFAULT_ACCELERATION  = 24576 // _ACCELERATION_SCALE_FACTOR  # user-friendly acceleration value
+DEFAULT_MAX_POWER      = 49152 // _POWER_SCALE_FACTOR        # exposed for use in other modules
 _DEFAULT_USER_DRIVE_MS =  50
 _DEFAULT_USER_TURN_MS  =  20
 
-_MIN_ACCELERATION      = 100
-_MIN_MAX_POWER         = 1000
+_MIN_ACCELERATION      = 1     # 1024 // _ACCELERATION_SCALE_FACTOR
+_MIN_MAX_POWER         = 10240 // _POWER_SCALE_FACTOR
 _MIN_USER_DRIVE_MS     = 10
 _MIN_USER_TURN_MS      = 10
 
-_MAX_MAX_POWER         = 65535
-_MAX_ACCELERATION      = 20000
+_MAX_MAX_POWER         = 65535 // _POWER_SCALE_FACTOR
+_MAX_ACCELERATION      = 65535 // _ACCELERATION_SCALE_FACTOR
 _MAX_USER_DRIVE_MS     = 10000
 _MAX_USER_TURN_MS      = 10000
 
@@ -131,17 +133,20 @@ class Instruction:
         """Convert the instruction's duration and direction into a power plan, which is a list of (power_tuple, duration) pairs."""
         curr_power = 0
         ramp_up = []
-        max_ramp_up_ticks = ((self.directional_duration(mysettings) * self._duration) // (2 * _TICK_MS)) - 1
+        _d = self._duration * self.directional_duration(mysettings)
+        _a = _ACCELERATION_SCALE_FACTOR * (mysettings['acceleration'].v if 'acceleration' in mysettings else _DEFAULT_ACCELERATION)
+        _m = _POWER_SCALE_FACTOR * (mysettings['max_power'].v if 'max_power' in mysettings else DEFAULT_MAX_POWER)
+        max_ramp_up_ticks = (_d // (2 * _TICK_MS)) - 1
         for _ in range(max_ramp_up_ticks):
-            curr_power += mysettings['acceleration'].v
-            if curr_power >= mysettings['max_power'].v:
-                curr_power = mysettings['max_power'].v
+            curr_power += _a
+            if curr_power >= _m:
+                curr_power = _m
                 break
             else:
                 ramp_up.append((self.directional_power_tuple(curr_power), _TICK_MS))
         power_durations = ramp_up.copy()
         # period of constant power after ramp-up, before ramp-down
-        user_power_duration = (self.directional_duration(mysettings) * self._duration) - (2 * len(ramp_up) * _TICK_MS)
+        user_power_duration = _d - (2 * len(ramp_up) * _TICK_MS)
         if user_power_duration > 0:
             power_durations.append((self.directional_power_tuple(curr_power), user_power_duration))
         ramp_down = ramp_up.copy()
@@ -548,7 +553,9 @@ class MotorMovesMgr:
             self._draw_receive_instr(ctx)
         elif self._sub_state == _SUB_RUN:
             current_power, _ = self.current_power_duration
-            power_str = str(tuple([int(x / (app.settings['max_power'].v // 100)) for x in current_power]))
+            # scale factor to get power values between 0 and 100 for display
+            s = _POWER_SCALE_FACTOR * app.settings['max_power'].v if 'max_power' in app.settings else DEFAULT_MAX_POWER
+            power_str = str(tuple([int((100*x) / s) for x in current_power]))
             app.draw_message(ctx, ["Running...", power_str], [(1, 1, 0), (1, 1, 0)], label_font_size)
         elif self._sub_state == _SUB_DONE:
             app.draw_message(ctx, ["Program", "complete!"], [(0, 1, 0), (0, 1, 0)], label_font_size)
