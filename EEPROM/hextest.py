@@ -7,13 +7,13 @@
 import asyncio
 import time
 
-
 try:
     from typing import TYPE_CHECKING
 except ImportError:
     TYPE_CHECKING = False
 
 import ota
+import vfs
 from machine import I2C, Pin, mem32, disable_irq, enable_irq
 
 import settings as platform_settings
@@ -29,12 +29,14 @@ from system.scheduler.events import (RequestForegroundPopEvent,
                                      RequestStopAppEvent)
 from system.hexpansion.header import HexpansionHeader
 from system.scheduler import scheduler
+from system.hexpansion.util import (
+    detect_eeprom_addr,
+    get_hexpansion_block_devices,
+    read_hexpansion_header,
+)
 try:
     from system.hexpansion.util import get_app_by_slot, get_slots_by_vid_pid
 except ImportError:
-    # In case we are running on old version of BadgeOS, where these functions are not available, define stubs that return None or empty lists.
-    from system.hexpansion.util import detect_eeprom_addr
-
     def get_app_by_slot(slot):
         """Find the app instance running from the hexpansion on the given port, if any.  Returns the app instance if found, None otherwise."""
         for an_app in scheduler.apps:
@@ -46,7 +48,7 @@ except ImportError:
     def get_slots_by_vid_pid(vid, pid):
         """Find all hexpansion ports with the given VID/PID. Returns a list of port numbers."""
         ports_with_hexpansion = []
-        for port in range(1, _NUM_HEXPANSION_SLOTS + 1):
+        for port in range(1, 7):
             try:
                 i2c = I2C(port)
                 # Autodetect eeprom addr
@@ -74,7 +76,11 @@ except ImportError:
 
 import app
 from tildagon import Pin as ePin
-from micropython import const
+try:
+    from micropython import const
+except ImportError:
+    # CPython / simulator fallback – const() is an identity function on MicroPython
+    const = lambda x: x  # noqa: E731
 
 if TYPE_CHECKING:
     from typing import cast
@@ -92,67 +98,69 @@ else:
 # Define the minimum BadgeOS version required to run this app (e.g. if we need features that are only available in a certain version of BadgeOS)
 _MIN_BADGEOS_VERSION = [1, 9, 0]     # v1.9.0 is required to be able to read the EEPROM with 16-bit addressing
 
-SETTINGS_NAME_PREFIX = "hextest."  # Prefix for settings keys in EEPROM
+_PRE = "hextest."  # Prefix for settings keys in EEPROM
 
 # HexTest Hexpansion constants
 # Hardware defintions:
-_NUM_HEXPANSION_SLOTS = 6
+_SLOTS = const(6)
 
 # Constants for rotation rate measurement and motor test mode.
-_ROTATION_RATE_MEASUREMENT_PERIOD_MS = 2500     # how often to update the displayed rotation rate measurement in ms (tradeoff between display responsiveness and stability of the reading)
-_DEFAULT_ROTATION_RATE_EMITTER_DUTY = 20        # default duty cycle for the IR emitter when doing rate testing, 0-255 (0=off, 255=full on)
-_DEFAULT_SPOKES_PER_ROTATION = 3                # number of times the photodiode will be triggered per full rotation of the wheel
-_MOTOR_TEST_BACKGROUND_UPDATE_PERIOD = 1000     # background update period in ms to use during motor test mode (tradeoff between display responsiveness and CPU load)
-_ROTATION_RATE_EMITTER_PINS = [1, 2]            # LS_B & LS_C pins used to drive the IR emitter for rotation rate testing
-_ROTATION_RATE_SENSOR_PINS = [0, 1]             # HS_F & HS_G pins used to read the phottransistors for rotation rate testing
-_ROTATION_RATE_SENSOR_ENABLE_PINS = [3, 4]      # LS_D & LS_E pins used to enable the phototransistors for rotation rate testing (set to output and high to enable, input to disable)
-_IR_EMITTER_PWM_STEP_SIZE = 2                   # Step size for adjusting IR emitter brightness in manual mode, 0-255 (0=off, 255=full on)
-_POWER_SCALE_FACTOR = 66
-_MOTOR_PWM_FREQUENCY = 20000                    # Default PWM frequency to set on the HexDrive for testing, in Hz.
+_ROTATION_RATE_MEASUREMENT_PERIOD_MS = const(3000)     # how often to update the displayed rotation rate measurement in ms (tradeoff between display responsiveness and stability of the reading)
+_DEFAULT_ROTATION_RATE_EMITTER_DUTY = const(25)        # default duty cycle for the IR emitter when doing rate testing, 0-255 (0=off, 255=full on)
+_DEFAULT_SPOKES_PER_ROTATION = const(3)                # number of times the photodiode will be triggered per full rotation of the wheel
+_MOTOR_TEST_BACKGROUND_UPDATE_PERIOD = const(1000)     # background update period in ms to use during motor test mode (tradeoff between display responsiveness and CPU load)
+_ROTATION_RATE_EMITTER_PINS = [const(1), const(2)]            # LS_B & LS_C pins used to drive the IR emitter for rotation rate testing
+_ROTATION_RATE_SENSOR_PINS = [const(0), const(1)]             # HS_F & HS_G pins used to read the phottransistors for rotation rate testing
+_ROTATION_RATE_SENSOR_ENABLE_PINS = [const(3), const(4)]      # LS_D & LS_E pins used to enable the phototransistors for rotation rate testing (set to output and high to enable, input to disable)
+_IR_EMITTER_PWM_STEP_SIZE = const(2)                   # Step size for adjusting IR emitter brightness in manual mode, 0-255 (0=off, 255=full on)
+_MAX_POWER = const(65535)                              # maximum power level to apply to motors, corresponds to 100% on the HexDrive
+_MOTOR_PWM_FREQUENCY = const(20000)                    # Default PWM frequency to set on the HexDrive for testing, in Hz.
 
 # Rotation Rate Auto scan configuration
-_AUTO_SCAN_STEPS       = 60     # Number of power levels to test during auto scan
-_AUTO_SCAN_SETTLE_MS   = 500    # ms to wait after setting power before starting actual measurement period
-_AUTO_SCAN_MEASURE_MS  = 5000   # ms measurement window per step (maximum)
-_AUTO_RESULTS_FILENAME = "mtrtst.csv"
-_AUTO_RESULTS_DEST_LABELS = ("badge fs", "hex fs")
+_AUTO_SCAN_STEPS       = const(50)     # Number of power levels to test during auto scan
+_AUTO_SCAN_SETTLE_MS   = const(800)    # ms to wait after setting power before starting actual measurement period
+_AUTO_SCAN_MEASURE_MS  = const(10000)  # ms measurement window per step (maximum)
+_AUTO_SCAN_MIN_POWER   = const(25535)  # Minimum power level to test during auto scan (0-65535)
+_FILE = "motor"
+_EXT  = "csv"
+_FILE_DEST_LABELS = ("Badge FS", "Hex FS")
 
 # App states
-STATE_MENU = 0
-STATE_MESSAGE = 1         # Message display
-STATE_SETTINGS = 2        # Edit Settings
-STATE_SENSOR = 3          # Sensor Test
-STATE_MOTOR_TEST = 4      # Motor Test
+STATE_MENU = const(0)
+STATE_MESSAGE = const(1)         # Message display
+STATE_SETTINGS = const(2)        # Edit Settings
+STATE_SENSOR = const(3)          # Sensor Test
+STATE_MOTOR_TEST = const(4)      # Motor Test
 
 # App states where user can minimise app (Menu, Message, Logo)
 MINIMISE_VALID_STATES = [STATE_MENU, STATE_MESSAGE]
 
 # Main Menu Items
 MAIN_MENU_ITEMS = ["Sensor Test", "Motor Test", "Settings", "About","Exit"]
-MENU_ITEM_SENSOR_TEST = 0
-MENU_ITEM_MOTOR_TEST = 1
-MENU_ITEM_SETTINGS = 2
-MENU_ITEM_ABOUT = 3
-MENU_ITEM_EXIT = 4
+MENU_ITEM_SENSOR_TEST = const(0)
+MENU_ITEM_MOTOR_TEST = const(1)
+MENU_ITEM_SETTINGS = const(2)
+MENU_ITEM_ABOUT = const(3)
+MENU_ITEM_EXIT = const(4)
 
-DEFAULT_BACKGROUND_UPDATE_PERIOD = 100    # mS when not moving
+DEFAULT_BACKGROUND_UPDATE_PERIOD = const(100)    # mS when not moving
 _LOGGING = True
-_AUTO_REPEAT_MS = 200       # Time between auto-repeats, in ms
-_AUTO_REPEAT_COUNT_THRES = 10 # Number of auto-repeats before increasing level
-_AUTO_REPEAT_SPEED_LEVEL_MAX = 4  # Maximum level of auto-repeat speed increases
-_AUTO_REPEAT_LEVEL_MAX = 3  # Maximum level of auto-repeat digit increases
+_AUTO_REPEAT_MS = const(200)       # Time between auto-repeats, in ms
+_AUTO_REPEAT_COUNT_THRES = const(10) # Number of auto-repeats before increasing level
+_AUTO_REPEAT_SPEED_LEVEL_MAX = const(4)  # Maximum level of auto-repeat speed increases
+_AUTO_REPEAT_LEVEL_MAX = const(3)  # Maximum level of auto-repeat digit increases
 
 
 # Pages of information to show for each sensor (can be switched with up/down buttons)
-_PAGE_RAW = 0
-_PAGE_STATS = 1
-_PAGE_DATA = 2
-_PAGE_CAL = 3
+_PAGE_RAW = const(0)
+_PAGE_STATS = const(1)
+_PAGE_DATA = const(2)
+_PAGE_CAL = const(3)
 _PAGE_NAMES = {
-    0: "Raw",
-    1: "Stats",
-    2: "Data",
-    3: "Cal",
+    _PAGE_RAW: "Raw",
+    _PAGE_STATS: "Stats",
+    _PAGE_DATA: "Data",
+    _PAGE_CAL: "Cal",
 }
 
 # Badge hexpansion HS pin to ESP32-S3 GPIO number mapping
@@ -220,7 +228,6 @@ class HexTestApp(app.App):         # pylint: disable=no-member
 
         self._hexdrive_ports: list[int] = []
         self._hexdrive_in_use_port: int | None = None
-
         self._hexdrive_app: HexDriveLike | None = None
 
         self._rotation_rate_emitter_duty: int = _DEFAULT_ROTATION_RATE_EMITTER_DUTY # duty cycle for the IR emitter when doing rate testing, 0-255 (0=off, 255=full on)
@@ -231,18 +238,20 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         self._rotation_rate_motor_power: int = 0                    # Power applied to motors in TEST mode
         self._rotation_rate_spokes: int = _DEFAULT_SPOKES_PER_ROTATION
 
-        # Auto scan state
-        self._auto_mode: bool = False             # True = auto scanning, False = manual
-        self._auto_direction: int = 1             # 1 = forwards, -1 = reverse
-        self._auto_step: int = 0                  # current step index (0.._AUTO_SCAN_STEPS-1)
-        self._auto_settling: bool = True          # True = in settle phase, False = in measure phase
+        # Auto scan test
+        self._scan_mode: bool = False             # True = auto scanning, False = manual
+        self._unsaved_data = False
+        self._scan_direction: int = 1             # 1 = forwards, -1 = reverse
+        self._scan_step: int = 0                  # current step index (0.._AUTO_SCAN_STEPS-1)
+        self._capture_settling: bool = True          # True = in settle phase, False = in measure phase
         self._rotation_detected: bool = False     # True once motion has been observed during auto scan
-        self._auto_results: list[tuple[int, list[int], int | None]] = []   # list of (power, rpm list, current mA)
-        self._auto_max_rpm: int = 0               # max rpm seen during scan
-        self._auto_max_current_ma: int = 0        # max current seen during scan
-        self._auto_last_current_ma: int = 0       # latest current sampled in auto mode
-        self._auto_done: bool = False             # True = scan complete
+        self._capture_data: list[tuple[int, list[int], int | None]] = []   # list of (power, rpm list, current mA)
+        self._max_rpm: int = 0               # max rpm seen during scan
+        self._max_current_ma: int = 0        # max current seen during scan
+        self._last_current_ms: int = 0       # latest current sampled in auto mode
+        self._scan_done: bool = False             # True = scan complete
         self._motor_calibration_fit: list[tuple[float, float] | None] = []  # list of (slope, intercept) fits, indexed by motor number
+        self._hut_id: int  = 0              # ID of the hexpansion under test (HUT) to include in the auto scan results file name
 
         self._ina226 = None
         self._ina226_sensor_mgr = None  # SensorManager used exclusively for motor-test INA226 discovery
@@ -264,7 +273,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         if MySetting is not None:
             # General settings
             self.settings['logging']       = MySetting(self.settings, _LOGGING, False, True)
-            self.settings["path"]          = MySetting(self.settings, 0, 0, len(_AUTO_RESULTS_DEST_LABELS) - 1, labels=_AUTO_RESULTS_DEST_LABELS)
+            self.settings["path"]          = MySetting(self.settings, 0, 0, len(_FILE_DEST_LABELS) - 1, labels=_FILE_DEST_LABELS)
 
             self.update_settings()
 
@@ -330,7 +339,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         if self.logging:
             print("T:Updating settings from EEPROM")
         for s in self.settings:
-            self.settings[s].v = platform_settings.get(f"{SETTINGS_NAME_PREFIX}{s}", self.settings[s].d)
+            self.settings[s].v = platform_settings.get(f"{_PRE}{s}", self.settings[s].d)
             if self.logging:
                 print(f"Setting {s} = {self.settings[s].v}")
 
@@ -609,8 +618,8 @@ class HexTestApp(app.App):         # pylint: disable=no-member
     def _stop_motor_test_mode(self):
         if self._logging:
             print("T:Stopping Motor Test mode and cleaning up")
-        self._auto_mode = False
-        self._auto_done = False
+        self._scan_mode = False
+        self._scan_done = False
         self._rotation_rate_motor_power = 0
         self._ina226_reading = {}
         self._reset_ina226_accumulators()
@@ -720,21 +729,109 @@ class HexTestApp(app.App):         # pylint: disable=no-member
 
 
     def _auto_rotation_rate_step(self):
-        self._auto_step += 1
+        self._scan_step += 1
         self.refresh = True
-        if self._auto_step >= _AUTO_SCAN_STEPS:
+        if self._scan_step >= _AUTO_SCAN_STEPS:
             # Scan complete — stop motors
-            self._auto_done = True
+            self._scan_done = True
             self._rotation_detected = False
             self._rotation_rate_motor_power = 0
-            self._auto_direction *= -1  # reverse direction for next scan
+            self._scan_direction *= -1  # reverse direction for next scan
             #self._auto_fit_calculate()
-            #self._save_auto_results_csv()
+            self._save_capture_data_csv()
         else:
             # Advance to next power level
-            self._rotation_rate_motor_power = self._auto_direction * (65535 * self._auto_step) // (_AUTO_SCAN_STEPS - 1)
+            self._rotation_rate_motor_power = self._scan_direction * (_AUTO_SCAN_MIN_POWER + (((_MAX_POWER - _AUTO_SCAN_MIN_POWER) * self._scan_step) // (_AUTO_SCAN_STEPS - 1)))
         self._rotation_rate_measurement_period_elapsed = 0
-        self._auto_settling = True
+        self._capture_settling = True
+
+
+    def _data_save_path_option(self):
+        try:
+            return int(self.settings["path"].v)
+        except Exception:      # pylint: disable=broad-exception-caught
+            return 0
+
+
+    def _mount_current_fs(self):
+        if self.config is None or getattr(self.config, "port", None) is None:
+            print("HT:Hex fs save unavailable when running from badge")
+            return None, False
+        mountpoint = "/hexcurrent"
+        eeprom_addr, addr_len = detect_eeprom_addr(self.config.i2c)
+        if eeprom_addr is None or addr_len is None:
+            print("HT:No EEPROM found on HexCurrent port")
+            return None, False
+        header = read_hexpansion_header(self.config.i2c, eeprom_addr=eeprom_addr, addr_len=addr_len)
+        if header is None:
+            print("HT:Failed to read HexCurrent EEPROM header")
+            return None, False
+        try:
+            _, partition = get_hexpansion_block_devices(self.config.i2c, header, eeprom_addr, addr_len=addr_len)
+        except RuntimeError as exc:
+            print(f"HT:Failed to get block device: {exc}")
+            return None, False
+
+        mounted_here = True
+        try:
+            vfs.mount(partition, mountpoint, readonly=False)
+        except OSError as exc:
+            if exc.args and exc.args[0] == 1:
+                mounted_here = False
+            else:
+                print(f"HT:Failed to mount {mountpoint}: {exc}")
+                return None, False
+        except Exception as exc:      # pylint: disable=broad-exception-caught
+            print(f"HT:Failed to mount {mountpoint}: {exc}")
+            return None, False
+        return mountpoint, mounted_here
+
+
+    def _data_save_path(self):
+        if self._data_save_path_option() == 1:
+            mountpoint, mounted_here = self._mount_current_fs()
+            if mountpoint is None:
+                return None, None, False
+            return f"{mountpoint}/{_FILE}{self._hut_id}.{_EXT}", mountpoint, mounted_here
+        return f"/{_FILE}{self._hut_id}.{_EXT}", None, False
+
+
+    def _save_capture_data_csv(self):
+        if not self._capture_data and not self._unsaved_data:
+            return False
+
+        output_path, mountpoint, mounted_here = self._data_save_path()
+        if output_path is None:
+            self.notification = Notification("  Save   Failed")
+            return False
+
+        rpm_count = len(self._rotation_rate_rpms)
+        header = ["power"] + [f"rpm{index + 1}" for index in range(rpm_count)] + ["ma"]
+        try:
+            with open(output_path, "wb") as csv_file:
+                csv_file.write((",".join(header) + "\n").encode())
+                for power, rpms, current_ma in self._capture_data:
+                    row = [str(power)]
+                    row.extend(str(rpm) for rpm in rpms)
+                    row.append(str(current_ma))
+                    csv_file.write((",".join(row) + "\n").encode())
+        except Exception as exc:      # pylint: disable=broad-exception-caught
+            print(f"HT:Failed to save CSV {output_path}: {exc}")
+            self.notification = Notification("  Save   Failed")
+            return False
+        finally:
+            if mounted_here and mountpoint is not None:
+                try:
+                    vfs.umount(mountpoint)
+                except Exception as exc:      # pylint: disable=broad-exception-caught
+                    print(f"HT:Failed to unmount {mountpoint}: {exc}")
+        self._unsaved_data = False
+        print(f"HT:Saved CSV to {output_path}")
+        self.notification = Notification("   Data     Saved")
+        # auto increment HUT ID for next save
+        self._hut_id += 1
+        return True
+
 
     # ------------------------------------------------------------------
     # HEXPANSION operations
@@ -840,38 +937,42 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         # CONFIRM toggles between manual and auto mode
         elif self.button_states.get(BUTTON_TYPES["CONFIRM"]):
             self.button_states.clear()
-            self._rotation_rate_motor_power = 0
-            self._auto_last_current_ma = 0
+            self._last_current_ms = 0
             self._rotation_rate_measurement_period_elapsed = 0
             self._reset_ina226_accumulators()
             for counter in self._rotation_rate_counters:
                 if counter is not None:
                     counter.value(0)      # reset counter
-            if self._auto_mode:
+            if self._scan_mode:
                 # Switch back to manual
                 #self._show_auto_results_fit()
+                self._rotation_rate_motor_power = 0
                 self._rotation_rate_measurement_period = _ROTATION_RATE_MEASUREMENT_PERIOD_MS
                 self._rotation_rate_rpms = [0] * len(self._rotation_rate_counters)
-                self._auto_mode = False
-                self._auto_done = False
+                self._ina226_reading = {}
+                self._scan_mode = False
+                self._scan_done = False
             else:
                 # Start auto scan
-                self._auto_mode = True
-                self._auto_done = False
-                self._auto_step = 0
+                self._scan_mode = True
+                self._scan_done = False
+                self._scan_step = 0
+                self._rotation_rate_motor_power = _AUTO_SCAN_MIN_POWER
                 self._rotation_rate_measurement_period = _AUTO_SCAN_MEASURE_MS
-                self._auto_settling = True
-                self._auto_results = []
-                self._auto_max_rpm = 0
-                self._auto_max_current_ma = 0
+                self._capture_settling = True
+                self._capture_data = []
+                self._unsaved_data = False
+                self._max_rpm = 0
+                self._ina226_reading = {}
+                self._max_current_ma = 0
                 self._rotation_detected = False
             self.refresh = True
             return
 
-        if self._auto_mode:
-            if not self._auto_done:
+        if self._scan_mode:
+            if not self._scan_done:
                 self._rotation_rate_measurement_period_elapsed += delta
-                if self._auto_settling:
+                if self._capture_settling:
                     if self._rotation_rate_measurement_period_elapsed >= _AUTO_SCAN_SETTLE_MS:
                         # Settle phase done — discard counter and start measuring
                         count = 0
@@ -884,15 +985,17 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                             current_ma = self._consume_ina226_average()
                             if current_ma is not None:
                                 current_abs = abs(current_ma)
-                                self._auto_last_current_ma = current_ma
-                                if current_abs > self._auto_max_current_ma:
-                                    self._auto_max_current_ma = current_abs
+                                self._last_current_ms = current_ma
+                                if current_abs > self._max_current_ma:
+                                    self._max_current_ma = current_abs
                             power = self._rotation_rate_motor_power
                             self._rotation_rate_rpms = [0] * len(self._rotation_rate_counters)
                             if self._logging:
-                                print(f"T:Auto Scan Step {self._auto_step}/{_AUTO_SCAN_STEPS} - Power: {power}, Rate: 0 rpm, Current: {current_ma}mA")
-                            self._auto_results.append((power//_POWER_SCALE_FACTOR, [0] * len(self._rotation_rate_counters), current_ma))
+                                print(f"T:Auto Scan Step {self._scan_step}/{_AUTO_SCAN_STEPS} - Power: {power}, Rate: 0 rpm, Current: {current_ma}mA")
+                            self._capture_data.append((power, [0] * len(self._rotation_rate_counters), current_ma))
                             self._auto_rotation_rate_step()
+                            if self._unsaved_data:
+                                self._unsaved_data = True
 
                         else:
                             self._rotation_detected = True
@@ -901,7 +1004,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                             cpm = (60000 * count) // self._rotation_rate_measurement_period_elapsed # rounded down - never displayed
                             self._rotation_rate_measurement_period = min(_AUTO_SCAN_MEASURE_MS, (60000 * 50) // cpm) if cpm > 0 else _AUTO_SCAN_MEASURE_MS
                             self._rotation_rate_measurement_period_elapsed = 0
-                            self._auto_settling = False
+                            self._capture_settling = False
                             self._reset_ina226_accumulators()
                 else:
                     if self._rotation_rate_measurement_period_elapsed >= self._rotation_rate_measurement_period:
@@ -911,22 +1014,24 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                             if counter is not None:
                                 count = counter.value(0)
                                 rpm = ((60000 * count) + self._rotation_rate_rounding) // (self._rotation_rate_measurement_period_elapsed * self._rotation_rate_spokes)
-                                if rpm > self._auto_max_rpm:
-                                    self._auto_max_rpm = rpm
+                                if rpm > self._max_rpm:
+                                    self._max_rpm = rpm
                                 self._rotation_rate_rpms[index] = rpm
 
                         ### duplicate of block above - could be a method
                         current_ma = self._consume_ina226_average()
                         if current_ma is not None:
                             current_abs = abs(current_ma)
-                            self._auto_last_current_ma = current_ma
-                            if current_abs > self._auto_max_current_ma:
-                                self._auto_max_current_ma = current_abs
+                            self._last_current_ms = current_ma
+                            if current_abs > self._max_current_ma:
+                                self._max_current_ma = current_abs
                         power = self._rotation_rate_motor_power
                         if self._logging:
-                            print(f"T:Auto Scan Step {self._auto_step}/{_AUTO_SCAN_STEPS} - Power: {power}, Rates: {self._rotation_rate_rpms} rpm, Current: {current_ma}mA")
-                        self._auto_results.append((power//_POWER_SCALE_FACTOR, self._rotation_rate_rpms, current_ma))
+                            print(f"T:Auto Scan Step {self._scan_step}/{_AUTO_SCAN_STEPS} - Power: {power}, Rates: {self._rotation_rate_rpms} rpm, Current: {current_ma}mA")
+                        self._capture_data.append((power, self._rotation_rate_rpms, current_ma))
                         self._auto_rotation_rate_step()
+                        if self._unsaved_data:
+                            self._unsaved_data = True
 
             # In auto mode, no manual button control for power/IR
             return
@@ -947,25 +1052,27 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         # Manual mode button handling
         if self.button_states.get(BUTTON_TYPES["UP"]):
             self.button_states.clear()
-            self.rotation_rate_emitter_duty = min(255, self.rotation_rate_emitter_duty + _IR_EMITTER_PWM_STEP_SIZE)
-            if self.logging:
-                print(f"T:IR+Emitter Duty: {self.rotation_rate_emitter_duty}")
+            self._hut_id += 1
+            #self.rotation_rate_emitter_duty = min(255, self.rotation_rate_emitter_duty + _IR_EMITTER_PWM_STEP_SIZE)
+            #if self.logging:
+            #    print(f"T:IR+Emitter Duty: {self.rotation_rate_emitter_duty}")
             self.refresh = True
         elif self.button_states.get(BUTTON_TYPES["DOWN"]):
             self.button_states.clear()
-            self.rotation_rate_emitter_duty = max(0, self.rotation_rate_emitter_duty - _IR_EMITTER_PWM_STEP_SIZE)
-            if self.logging:
-                print(f"T:IR-Emitter Duty: {self.rotation_rate_emitter_duty}")
+            self._hut_id = max(0, self._hut_id - 1)
+            #self.rotation_rate_emitter_duty = max(0, self.rotation_rate_emitter_duty - _IR_EMITTER_PWM_STEP_SIZE)
+            #if self.logging:
+            #    print(f"T:IR-Emitter Duty: {self.rotation_rate_emitter_duty}")
             self.refresh = True
         elif self.button_states.get(BUTTON_TYPES["RIGHT"]):
             self.button_states.clear()
-            self._rotation_rate_motor_power = min(65535, self._rotation_rate_motor_power + 1000)
+            self._rotation_rate_motor_power = min(_MAX_POWER, self._rotation_rate_motor_power + 1000)
             if self.logging:
                 print(f"T:Motor+Power: {self._rotation_rate_motor_power}")
             self.refresh = True
         elif self.button_states.get(BUTTON_TYPES["LEFT"]):
             self.button_states.clear()
-            self._rotation_rate_motor_power = max(-65535, self._rotation_rate_motor_power - 1000)
+            self._rotation_rate_motor_power = max(-_MAX_POWER, self._rotation_rate_motor_power - 1000)
             if self.logging:
                 print(f"T:Motor-Power: {self._rotation_rate_motor_power}")
             self.refresh = True
@@ -1040,12 +1147,13 @@ class HexTestApp(app.App):         # pylint: disable=no-member
     def _motor_test_draw(self, ctx):
         if self.config is None:
             return
-        if self._auto_mode:
+        if self._scan_mode:
             self._draw_auto_scan(ctx)
             return
         #print("DRAWING")
         # Manual mode: show the current emitter duty cycle as a percentage in the label, and show the current photodiode reading and rate counter value in the display data
-        lines = [f"IR:{int(self.rotation_rate_emitter_duty * 100 // 255)}%"]
+        #lines = [f"IR:{int(self.rotation_rate_emitter_duty * 100 // 255)}%"]
+        lines = [f"ID:{self._hut_id}"]  # show the current HUT ID for data logging purposes
         colours = [(1, 1, 0)]
         # Show power
         lines += [f"Pwr:{self._rotation_rate_motor_power}"]
@@ -1055,16 +1163,14 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                 lines += [f"{index}: {rpm}rpm"]
                 colours += [(1, 0, 1)]
         if self._ina226_reading:
-            lines += [f"I:{self._ina226_reading.get('mA', 0)}mA"]
+            lines += [f"I:{self._ina226_reading.get('mA', 0)}mA V:{format_voltage_mv(self._ina226_reading.get('mV', 0))}"]
             colours += [(0.3, 0.8, 1.0)]
-            #lines += [f"V:{self._ina226_reading.get('mV', 0)}mV"]
-            #colours += [(0.3, 0.8, 1.0)]
         else:
             lines += [""]
             colours += [(0.3, 0.8, 1.0)]
         self.draw_message(ctx, lines, colours, label_font_size)
-        button_labels(ctx, up_label="IR+", down_label="IR-", cancel_label="Back",
-                      left_label="Pwr-", right_label="Pwr+", confirm_label="Auto")
+        button_labels(ctx, up_label="ID+", down_label="ID-", cancel_label="Back",
+                      left_label="Pwr-", right_label="Pwr+", confirm_label="Scan")
 
 
     def _draw_auto_scan(self, ctx):
@@ -1085,19 +1191,18 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         ctx.move_to(chart_left, chart_bottom).line_to(chart_right, chart_bottom).stroke()  # X axis
         ctx.move_to(chart_left, chart_bottom).line_to(chart_left, chart_top).stroke()      # Y axis
 
-        n = len(self._auto_results)
-        max_rpm = self._auto_max_rpm if self._auto_max_rpm > 0 else 1
-        max_current_ma = self._auto_max_current_ma if self._auto_max_current_ma > 0 else 1
+        n = len(self._capture_data)
+        max_rpm = self._max_rpm if self._max_rpm > 0 else 1
+        max_current_ma = self._max_current_ma if self._max_current_ma > 0 else 1
 
         if n > 1:
-            # Plot data points as small bars.
-            # Auto-scan results may contain either a scalar RPM or a list/tuple
-            # of per-counter RPMs. Reduce multi-counter readings to a single
-            # scalar for this chart by using the maximum measured RPM.
+            # Plot data points as bars.
+            # Auto-scan results contain a list/tuple of per-counter RPMs.
             bar_w = max(1, chart_w // _AUTO_SCAN_STEPS)
             for i in range(n):
-                power, rpms, current_ma = self._auto_results[i]
-                x = chart_left + (abs(power) * chart_w) // (65536//_POWER_SCALE_FACTOR)
+                power, rpms, current_ma = self._capture_data[i]
+                # allow for the minimum power level being above zero, and for negative power levels, by using the absolute value of power and offsetting the X position accordingly
+                x = chart_left + ((abs(power) - _AUTO_SCAN_MIN_POWER) * chart_w) // (_MAX_POWER - _AUTO_SCAN_MIN_POWER)
                 for index, rpm in enumerate(rpms):
                     h = (rpm * chart_h) // max_rpm
                     if h > 0:
@@ -1111,11 +1216,11 @@ class HexTestApp(app.App):         # pylint: disable=no-member
 
         # Title and max RPM label
         ctx.font_size = label_font_size
-        if self._auto_done:
+        if self._scan_done:
             ctx.move_to(-50, chart_top - 25).text("Complete")
 
             ctx.font_size = label_font_size - 8
-            ctx.rgb(0.0, 1.0, 1.0).move_to(chart_left, chart_bottom + 5 + ctx.font_size).text("0%")
+            ctx.rgb(0.0, 1.0, 1.0).move_to(chart_left, chart_bottom + 5 + ctx.font_size).text(f"{(100 * (_AUTO_SCAN_MIN_POWER + (_MAX_POWER//200)))//_MAX_POWER}%")
             width = ctx.text_width("Power")
             ctx.move_to(-width//2, chart_bottom + 5 + ctx.font_size).text("Power")
             width = ctx.text_width("100%")
@@ -1129,8 +1234,8 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                     continue
                 slope, intercept = fit
                 # get min and max power values from the scan range
-                left_power = self._auto_results[0][0]
-                right_power = self._auto_results[n-1][0]
+                left_power = self._capture_data[0][0]
+                right_power = self._capture_data[n-1][0]
                 # is intercept going to be with X or Y axis as only positive quadrant shown
                 if intercept < 0:
                     x1 = chart_left - ((intercept * max_rpm) // slope)
@@ -1149,22 +1254,23 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                 ctx.rgb(*self._colour_for_index(index)).move_to(x1, y1).line_to(x2, y2).stroke()
 
         else:
-            progress = (self._auto_step * 100) // _AUTO_SCAN_STEPS
+            progress = (self._scan_step * 100) // _AUTO_SCAN_STEPS
             ctx.rgb(1.0,1.0,1.0).move_to(-50, chart_top - 25).text(f"Scan {progress}%")
 
             # Instantaneous current label (updated live during the scan)
             ctx.font_size = label_font_size - 8
             for index, rpm in enumerate(self._rotation_rate_rpms):
                 ctx.rgb(*self._colour_for_index(index)).move_to(chart_left+20, chart_bottom + 5 + ((index + 2) * (ctx.font_size))).text(f"Mtr{index+1}: {rpm}rpm")
-            ctx.rgb(1.0, 0.2, 0.2).move_to(15, chart_bottom + 5 + ctx.font_size).text(f"{self._auto_last_current_ma}mA")
+            ctx.rgb(1.0, 0.2, 0.2).move_to(15, chart_bottom + 5 + ctx.font_size).text(f"{self._last_current_ms}mA")
 
         # Y axis Maximum RPM and Current labels
         ctx.font_size = label_font_size - 8
         ctx.rgb(1.0, 1.0, 0.0).move_to(-15, chart_top - 5).text("Max")
-        ctx.rgb(0.0, 1.0, 0.5).move_to(chart_left+10, chart_top - 5).text(f"rpm:{self._auto_max_rpm}")
-        ctx.rgb(1.0, 0.2, 0.2).move_to(20, chart_top - 5).text(f"mA:{self._auto_max_current_ma}")
+        ctx.rgb(0.0, 1.0, 0.5).move_to(chart_left+10, chart_top - 5).text(f"rpm:{self._max_rpm}")
+        ctx.rgb(1.0, 0.2, 0.2).move_to(20, chart_top - 5).text(f"mA:{self._max_current_ma}")
 
-        #button_labels(ctx, cancel_label="Back", confirm_label="Manual")
+        button_labels(ctx, confirm_label="OK" if self._scan_done else "Quit")
+
 
     def _colour_for_index(self, index: int) -> tuple[float, float, float]:
         if index == 0:
@@ -1303,6 +1409,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
 # Private methods for internal use only.
 # --------------------------------------------------
 
+    @staticmethod
     def _parse_version(self, version):
         """ Parse a version string, e.g. that of BadgeOS, into a list of components for comparison. Handles versions in the format v1.9.0-beta.1+build.123
             The version is split into components based on the delimiters '.' '-' and '+'."""
@@ -1536,7 +1643,7 @@ class MySetting:
         index = self._index()
         if index is None:
             return
-        key = f"{SETTINGS_NAME_PREFIX}.{index}"
+        key = f"{_PRE}.{index}"
         try:
             platform_settings.set(key, self.v if self.v != self.d else None)
         except Exception as e:          # pylint: disable=broad-except
@@ -1553,7 +1660,7 @@ _SYSTEM_BASE      = const(0x600C0000)
 _GPIO_BASE        = const(0x60004000)
 _PCNT_BASE        = const(0x60017000)
 
-_PCNT_NUM_UNITS   = 4   # ESP32-S3 has 4 PCNT units
+_PCNT_NUM_UNITS   = const(4)   # ESP32-S3 has 4 PCNT units
 
 _PCNT_CLK_BIT     = const(1 << 10)  # SYSTEM_PCNT_CLK_EN / SYSTEM_PCNT_RST (bit 10)
 
@@ -1582,7 +1689,7 @@ _CONF0_FILTER_EN       = const(1 << 10)
 _CONF0_CH0_POS_MODE_S  = const(18)      # bits [19:18]
 
 # GPIO signal index base for PCNT: Unit N, CH0 pulse = 33 + N*4, CH0 ctrl = 35 + N*4
-_PCNT_SIG_BASE    = 33
+_PCNT_SIG_BASE    = const(33)
 
 # APB clock frequency for filter calculation (Hz)
 _APB_CLK_HZ       = const(80_000_000)
@@ -1965,80 +2072,80 @@ class SensorBase:
 
 
 # Register map
-_REG_CONFIGURATION = 0x00      # Configuration register
-_REG_SHUNT_VOLTAGE = 0x01      # Shunt voltage result (signed)
-_REG_BUS_VOLTAGE = 0x02        # Bus voltage result (unsigned)
-_REG_POWER = 0x03              # Power result (unsigned)
-_REG_CURRENT = 0x04            # Current result (signed)
-_REG_CALIBRATION = 0x05        # Calibration register
-_REG_MASK_ENABLE = 0x06        # Alert mask/enable register
-_REG_ALERT_LIMIT = 0x07        # Alert threshold register
-_REG_MANUFACTURER_ID = 0xFE    # Manufacturer ID register
-_REG_DIE_ID = 0xFF             # Die ID register
+_REG_CONFIGURATION = const(0x00)      # Configuration register
+_REG_SHUNT_VOLTAGE = const(0x01)      # Shunt voltage result (signed)
+_REG_BUS_VOLTAGE = const(0x02)        # Bus voltage result (unsigned)
+_REG_POWER = const(0x03)              # Power result (unsigned)
+_REG_CURRENT = const(0x04)            # Current result (signed)
+_REG_CALIBRATION = const(0x05)        # Calibration register
+_REG_MASK_ENABLE = const(0x06)        # Alert mask/enable register
+_REG_ALERT_LIMIT = const(0x07)        # Alert threshold register
+_REG_MANUFACTURER_ID = const(0xFE)    # Manufacturer ID register
+_REG_DIE_ID = const(0xFF)             # Die ID register
 
 
 # Configuration register bits (0x00)
-_CFG_RESET_BIT = 0x8000        # Software reset bit
-_CFG_AVG_SHIFT = 9             # Averaging field shift (bits 11:9)
-_CFG_VBUSCT_SHIFT = 6          # Bus voltage conversion time field shift (bits 8:6)
-_CFG_VSHCT_SHIFT = 3           # Shunt voltage conversion time field shift (bits 5:3)
-_CFG_MODE_SHIFT = 0            # Operating mode field shift (bits 2:0)
+_CFG_RESET_BIT = const(0x8000)        # Software reset bit
+_CFG_AVG_SHIFT = const(9)             # Averaging field shift (bits 11:9)
+_CFG_VBUSCT_SHIFT = const(6)          # Bus voltage conversion time field shift (bits 8:6)
+_CFG_VSHCT_SHIFT = const(3)           # Shunt voltage conversion time field shift (bits 5:3)
+_CFG_MODE_SHIFT = const(0)            # Operating mode field shift (bits 2:0)
 
 # AVG field values (bits 11:9)
-_CFG_AVG_1 = 0b000             # 1 sample average
-_CFG_AVG_4 = 0b001             # 4 sample average
-_CFG_AVG_16 = 0b010            # 16 sample average
-_CFG_AVG_64 = 0b011            # 64 sample average
-_CFG_AVG_128 = 0b100           # 128 sample average
-_CFG_AVG_256 = 0b101           # 256 sample average
-_CFG_AVG_512 = 0b110           # 512 sample average
-_CFG_AVG_1024 = 0b111          # 1024 sample average
+_CFG_AVG_1 = const(0b000)             # 1 sample average
+_CFG_AVG_4 = const(0b001)             # 4 sample average
+_CFG_AVG_16 = const(0b010)            # 16 sample average
+_CFG_AVG_64 = const(0b011)            # 64 sample average
+_CFG_AVG_128 = const(0b100)           # 128 sample average
+_CFG_AVG_256 = const(0b101)           # 256 sample average
+_CFG_AVG_512 = const(0b110)           # 512 sample average
+_CFG_AVG_1024 = const(0b111)          # 1024 sample average
 
 # Conversion time field values for VBUSCT/VSHCT (bits 8:6 and 5:3)
-_CFG_CT_140US = 0b000          # 140 us conversion time
-_CFG_CT_204US = 0b001          # 204 us conversion time
-_CFG_CT_332US = 0b010          # 332 us conversion time
-_CFG_CT_588US = 0b011          # 588 us conversion time
-_CFG_CT_1100US = 0b100         # 1.1 ms conversion time
-_CFG_CT_2116US = 0b101         # 2.116 ms conversion time
-_CFG_CT_4156US = 0b110         # 4.156 ms conversion time
-_CFG_CT_8244US = 0b111         # 8.244 ms conversion time
+_CFG_CT_140US = const(0b000)          # 140 us conversion time
+_CFG_CT_204US = const(0b001)          # 204 us conversion time
+_CFG_CT_332US = const(0b010)          # 332 us conversion time
+_CFG_CT_588US = const(0b011)          # 588 us conversion time
+_CFG_CT_1100US = const(0b100)         # 1.1 ms conversion time
+_CFG_CT_2116US = const(0b101)         # 2.116 ms conversion time
+_CFG_CT_4156US = const(0b110)         # 4.156 ms conversion time
+_CFG_CT_8244US = const(0b111)         # 8.244 ms conversion time
 
 # Operating mode field values (bits 2:0)
-_CFG_MODE_POWER_DOWN = 0b000   # Power-down mode
-_CFG_MODE_SHUNT_TRIG = 0b001   # Shunt voltage, triggered
-_CFG_MODE_BUS_TRIG = 0b010     # Bus voltage, triggered
-_CFG_MODE_SHUNT_BUS_TRIG = 0b011   # Shunt and bus, triggered
-_CFG_MODE_ADC_OFF = 0b100      # ADC off (disabled)
-_CFG_MODE_SHUNT_CONT = 0b101   # Shunt voltage, continuous
-_CFG_MODE_BUS_CONT = 0b110     # Bus voltage, continuous
-_CFG_MODE_SHUNT_BUS_CONT = 0b111   # Shunt and bus, continuous
+_CFG_MODE_POWER_DOWN = const(0b000)   # Power-down mode
+_CFG_MODE_SHUNT_TRIG = const(0b001)   # Shunt voltage, triggered
+_CFG_MODE_BUS_TRIG = const(0b010)     # Bus voltage, triggered
+_CFG_MODE_SHUNT_BUS_TRIG = const(0b011)   # Shunt and bus, triggered
+_CFG_MODE_ADC_OFF = const(0b100)      # ADC off (disabled)
+_CFG_MODE_SHUNT_CONT = const(0b101)   # Shunt voltage, continuous
+_CFG_MODE_BUS_CONT = const(0b110)     # Bus voltage, continuous
+_CFG_MODE_SHUNT_BUS_CONT = const(0b111)   # Shunt and bus, continuous
 
 
 # Mask/Enable register bits (0x06)
-_MASK_SOL = 0x8000             # Shunt over-voltage alert flag
-_MASK_SUL = 0x4000             # Shunt under-voltage alert flag
-_MASK_BOL = 0x2000             # Bus over-voltage alert flag
-_MASK_BUL = 0x1000             # Bus under-voltage alert flag
-_MASK_POL = 0x0800             # Power over-limit alert flag
-_MASK_CNVR = 0x0400            # Conversion ready alert flag
-_MASK_AFF = 0x0010             # Alert function flag
-_MASK_CVRF = 0x0008            # Conversion ready flag
-_MASK_OVF = 0x0004             # Math overflow flag
-_MASK_APOL = 0x0002            # Alert pin polarity select
-_MASK_LEN = 0x0001             # Alert latch enable
+_MASK_SOL = const(0x8000)             # Shunt over-voltage alert flag
+_MASK_SUL = const(0x4000)             # Shunt under-voltage alert flag
+_MASK_BOL = const(0x2000)             # Bus over-voltage alert flag
+_MASK_BUL = const(0x1000)             # Bus under-voltage alert flag
+_MASK_POL = const(0x0800)             # Power over-limit alert flag
+_MASK_CNVR = const(0x0400)            # Conversion ready alert flag
+_MASK_AFF = const(0x0010)             # Alert function flag
+_MASK_CVRF = const(0x0008)            # Conversion ready flag
+_MASK_OVF = const(0x0004)             # Math overflow flag
+_MASK_APOL = const(0x0002)            # Alert pin polarity select
+_MASK_LEN = const(0x0001)             # Alert latch enable
 
 
 # Device identification
-_MANUFACTURER_ID_TI = 0x5449   # Texas Instruments manufacturer ID
+_MANUFACTURER_ID_TI = const(0x5449)   # Texas Instruments manufacturer ID
 
 
 # Driver configuration constants (100 mΩ shunt)
-_SHUNT_RESISTOR_MILLIOHM = 100
-_CALIBRATION_VALUE = 0x0200    # 512 => 0.1 mA current register LSB with 100 mΩ shunt
-_CURRENT_LSB_UA = 100          # 0.1 mA current LSB in microamps
-_POWER_LSB_UW = 2500           # 2.5 mW power LSB in microwatts
-_READ_TIMEOUT_MS = 50
+_SHUNT_RESISTOR_MILLIOHM = const(100)
+_CALIBRATION_VALUE = const(0x0200)    # 512 => 0.1 mA current register LSB with 100 mΩ shunt
+_CURRENT_LSB_UA = const(100)          # 0.1 mA current LSB in microamps
+_POWER_LSB_UW = const(2500)           # 2.5 mW power LSB in microwatts
+_READ_TIMEOUT_MS = const(50)
 
 # Default operating configuration:
 #  - shunt conversion: 8.244 ms
@@ -2127,9 +2234,9 @@ class INA226(SensorBase):
 
 
 
-_LED_PIN = 2        # LED to illumiinate area under colour sensor to measure reflected light from surface below.
-_COLOUR_INT_PIN = 1  # Not currently used, but we can set it up as an input for future interrupt-based drivers
-_DIST_INT_PIN = 3  # Not currently used, but we can set it up as an input for future interrupt-based drivers
+_LED_PIN = const(2)        # LED to illumiinate area under colour sensor to measure reflected light from surface below.
+_COLOUR_INT_PIN = const(1)  # Not currently used, but we can set it up as an input for future interrupt-based drivers
+_DIST_INT_PIN = const(3)  # Not currently used, but we can set it up as an input for future interrupt-based drivers
 
 ALL_SENSOR_CLASSES = [INA226]
 
@@ -2343,6 +2450,13 @@ class SensorManager:
         return None
 
 
-
+def format_voltage_mv(voltage_mv: int | None) -> str:
+    if voltage_mv is None:
+        return "--"
+    sign = "-" if voltage_mv < 0 else ""
+    absolute = abs(int(voltage_mv))
+    whole = absolute // 1000
+    fraction = (absolute % 1000) // 10
+    return f"{sign}{whole}.{fraction:02d}V"
 
 __app_export__ = HexTestApp
