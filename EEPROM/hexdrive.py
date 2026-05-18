@@ -3,6 +3,11 @@
 # This is the app to be installed from the HexDrive Hexpansion EEPROM.
 # it is compiled and copied onto the EEPROM app.mpy
 # It is then run from the EEPROM by the BadgeOS.
+try:
+    from micropython import const
+except ImportError:
+    # CPython / simulator fallback – const() is an identity function on MicroPython
+    const = lambda x: x  # noqa: E731
 
 import ota
 from machine import PWM, Pin
@@ -22,26 +27,26 @@ _MIN_BADGEOS_VERSION = [1, 9, 0]     # v1.9.0 is required to be able to read the
 
 # HexDrive Hexpansion constants
 # Hardware defintions:
-_ENABLE_PIN  = 0     # First LS pin used to enable the SMPSU
+_ENABLE_PIN  = const(0)     # First LS pin used to enable the SMPSU
 
 # Default values and limits:
-_DEFAULT_PWM_FREQ = 20000           # 20kHz is a good default for motors as it is above the audible range for most people and works with most motors and ESCs
-_DEFAULT_SERVO_FREQ = 50            # 50Hz = 20mS period
-_DEFAULT_KEEP_ALIVE_PERIOD = 1000   # 1 second
-_MAX_NUM_CHANNELS = 4               # Max number of PWM channels supported by any type of HexDrive (Hexpansion limitation, not BadgeBot limit)
-_MAX_NUM_MOTORS = 2                 # Max number of motor channels supported by any type of HexDrive
+_DEFAULT_PWM_FREQ = const(20000)           # 20kHz is a good default for motors as it is above the audible range for most people and works with most motors and ESCs
+_DEFAULT_SERVO_FREQ = const(50)            # 50Hz = 20mS period
+_DEFAULT_KEEP_ALIVE_PERIOD = const(1000)   # 1 second
+_MAX_NUM_CHANNELS = const(4)               # Max number of PWM channels supported by any type of HexDrive (Hexpansion limitation, not BadgeBot limit)
+_MAX_NUM_MOTORS = const(2)                 # Max number of motor channels supported by any type of HexDrive
 
 # Servo Constants
-_MAX_SERVO_FREQ = 200               # 200Hz = 5mS period (can work with some Servos but not all)
-_SERVO_CENTRE    = 1500             # 1500us pulse width is the centre position for most RC servos (but some may be different, so we allow this to be trimmed)
-_MAX_SERVO_RANGE = 1400             # 1400us either side of centre (VERY WIDE)
-_SERVO_MAX_TRIM  = 1000             # 1000us either side of centre for trimming the centre position
+_MAX_SERVO_FREQ = const(200)               # 200Hz = 5mS period (can work with some Servos but not all)
+_SERVO_CENTRE    = const(1500)             # 1500us pulse width is the centre position for most RC servos (but some may be different, so we allow this to be trimmed)
+_MAX_SERVO_RANGE = const(1400)             # 1400us either side of centre (VERY WIDE)
+_SERVO_MAX_TRIM  = const(1000)             # 1000us either side of centre for trimming the centre position
 
 # EEPROM Constants
-_EEPROM_ADDR  = 0x50                # I2C address of the EEPROM on the HexDrive and HexSense Hexpansion
-_EEPROM_NUM_ADDRESS_BYTES = 2       # Number of bytes used for the memory address when reading from the EEPROM (e.g. 2 for 16-bit addressing)
-_VID_ADDR     = 0x10                # Address in the EEPROM where the Vendor ID (VID) byte is stored - used to identify the hardware version of the HexDrive
-_PID_ADDR     = 0x12                # Address in the EEPROM where the Product ID (PID) byte is stored - used to identify the type of Hexpansion
+_EEPROM_ADDR  = const(0x50)                # I2C address of the EEPROM on the HexDrive and HexSense Hexpansion
+_EEPROM_NUM_ADDRESS_BYTES = const(2)       # Number of bytes used for the memory address when reading from the EEPROM (e.g. 2 for 16-bit addressing)
+_VID_ADDR     = const(0x10)                # Address in the EEPROM where the Vendor ID (VID) byte is stored - used to identify the hardware version of the HexDrive
+_PID_ADDR     = const(0x12)                # Address in the EEPROM where the Product ID (PID) byte is stored - used to identify the type of Hexpansion
 
 
 class HexDriveType:
@@ -62,6 +67,7 @@ _HEXDRIVE_TYPES = (
     HexDriveType(0xCD, motors=1, servos=2, name="1 Mot 2 Srvo", servo_pins=(1, 0, -1, -1)),
 )
 
+_DEFAULT_HEXDRIVE_TYPE = _HEXDRIVE_TYPES[1]  # default to the uncommitted version if we can't read the EEPROM for some reason
 
 class HexDriveApp(app.App):         # pylint: disable=no-member
     """ HexDrive Hexpansion App for BadgeBot."""
@@ -472,7 +478,7 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
 
 
     def _check_port_for_hexdrive(self, port: int) -> HexDriveType | None:
-        
+
         pid: int = 0
         try:
             if hexpansion_app is not None:
@@ -488,21 +494,21 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
                             print(f"D:{port}:No hexpansion header found")
                         return None
         except Exception as e:      # pylint: disable=broad-except
-            print(f"D:{port}:use of hexpansion manager headers failed {e}") 
+            print(f"D:{port}:use of hexpansion manager headers failed {e}")
             #just read the part of the header which contains the PID
             try:
                 pid = int.from_bytes(self.config.i2c.readfrom_mem(_EEPROM_ADDR, _PID_ADDR, 2, addrsize = 8*_EEPROM_NUM_ADDRESS_BYTES), "little")
             except OSError as e:
                 # no EEPROM on this port
                 print(f"D:{port}:EEPROM error: {e}")
-                return None
+                return _DEFAULT_HEXDRIVE_TYPE
         # check which type of HexDrive this is by scanning the HEXDRIVE_TYPES list
         for _, hexpansion_type in enumerate(_HEXDRIVE_TYPES):
             # we only use the LSByte of the PID to identify the type of HexDrive, as the MSByte is used for other things
             if pid & 0xFF == hexpansion_type.pid:
                 return hexpansion_type
         # we are not interested in this type of hexpansion as it was not recognised
-        return None
+        return _DEFAULT_HEXDRIVE_TYPE
 
 
     def _parse_version(self, version):
