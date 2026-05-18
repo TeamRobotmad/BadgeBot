@@ -142,8 +142,9 @@ class SettingsMgr:
 
 
     def  start(self, item: str) -> bool:
-        """Enter Settings editing mode from the main menu."""
+        """Enter Setting editing mode from the main menu."""
         app = self._app
+        app._settings_menu_position = app.menu.position if app.menu else 0
         app.set_menu(None)
         app.button_states.clear()
         app.refresh = True
