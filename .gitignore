@@ -9,3 +9,4 @@ BadgeBot.code-workspace
 # minify.py build artefacts
 vendor/**/*.min.py
 vendor/**/*.renamed.py
+EEPROM/*.renamed.py

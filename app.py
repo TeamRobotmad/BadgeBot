@@ -190,6 +190,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.message_return_state: int | None = None
         self.current_menu: str | None = None
         self.menu: Menu | None = None
+        self._main_menu_position: int = 0
+        self._settings_menu_position: int = 0
         self.scroll_mode_enabled: bool = False  # Whether pressing the "C" button can toggle scroll mode on/off, which allows the user to scroll through lines on the display.
         self.scroll_ignore_next_c_button: bool = False # Used to ignore the "C" button event that triggers scroll mode on, otherwise it would immediately toggle scroll mode off again
         self.is_scroll: bool = False        # Whether we are in scroll mode - this is displayed by a green border around the screen
@@ -514,6 +516,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
     def fast_settings_update(self):
         """Update fast access settings from the main settings dictionary."""
+        if self.logging:
+            print("Updating fast access settings")
         self._motor1_reversed: bool = self.settings['motor1_dir'].v != 0
         self._motor2_reversed: bool = self.settings['motor2_dir'].v != 0
 
@@ -997,6 +1001,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                     menu_items,
                     select_handler=self._main_menu_select_handler,
                     back_handler=self._menu_back_handler,
+                    position=self._main_menu_position,
                 )
         elif menu_name == MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS] and self._settings_mgr is not None: # "Settings"
             # construct the settings menu
@@ -1008,13 +1013,15 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 _settings_menu_items,
                 select_handler=self._settings_menu_select_handler,
                 back_handler=self._menu_back_handler,
+                position=self._settings_menu_position,
                 )
 
 
     # this appears to be able to be called at any time
     def _main_menu_select_handler(self, item: str, idx: int):
         if self.logging:
-            print(f"H:Main Menu {item} at index {idx}")
+            print(f"H:Main Menu {item} at index {idx} position {self.menu.position if self.menu else 'N/A'}")
+        self._main_menu_position = self.menu.position if self.menu else 0
         if   item == MAIN_MENU_ITEMS[MENU_ITEM_LINE_FOLLOWER]: # Line Follower
             # Check for required hardware and show message if not present, otherwise start the line follower manager and switch to follower state
             if self.num_motors == 0:
@@ -1111,8 +1118,11 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
     def _menu_back_handler(self):
         if self.current_menu == "main":
+            self._main_menu_position = self.menu.position if self.menu else 0
             self.minimise()
         # for submenus, just return to the main menu
+        if self.current_menu == MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS]:
+            self._settings_menu_position = self.menu.position if self.menu else 0
         self.set_menu()
 
 def diagnostics_output(index: int, value: int):
