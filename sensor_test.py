@@ -91,7 +91,7 @@ _AUTO_SCAN_STEPS       = 60     # Number of power levels to test during auto sca
 _AUTO_SCAN_SETTLE_MS   = 320    # ms to wait after setting power before starting actual measurement period
 _AUTO_SCAN_MEASURE_MS  = 5000   # ms measurement window per step (maximum)
 _AUTO_RESULTS_FILENAME = "mtrtst.csv"
-_AUTO_RESULTS_DEST_LABELS = ("badge fs", "hex fs")
+_FILE_DEST_LABELS = ("Badge FS", "Hex FS")
 
 
 # Pages of information to show for each sensor (can be switched with up/down buttons)
@@ -128,7 +128,7 @@ COLOR_REGIONS = [
 def init_settings(s, MySetting: type):       # pylint: disable=unused-argument, invalid-name
     """Register sensor-test-specific settings in the shared settings dict.
     Currently only the motor-test CSV destination is exposed here."""
-    s["path"] = MySetting(s, 0, 0, len(_AUTO_RESULTS_DEST_LABELS) - 1, labels=_AUTO_RESULTS_DEST_LABELS)
+    s["path"] = MySetting(s, 0, 0, len(_FILE_DEST_LABELS) - 1, labels=_FILE_DEST_LABELS)
 
 
 # ---- Sensor Test manager ---------------------------------------------------
@@ -170,16 +170,16 @@ class SensorTestMgr:
         self._rotation_rate_spokes: int = _DEFAULT_SPOKES_PER_ROTATION
 
         # Auto scan state
-        self._auto_mode: bool = False             # True = auto scanning, False = manual
-        self._auto_direction: int = 1             # 1 = forwards, -1 = reverse
-        self._auto_step: int = 0                  # current step index (0.._AUTO_SCAN_STEPS-1)
-        self._auto_settling: bool = True          # True = in settle phase, False = in measure phase
+        self._scan_mode: bool = False             # True = auto scanning, False = manual
+        self._scan_direction: int = 1             # 1 = forwards, -1 = reverse
+        self._scan_step: int = 0                  # current step index (0.._AUTO_SCAN_STEPS-1)
+        self._capture_settling: bool = True          # True = in settle phase, False = in measure phase
         self._rotation_detected: bool = False     # True once motion has been observed during auto scan
-        self._auto_results: list[tuple[int, list[int], int | None]] = []   # list of (power, rpm list, current mA)
-        self._auto_max_rpm: int = 0               # max rpm seen during scan
-        self._auto_max_current_ma: int = 0        # max current seen during scan
-        self._auto_last_current_ma: int = 0       # latest current sampled in auto mode
-        self._auto_done: bool = False             # True = scan complete
+        self._capture_data: list[tuple[int, list[int], int | None]] = []   # list of (power, rpm list, current mA)
+        self._max_rpm: int = 0               # max rpm seen during scan
+        self._max_current_ma: int = 0        # max current seen during scan
+        self._last_current_ms: int = 0       # latest current sampled in auto mode
+        self._scan_done: bool = False             # True = scan complete
         self._motor_calibration_fit: list[tuple[float, float] | None] = []  # list of (slope, intercept) fits, indexed by motor number
 
         self._ina226 = None
@@ -608,21 +608,21 @@ class SensorTestMgr:
 
 
     def _auto_rotation_rate_step(self):
-        self._auto_step += 1
+        self._scan_step += 1
         self._app.refresh = True
-        if self._auto_step >= _AUTO_SCAN_STEPS:
+        if self._scan_step >= _AUTO_SCAN_STEPS:
             # Scan complete — stop motors
-            self._auto_done = True
+            self._scan_done = True
             self._rotation_detected = False
             self._rotation_rate_motor_power = 0
-            self._auto_direction *= -1  # reverse direction for next scan
+            self._scan_direction *= -1  # reverse direction for next scan
             self._auto_fit_calculate()
-            self._save_auto_results_csv()
+            self._save_capture_data_csv()
         else:
             # Advance to next power level
-            self._rotation_rate_motor_power = self._auto_direction * (65535 * self._auto_step) // (_AUTO_SCAN_STEPS - 1)
+            self._rotation_rate_motor_power = self._scan_direction * (65535 * self._scan_step) // (_AUTO_SCAN_STEPS - 1)
         self._rotation_rate_measurement_period_elapsed = 0
-        self._auto_settling = True
+        self._capture_settling = True
 
 
     def _auto_results_dest_mode(self) -> int:
@@ -678,8 +678,8 @@ class SensorTestMgr:
         return f"/{_AUTO_RESULTS_FILENAME}", None, False
 
 
-    def _save_auto_results_csv(self) -> bool:
-        if len(self._auto_results) == 0:
+    def _save_capture_data_csv(self) -> bool:
+        if len(self._capture_data) == 0:
             return False
         output_path, mountpoint, mounted_here = self._auto_results_path()
         if output_path is None:
@@ -687,15 +687,14 @@ class SensorTestMgr:
 
         rpm_count = len(self._rotation_rate_rpms)
         header = ["pwr"] + [f"rpm{index + 1}" for index in range(rpm_count)] + ["ma"]
-
         try:
             with open(output_path, "wb") as csv_file:
                 csv_file.write((",".join(header) + "\n").encode())
-                for power, rpms, current_ma in self._auto_results:
+                for power, rpms, current_ma in self._capture_data:
                     row = [str(power)]
                     row.extend(str(rpm) for rpm in rpms)
                     row.append(str(current_ma))
-                    csv_file.write(",".join(row).encode())
+                    csv_file.write((",".join(row) + "\n").encode())
         except Exception as exc:      # pylint: disable=broad-exception-caught
             print(f"ST:Failed to save CSV {output_path}: {exc}")
             return False
@@ -730,7 +729,7 @@ class SensorTestMgr:
     def _auto_fit_calculate(self) -> None:
         self._motor_calibration_fit = []
         for index in range(len(self._rotation_rate_rpms)):
-            points = [(power, rpms[index]) for power, rpms, _ in self._auto_results if index < len(rpms)]
+            points = [(power, rpms[index]) for power, rpms, _ in self._capture_data if index < len(rpms)]
             self._motor_calibration_fit.append(self._linear_regression(points))
 
 
@@ -878,36 +877,36 @@ class SensorTestMgr:
         elif app.button_states.get(BUTTON_TYPES["CONFIRM"]):
             app.button_states.clear()
             self._rotation_rate_motor_power = 0
-            self._auto_last_current_ma = 0
+            self._last_current_ms = 0
             self._rotation_rate_measurement_period_elapsed = 0
             self._reset_ina226_accumulators()
             for counter in self._rotation_rate_counters:
                 if counter is not None:
                     counter.value(0)      # reset counter
-            if self._auto_mode:
+            if self._scan_mode:
                 # Switch back to manual
                 self._show_auto_results_fit()
                 self._rotation_rate_measurement_period = _ROTATION_RATE_MEASUREMENT_PERIOD_MS
-                self._auto_mode = False
-                self._auto_done = False
+                self._scan_mode = False
+                self._scan_done = False
             else:
                 # Start auto scan
-                self._auto_mode = True
-                self._auto_done = False
-                self._auto_step = 0
+                self._scan_mode = True
+                self._scan_done = False
+                self._scan_step = 0
                 self._rotation_rate_measurement_period = _AUTO_SCAN_MEASURE_MS
-                self._auto_settling = True
-                self._auto_results = []
-                self._auto_max_rpm = 10
-                self._auto_max_current_ma = 50
+                self._capture_settling = True
+                self._capture_data = []
+                self._max_rpm = 10
+                self._max_current_ma = 50
                 self._rotation_detected = False
             app.refresh = True
             return
 
-        if self._auto_mode:
-            if not self._auto_done:
+        if self._scan_mode:
+            if not self._scan_done:
                 self._rotation_rate_measurement_period_elapsed += delta
-                if self._auto_settling:
+                if self._capture_settling:
                     if self._rotation_rate_measurement_period_elapsed >= _AUTO_SCAN_SETTLE_MS:
                         # Settle phase done — discard counter and start measuring
                         count = 0
@@ -920,14 +919,14 @@ class SensorTestMgr:
                             current_ma = self._consume_ina226_average()
                             if current_ma is not None:
                                 current_abs = abs(current_ma)
-                                self._auto_last_current_ma = current_ma
-                                if current_abs > self._auto_max_current_ma:
-                                    self._auto_max_current_ma = current_abs
+                                self._last_current_ms = current_ma
+                                if current_abs > self._max_current_ma:
+                                    self._max_current_ma = current_abs
                             power = self._rotation_rate_motor_power
                             self._rotation_rate_rpms = [0] * len(self._rotation_rate_counters)
                             if self._logging:
-                                print(f"ST:Auto Scan Step {self._auto_step}/{_AUTO_SCAN_STEPS} - Power: {power}, Rate: 0 rpm, Current: {current_ma}mA")
-                            self._auto_results.append((power//66, [0] * len(self._rotation_rate_counters), current_ma))
+                                print(f"ST:Auto Scan Step {self._scan_step}/{_AUTO_SCAN_STEPS} - Power: {power}, Rate: 0 rpm, Current: {current_ma}mA")
+                            self._capture_data.append((power//66, [0] * len(self._rotation_rate_counters), current_ma))
                             self._auto_rotation_rate_step()
 
                         else:
@@ -937,7 +936,7 @@ class SensorTestMgr:
                             cpm = (60000 * count) // self._rotation_rate_measurement_period_elapsed # rounded down - never displayed
                             self._rotation_rate_measurement_period = min(_AUTO_SCAN_MEASURE_MS, (60000 * 50) // cpm) if cpm > 0 else _AUTO_SCAN_MEASURE_MS
                             self._rotation_rate_measurement_period_elapsed = 0
-                            self._auto_settling = False
+                            self._capture_settling = False
                             self._reset_ina226_accumulators()
                 else:
                     if self._rotation_rate_measurement_period_elapsed >= self._rotation_rate_measurement_period:
@@ -947,21 +946,21 @@ class SensorTestMgr:
                             if counter is not None:
                                 count = counter.value(0)
                                 rpm = ((60000 * count) + self._rotation_rate_rounding) // (self._rotation_rate_measurement_period_elapsed * self._rotation_rate_spokes)
-                                if rpm > self._auto_max_rpm:
-                                    self._auto_max_rpm = rpm
+                                if rpm > self._max_rpm:
+                                    self._max_rpm = rpm
                                 self._rotation_rate_rpms[index] = rpm
 
                         ### duplicate of block above - could be a method
                         current_ma = self._consume_ina226_average()
                         if current_ma is not None:
                             current_abs = abs(current_ma)
-                            self._auto_last_current_ma = current_ma
-                            if current_abs > self._auto_max_current_ma:
-                                self._auto_max_current_ma = current_abs
+                            self._last_current_ms = current_ma
+                            if current_abs > self._max_current_ma:
+                                self._max_current_ma = current_abs
                         power = self._rotation_rate_motor_power
                         if self._logging:
-                            print(f"ST:Auto Scan Step {self._auto_step}/{_AUTO_SCAN_STEPS} - Power: {power}, Rates: {self._rotation_rate_rpms} rpm, Current: {current_ma}mA")
-                        self._auto_results.append((power//66, self._rotation_rate_rpms, current_ma))
+                            print(f"ST:Auto Scan Step {self._scan_step}/{_AUTO_SCAN_STEPS} - Power: {power}, Rates: {self._rotation_rate_rpms} rpm, Current: {current_ma}mA")
+                        self._capture_data.append((power//66, self._rotation_rate_rpms, current_ma))
                         self._auto_rotation_rate_step()
 
             # In auto mode, no manual button control for power/IR
@@ -1416,8 +1415,8 @@ class SensorTestMgr:
         print(f"ST:Test results: {self._test_results}")
 
         app = self._app
-        self._auto_mode = False
-        self._auto_done = False
+        self._scan_mode = False
+        self._scan_done = False
         self._rotation_rate_motor_power = 0
         self._ina226_reading = {}
         self._reset_ina226_accumulators()
@@ -1468,7 +1467,7 @@ class SensorTestMgr:
     def _draw_motor_test_mode(self, ctx):
         if self._test_support_hexpansion_config is None:
             return
-        if self._auto_mode:
+        if self._scan_mode:
             self._draw_auto_scan(ctx)
             return
         #print("DRAWING")
@@ -1510,9 +1509,9 @@ class SensorTestMgr:
         ctx.move_to(chart_left, chart_bottom).line_to(chart_right, chart_bottom).stroke()  # X axis
         ctx.move_to(chart_left, chart_bottom).line_to(chart_left, chart_top).stroke()      # Y axis
 
-        n = len(self._auto_results)
-        max_rpm = self._auto_max_rpm if self._auto_max_rpm > 0 else 1
-        max_current_ma = self._auto_max_current_ma if self._auto_max_current_ma > 0 else 1
+        n = len(self._capture_data)
+        max_rpm = self._max_rpm if self._max_rpm > 0 else 1
+        max_current_ma = self._max_current_ma if self._max_current_ma > 0 else 1
 
         if n > 1:
             # Plot data points as small bars.
@@ -1521,7 +1520,7 @@ class SensorTestMgr:
             # scalar for this chart by using the maximum measured RPM.
             bar_w = max(1, chart_w // _AUTO_SCAN_STEPS)
             for i in range(n):
-                power, rpms, current_ma = self._auto_results[i]
+                power, rpms, current_ma = self._capture_data[i]
                 x = chart_left + (abs(power) * chart_w) // 100
                 for index, rpm in enumerate(rpms):
                     h = (rpm * chart_h) // max_rpm
@@ -1536,7 +1535,7 @@ class SensorTestMgr:
 
         # Title and max RPM label
         ctx.font_size = label_font_size
-        if self._auto_done:
+        if self._scan_done:
             ctx.move_to(-50, chart_top - 25).text("Complete")
 
             ctx.font_size = label_font_size - 8
@@ -1554,8 +1553,8 @@ class SensorTestMgr:
                     continue
                 slope, intercept = fit
                 # get min and max power values from the scan range
-                left_power = self._auto_results[0][0]
-                right_power = self._auto_results[n-1][0]
+                left_power = self._capture_data[0][0]
+                right_power = self._capture_data[n-1][0]
                 # is intercept going to be with X or Y axis as only positive quadrant shown
                 if intercept < 0:
                     x1 = chart_left - ((intercept * max_rpm) // slope)
@@ -1574,14 +1573,14 @@ class SensorTestMgr:
                 ctx.rgb(*self._colour_for_index(index)).move_to(x1, y1).line_to(x2, y2).stroke()
 
         else:
-            progress = (self._auto_step * 100) // _AUTO_SCAN_STEPS
+            progress = (self._scan_step * 100) // _AUTO_SCAN_STEPS
             ctx.rgb(1.0,1.0,1.0).move_to(-50, chart_top - 25).text(f"Scan {progress}%")
 
             # Instantaneous current label (updated live during the scan)
             ctx.font_size = label_font_size - 8
             for index, rpm in enumerate(self._rotation_rate_rpms):
                 ctx.rgb(*self._colour_for_index(index)).move_to(chart_left+20, chart_bottom + 5 + ((index + 2) * (ctx.font_size))).text(f"Mtr{index+1}: {rpm}rpm")
-            ctx.rgb(1.0, 0.2, 0.2).move_to(15, chart_bottom + 5 + ctx.font_size).text(f"{self._auto_last_current_ma}mA")
+            ctx.rgb(1.0, 0.2, 0.2).move_to(15, chart_bottom + 5 + ctx.font_size).text(f"{self._last_current_ms}mA")
 
         # Y axis Maximum RPM and Current labels
         ctx.font_size = label_font_size - 8
