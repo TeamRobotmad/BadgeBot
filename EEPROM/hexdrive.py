@@ -334,7 +334,9 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
                 # Channel hasn't been setup yet so we need to initialise it from scratch
                 self._freq[channel] = self._freq[channel] if (0 < self._freq[channel]) and (self._freq[channel] <= _MAX_SERVO_FREQ) else _DEFAULT_SERVO_FREQ
                 try:
-                    self.PWMOutput[physical_channel] = PWM(self.config.pin[physical_channel], freq = self._freq[channel], duty_ns = pulse_width_in_ns)
+                    pin = self.config.pin[physical_channel]
+                    self.PWMOutput[physical_channel] = PWM(pin, freq = self._freq[channel])
+                    self.PWMOutput[physical_channel].duty_ns(pulse_width_in_ns)
                     #if self._logging:
                     #    print(self._pwm_log_string(physical_channel) + f"{self.PWMOutput[physical_channel]} init")
                 except Exception as e:      # pylint: disable=broad-except
@@ -461,7 +463,8 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
             if self.PWMOutput[_channel] is None:
                 # Channel hasn't been setup yet so we need to initialise it from scratch
                 pin = self.config.pin[_channel]
-                self.PWMOutput[_channel] = PWM(pin, freq = self._freq[_channel], duty_u16 = _duty_cycle)
+                self.PWMOutput[_channel] = PWM(pin, freq = self._freq[_channel])
+                self.PWMOutput[_channel].duty_u16(_duty_cycle)
                 #if self._logging:
                 #    print(self._pwm_log_string(_channel) + f"{self.PWMOutput[_channel]} init")
             pwm = self.PWMOutput[_channel]
@@ -472,7 +475,7 @@ class HexDriveApp(app.App):         # pylint: disable=no-member
             #if self._logging:
             #    print(self._pwm_log_string(_channel) + f"{_duty_cycle}")
         except Exception as e:              # pylint: disable=broad-except
-            #print(self._pwm_log_string(_channel) + f"set {_duty_cycle} failed {e}")
+            print(self._pwm_log_string(_channel) + f"set {_duty_cycle} failed {e}")
             return False
         return True
 
