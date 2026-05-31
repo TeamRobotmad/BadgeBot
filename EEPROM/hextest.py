@@ -22,6 +22,7 @@ from app_components.notification import Notification
 from events.input import BUTTON_TYPES, Buttons
 
 from system.eventbus import eventbus
+from system.hexpansion import app as hexpansion_app
 from system.hexpansion.config import HexpansionConfig
 from system.hexpansion.events import HexpansionMountedEvent, HexpansionRemovalEvent
 from system.scheduler.events import (RequestForegroundPopEvent,
@@ -32,7 +33,6 @@ from system.scheduler import scheduler
 from system.hexpansion.util import (
     detect_eeprom_addr,
     get_hexpansion_block_devices,
-    read_hexpansion_header,
 )
 try:
     from system.hexpansion.util import get_app_by_slot, get_slots_by_vid_pid
@@ -48,9 +48,9 @@ except ImportError:
     def get_slots_by_vid_pid(vid, pid):
         """Find all hexpansion ports with the given VID/PID. Returns a list of port numbers."""
         ports_with_hexpansion = []
-        for port in range(1, 7):
+        for port in range(1, 1+_SLOTS):
             try:
-                i2c = I2C(port)
+                i2c = I2C(port)   # port is 0-indexed in code but 1-indexed in hardware
                 # Autodetect eeprom addr
                 eeprom_addr, addr_len = detect_eeprom_addr(i2c)
                 if eeprom_addr is None:
@@ -120,7 +120,7 @@ _MOTOR_PWM_FREQUENCY = const(20000)                    # Default PWM frequency t
 _AUTO_SCAN_STEPS       = const(50)     # Number of power levels to test during auto scan
 _AUTO_SCAN_SETTLE_MS   = const(800)    # ms to wait after setting power before starting actual measurement period
 _AUTO_SCAN_MEASURE_MS  = const(10000)  # ms measurement window per step (maximum)
-_AUTO_SCAN_MIN_POWER   = const(25535)  # Minimum power level to test during auto scan (0-65535)
+_AUTO_SCAN_MIN_POWER   = const(15535)  # Minimum power level to test during auto scan (0-65535)
 _FILE = "motor"
 _EXT  = "csv"
 _FILE_DEST_LABELS = ("Badge FS", "Hex FS")
@@ -217,7 +217,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         self.current_menu: str | None = None
         self.menu: Menu | None = None
 
-        # Settings - common settings first, then each module registers its own later
+        # Settings
         self.settings: dict = {}
         self.edit_setting = None
         self.edit_setting_value = None
@@ -248,10 +248,11 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         self._capture_data: list[tuple[int, list[int], int | None]] = []   # list of (power, rpm list, current mA)
         self._max_rpm: int = 0               # max rpm seen during scan
         self._max_current_ma: int = 0        # max current seen during scan
-        self._last_current_ms: int = 0       # latest current sampled in auto mode
+        self._last_current_ma: int = 0       # latest current sampled in auto mode
         self._scan_done: bool = False             # True = scan complete
         self._motor_calibration_fit: list[tuple[float, float] | None] = []  # list of (slope, intercept) fits, indexed by motor number
         self._hut_id: int  = 0              # ID of the hexpansion under test (HUT) to include in the auto scan results file name
+        self._hut_id_seeded_ports = set()   # ports already seen this mount cycle, so we only seed from UID once per detection
 
         self._ina226 = None
         self._ina226_sensor_mgr = None  # SensorManager used exclusively for motor-test INA226 discovery
@@ -273,7 +274,9 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         if MySetting is not None:
             # General settings
             self.settings['logging']       = MySetting(self.settings, _LOGGING, False, True)
-            self.settings["path"]          = MySetting(self.settings, 0, 0, len(_FILE_DEST_LABELS) - 1, labels=_FILE_DEST_LABELS)
+            self.settings['path']          = MySetting(self.settings, 0, 0, len(_FILE_DEST_LABELS) - 1, labels=_FILE_DEST_LABELS)
+            self.settings['serialise']     = MySetting(self.settings, False, False, True)
+            self.settings['ir_pwm']        = MySetting(self.settings, _DEFAULT_ROTATION_RATE_EMITTER_DUTY, 0, 255)
 
             self.update_settings()
 
@@ -323,14 +326,16 @@ class HexTestApp(app.App):         # pylint: disable=no-member
     @property
     def rotation_rate_emitter_duty(self) -> int:
         """Duty cycle (0-255) for the IR emitter when doing rotation rate testing."""
-        return self._rotation_rate_emitter_duty
+        if 'ir_pwm' in self.settings:
+            return self.settings['ir_pwm'].v
+        return _DEFAULT_ROTATION_RATE_EMITTER_DUTY
 
     @rotation_rate_emitter_duty.setter
     def rotation_rate_emitter_duty(self, value: int):
-        self._rotation_rate_emitter_duty = value
+        self.settings['ir_pwm'].v = value
         if self.config is not None:
             for pin_num in _ROTATION_RATE_EMITTER_PINS:
-                self.config.ls_pin[pin_num].duty(self._rotation_rate_emitter_duty)
+                self.config.ls_pin[pin_num].duty(value)
 
     # ------------------------------------------------------------------
 
@@ -349,7 +354,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
             return False
         try:
             if enable:
-                if self._logging:
+                if self.logging:
                     print("T:Enabling rotation rate emitters and sensors")
                 for pin_num in _ROTATION_RATE_EMITTER_PINS:
                     self.config.ls_pin[pin_num].init(mode=ePin.PWM)  # Set LS pins to output mode to turn on the IR emitters
@@ -358,7 +363,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                     self.config.ls_pin[pin_num].init(mode=Pin.OUT)  # Set LS pins to output mode to enable the phototransistors for rotation rate measurement
                     self.config.ls_pin[pin_num].value(1)  # Set LS enable pins high to turn on the phototransistors for rotation rate measurement
             else:
-                if self._logging:
+                if self.logging:
                     print("T:Disabling rotation rate emitters and sensors")
                 for pin_num in _ROTATION_RATE_EMITTER_PINS:
                     self.config.ls_pin[pin_num].init(mode=Pin.IN)  # Set LS pins to input mode to turn off the IR emitters
@@ -389,7 +394,6 @@ class HexTestApp(app.App):         # pylint: disable=no-member
 
     def _exit_app(self):
         """ Clean up and exit the app, returning to the main menu."""
-
         eventbus.emit(RequestStopAppEvent(self))
 
 
@@ -398,8 +402,9 @@ class HexTestApp(app.App):         # pylint: disable=no-member
     # ------------------------------------------------------------------
 
     async def _handle_removal(self, event: HexpansionRemovalEvent):
+        self._hut_id_seeded_ports.discard(event.port)
         if event.port == self._hexdrive_in_use_port:
-            if self._logging:
+            if self.logging:
                 print(f"H:Hexpansion removed from port {event.port}")
             self._hexdrive_app = None
             self._hexdrive_in_use_port = None
@@ -413,12 +418,14 @@ class HexTestApp(app.App):         # pylint: disable=no-member
 
     async def _handle_mounted(self, event: HexpansionMountedEvent):
         if self._foreground and self.current_state in [STATE_MESSAGE, STATE_MENU]:
-            if self._logging:
+            if self.logging:
                 print(f"H:Hexpansion mounted on port {event.port}")
             # Check if it is a HexDrive we can use for testing
             # make a simple list of vid, pid pairs that we can check against efficiently
             vid_pid_pairs = [(type.vid, type.pid) for type in self.HEXPANSION_TYPES]
-            if hasattr(event, "header") and (event.header.vid, event.header.pid) in vid_pid_pairs:
+            header = getattr(event, "header", None)
+            if header is not None and (header.vid, header.pid) in vid_pid_pairs:
+                self._seed_hut_id_from_detected_hexdrive(event.port, header)
                 if self.logging:
                     print(f"H:Attempting to use newly mounted HexDrive on port {event.port}")
 
@@ -562,6 +569,9 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                 break
 
         if self._hexdrive_app is not None:
+            # First detect for this mounted hexpansion: seed HUT ID from non-zero UID once.
+            self._seed_hut_id_from_detected_hexdrive(self._hexdrive_in_use_port)
+
             #Setup UUT = HexDrive
             try:
                 if self._hexdrive_app.initialise() and self._hexdrive_app.set_power(True) and self._hexdrive_app.set_freq(_MOTOR_PWM_FREQUENCY):
@@ -612,6 +622,36 @@ class HexTestApp(app.App):         # pylint: disable=no-member
             print("T:Failed to initialise for motor test mode - no hexdrive to test")
         self.notification = Notification("HexDrive   not Found")
         return False
+
+    def _get_header_for_port(self, port: int) -> HexpansionHeader | None:
+        header = None
+        if hexpansion_app is not None:
+            if hasattr(hexpansion_app, "_hexpansion_manager"):
+                manager = hexpansion_app._hexpansion_manager        # pylint: disable=protected-access
+                if manager is not None:
+                    header = manager.hexpansion_headers[port]
+        return header
+
+    def _seed_hut_id_from_detected_hexdrive(self, port: int | None, header: HexpansionHeader | None = None) -> None:
+        if port is None or port in self._hut_id_seeded_ports:
+            return
+
+        if header is None:
+            header = self._get_header_for_port(port)
+
+        if header is not None:
+            try:
+                unique_id = int(header.unique_id)
+            except (TypeError, ValueError):
+                unique_id = 0
+
+            if unique_id != 0:
+                self._hut_id = unique_id
+                if self._logging:
+                    print(f"H:Initialised HUT ID from UID {unique_id} on port {port}")
+
+        # Mark this port as handled for the current mount cycle so user edits are preserved.
+        self._hut_id_seeded_ports.add(port)
 
 
 
@@ -666,7 +706,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         try:
             mgr = SensorManager(logging=self._logging)
             # The INA226 sensor can't be on a port with an EEPROM because that would clash with the UUT EEPROM.
-            for port in range(1, 7):
+            for port in range(1, 1+_SLOTS):
                 if not mgr.open(port):
                     mgr.close()
                     if self._logging:
@@ -732,13 +772,16 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         self._scan_step += 1
         self.refresh = True
         if self._scan_step >= _AUTO_SCAN_STEPS:
-            # Scan complete — stop motors
-            self._scan_done = True
+            if self._scan_direction == -1:
+                # Scan complete
+                self._scan_done = True
+                self._scan_direction = 1
+                #self._auto_fit_calculate()
+                self._save_capture_data_csv()
+            else:
+                self._scan_direction = -1  # reverse direction for second pass
             self._rotation_detected = False
             self._rotation_rate_motor_power = 0
-            self._scan_direction *= -1  # reverse direction for next scan
-            #self._auto_fit_calculate()
-            self._save_capture_data_csv()
         else:
             # Advance to next power level
             self._rotation_rate_motor_power = self._scan_direction * (_AUTO_SCAN_MIN_POWER + (((_MAX_POWER - _AUTO_SCAN_MIN_POWER) * self._scan_step) // (_AUTO_SCAN_STEPS - 1)))
@@ -757,14 +800,10 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         if self.config is None or getattr(self.config, "port", None) is None:
             print("HT:Hex fs save unavailable when running from badge")
             return None, False
-        mountpoint = "/hexcurrent"
-        eeprom_addr, addr_len = detect_eeprom_addr(self.config.i2c)
-        if eeprom_addr is None or addr_len is None:
-            print("HT:No EEPROM found on HexCurrent port")
-            return None, False
-        header = read_hexpansion_header(self.config.i2c, eeprom_addr=eeprom_addr, addr_len=addr_len)
+        mountpoint = "/hextest"
+        header = self._get_header_for_port(self.config.port)
         if header is None:
-            print("HT:Failed to read HexCurrent EEPROM header")
+            print("HT:Failed to read HexTest EEPROM header")
             return None, False
         try:
             _, partition = get_hexpansion_block_devices(self.config.i2c, header, eeprom_addr, addr_len=addr_len)
@@ -937,7 +976,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         # CONFIRM toggles between manual and auto mode
         elif self.button_states.get(BUTTON_TYPES["CONFIRM"]):
             self.button_states.clear()
-            self._last_current_ms = 0
+            self._last_current_ma = 0
             self._rotation_rate_measurement_period_elapsed = 0
             self._reset_ina226_accumulators()
             for counter in self._rotation_rate_counters:
@@ -957,7 +996,8 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                 self._scan_mode = True
                 self._scan_done = False
                 self._scan_step = 0
-                self._rotation_rate_motor_power = _AUTO_SCAN_MIN_POWER
+                self._scan_direction = 1
+                self._rotation_rate_motor_power = self._scan_direction * _AUTO_SCAN_MIN_POWER
                 self._rotation_rate_measurement_period = _AUTO_SCAN_MEASURE_MS
                 self._capture_settling = True
                 self._capture_data = []
@@ -985,7 +1025,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                             current_ma = self._consume_ina226_average()
                             if current_ma is not None:
                                 current_abs = abs(current_ma)
-                                self._last_current_ms = current_ma
+                                self._last_current_ma = current_ma
                                 if current_abs > self._max_current_ma:
                                     self._max_current_ma = current_abs
                             power = self._rotation_rate_motor_power
@@ -994,7 +1034,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                                 print(f"T:Auto Scan Step {self._scan_step}/{_AUTO_SCAN_STEPS} - Power: {power}, Rate: 0 rpm, Current: {current_ma}mA")
                             self._capture_data.append((power, [0] * len(self._rotation_rate_counters), current_ma))
                             self._auto_rotation_rate_step()
-                            if self._unsaved_data:
+                            if not self._unsaved_data:
                                 self._unsaved_data = True
 
                         else:
@@ -1022,7 +1062,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                         current_ma = self._consume_ina226_average()
                         if current_ma is not None:
                             current_abs = abs(current_ma)
-                            self._last_current_ms = current_ma
+                            self._last_current_ma = current_ma
                             if current_abs > self._max_current_ma:
                                 self._max_current_ma = current_abs
                         power = self._rotation_rate_motor_power
@@ -1052,17 +1092,21 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         # Manual mode button handling
         if self.button_states.get(BUTTON_TYPES["UP"]):
             self.button_states.clear()
-            self._hut_id += 1
-            #self.rotation_rate_emitter_duty = min(255, self.rotation_rate_emitter_duty + _IR_EMITTER_PWM_STEP_SIZE)
-            #if self.logging:
-            #    print(f"T:IR+Emitter Duty: {self.rotation_rate_emitter_duty}")
+            if self.settings['serialise'].v:
+                self._hut_id += 1
+            else:
+                self.rotation_rate_emitter_duty = min(255, self.rotation_rate_emitter_duty + _IR_EMITTER_PWM_STEP_SIZE)
+                if self.logging:
+                    print(f"T:IR+Emitter Duty: {self.rotation_rate_emitter_duty}")
             self.refresh = True
         elif self.button_states.get(BUTTON_TYPES["DOWN"]):
             self.button_states.clear()
-            self._hut_id = max(0, self._hut_id - 1)
-            #self.rotation_rate_emitter_duty = max(0, self.rotation_rate_emitter_duty - _IR_EMITTER_PWM_STEP_SIZE)
-            #if self.logging:
-            #    print(f"T:IR-Emitter Duty: {self.rotation_rate_emitter_duty}")
+            if self.settings['serialise'].v:
+                self._hut_id = max(0, self._hut_id - 1)
+            else:
+                self.rotation_rate_emitter_duty = max(0, self.rotation_rate_emitter_duty - _IR_EMITTER_PWM_STEP_SIZE)
+                if self.logging:
+                    print(f"T:IR-Emitter Duty: {self.rotation_rate_emitter_duty}")
             self.refresh = True
         elif self.button_states.get(BUTTON_TYPES["RIGHT"]):
             self.button_states.clear()
@@ -1151,9 +1195,11 @@ class HexTestApp(app.App):         # pylint: disable=no-member
             self._draw_auto_scan(ctx)
             return
         #print("DRAWING")
-        # Manual mode: show the current emitter duty cycle as a percentage in the label, and show the current photodiode reading and rate counter value in the display data
-        #lines = [f"IR:{int(self.rotation_rate_emitter_duty * 100 // 255)}%"]
-        lines = [f"ID:{self._hut_id}"]  # show the current HUT ID for data logging purposes
+        if self.settings['serialise'].v:
+            lines = [f"ID:{self._hut_id}"]  # show the current HUT ID for data logging purposes
+        else:
+            # Manual mode: show the current emitter duty cycle as a percentage in the label, and show the current photodiode reading and rate counter value in the display data
+            lines = [f"IR:{int(self.rotation_rate_emitter_duty * 100 // 255)}%"]
         colours = [(1, 1, 0)]
         # Show power
         lines += [f"Pwr:{self._rotation_rate_motor_power}"]
@@ -1169,8 +1215,10 @@ class HexTestApp(app.App):         # pylint: disable=no-member
             lines += [""]
             colours += [(0.3, 0.8, 1.0)]
         self.draw_message(ctx, lines, colours, label_font_size)
-        button_labels(ctx, up_label="ID+", down_label="ID-", cancel_label="Back",
-                      left_label="Pwr-", right_label="Pwr+", confirm_label="Scan")
+        button_labels(ctx,
+                      up_label="ID+" if self.settings['serialise'].v else "IR+",
+                      down_label="ID-" if self.settings['serialise'].v else "IR-",
+                      cancel_label="Back", left_label="Pwr-", right_label="Pwr+", confirm_label="Scan")
 
 
     def _draw_auto_scan(self, ctx):
@@ -1217,7 +1265,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         # Title and max RPM label
         ctx.font_size = label_font_size
         if self._scan_done:
-            ctx.move_to(-50, chart_top - 25).text("Complete")
+            ctx.move_to(-30, chart_top - 25).text("Motors")
 
             ctx.font_size = label_font_size - 8
             ctx.rgb(0.0, 1.0, 1.0).move_to(chart_left, chart_bottom + 5 + ctx.font_size).text(f"{(100 * (_AUTO_SCAN_MIN_POWER + (_MAX_POWER//200)))//_MAX_POWER}%")
@@ -1261,13 +1309,14 @@ class HexTestApp(app.App):         # pylint: disable=no-member
             ctx.font_size = label_font_size - 8
             for index, rpm in enumerate(self._rotation_rate_rpms):
                 ctx.rgb(*self._colour_for_index(index)).move_to(chart_left+20, chart_bottom + 5 + ((index + 2) * (ctx.font_size))).text(f"Mtr{index+1}: {rpm}rpm")
-            ctx.rgb(1.0, 0.2, 0.2).move_to(15, chart_bottom + 5 + ctx.font_size).text(f"{self._last_current_ms}mA")
+            ctx.rgb(1.0, 0.0, 1.0).move_to(chart_left+20, chart_bottom + 5 + ctx.font_size).text(f"PWM:{(100*abs(self._rotation_rate_motor_power)+(_MAX_POWER//2))//_MAX_POWER}%")
+            ctx.rgb(1.0, 0.2, 0.2).move_to(25, chart_bottom + 5 + ctx.font_size).text(f"{self._last_current_ma}mA")
 
         # Y axis Maximum RPM and Current labels
         ctx.font_size = label_font_size - 8
         ctx.rgb(1.0, 1.0, 0.0).move_to(-15, chart_top - 5).text("Max")
         ctx.rgb(0.0, 1.0, 0.5).move_to(chart_left+10, chart_top - 5).text(f"rpm:{self._max_rpm}")
-        ctx.rgb(1.0, 0.2, 0.2).move_to(20, chart_top - 5).text(f"mA:{self._max_current_ma}")
+        ctx.rgb(1.0, 0.2, 0.2).move_to(25, chart_top - 5).text(f"mA:{self._max_current_ma}")
 
         button_labels(ctx, confirm_label="OK" if self._scan_done else "Quit")
 

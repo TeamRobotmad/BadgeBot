@@ -67,8 +67,6 @@ _PRESERVE_HEXTEST: frozenset[str] = frozenset({
     # Public state accessed by BadgeBot
     "config", "VERSION", "settings", "hexdrive_app", "logging",
     "auto_repeat_level", "refresh", "current_state",
-    # Property with @rotation_rate_emitter_duty.setter – must NOT be renamed
-    "rotation_rate_emitter_duty",
     # Public methods called by BadgeBot
     "update_settings", "set_logging", "deinitialise", "show_message",
     "return_to_menu", "set_menu", "auto_repeat_check", "auto_repeat_clear",
@@ -206,15 +204,17 @@ def minify_file(
             "--output", str(temp_min), str(temp_renamed),
         ]
         r = subprocess.run(cmd, capture_output=True, text=True)
-        temp_renamed.unlink()
+        #temp_renamed.unlink()
         if r.returncode != 0:
             print(f"[FAIL] python-minifier on {source.name}: {r.stderr}", file=sys.stderr)
             return -1
 
         artifact.parent.mkdir(parents=True, exist_ok=True)
-        cmd = [str(MPY_CROSS), "-O2", "-o", str(artifact), str(temp_min)]
+        #cmd = [str(MPY_CROSS), "-O2", "-o", str(artifact), str(temp_min)]
+        cmd = [str(MPY_CROSS), "-O2", "-o", str(artifact), str(source)]
+
         r = subprocess.run(cmd, capture_output=True, text=True)
-        temp_min.unlink()
+        #temp_min.unlink()
         if r.returncode != 0:
             print(f"[FAIL] mpy-cross on {source.name}: {r.stderr}", file=sys.stderr)
             return -1
