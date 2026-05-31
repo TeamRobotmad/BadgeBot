@@ -213,9 +213,6 @@ class HexpansionMgr:
         if previous_ports["hexdiag_port"] != app.hexdiag_port:
             app.hexdiag_setup()
 
-        if previous_ports["hextest_port"] != app.hextest_port and app.sensor_test_mgr is not None:
-            app.sensor_test_mgr.hextest_setup(app.hextest_port)
-
 
     def _should_claim_single_port_hexpansion(self, type_index: int) -> bool:
         """Return True if a detected single-port hexpansion type is not yet assigned."""

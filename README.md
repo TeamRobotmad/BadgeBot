@@ -219,7 +219,6 @@ Hexpansion apps stored on EEPROM are minified before being compiled to `.mpy` to
 |--------|----------|
 | `vendor/HexDrive2/hexdrive2.py` | `EEPROM/hexdrive2.mpy` |
 | `EEPROM/hexdrive.py` | `EEPROM/hexdrive.mpy` |
-| `EEPROM/hextest.py` | `EEPROM/hextest.mpy` |
 
 The pipeline uses `dev/minify.py` which:
 1. Renames internal `self.*` attributes to short names via an AST transform (source stays readable)
