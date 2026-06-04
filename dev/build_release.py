@@ -20,6 +20,7 @@ RUNTIME_MODULES = {
     "autotune_mgr",
     "settings_mgr",
     "hexpansion_mgr",
+    "bluetooth_mgr",
     "line_follow",
     "motor_moves",
     "servo_test",

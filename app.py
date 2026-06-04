@@ -21,6 +21,8 @@ from tildagonos import tildagonos
 from machine import Pin
 import app
 
+from .bluetooth_mgr import bluetooth, RobotBLE, ble_process_command
+
 # If you could use hard=True in setting up a Pin IRQ hander, which you can't as of BadgeOS V1.10, then it is recommended to
 # allocate the emergency exception buffer to prevent crashes due to OSError: Out of memory when an interrupt occurs and
 # there is no memory available to handle the exception.
@@ -346,6 +348,12 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         # We start with focus on launch, without an event emmited
         # This version is compatible with the simulator
         asyncio.get_event_loop().create_task(self._gain_focus(RequestForegroundPushEvent(self)))
+
+        # BluetoothLE setup
+        self._ble = bluetooth.BLE()
+        self._ble_controller = RobotBLE(self._ble, name="BadgeBot")
+        # Register the command processor
+        self._ble_controller.on_write(ble_process_command)
 
         if self.logging:
             print(f"BadgeBot App V{self.app_version} Initialised")

@@ -50,6 +50,7 @@ MODULES: tuple[ModuleSpec, ...] = (
     ModuleSpec(Path("diagnostics.py"), Path("diagnostics.mpy")),
     ModuleSpec(Path("settings_mgr.py"), Path("settings_mgr.mpy")),
     ModuleSpec(Path("hexpansion_mgr.py"), Path("hexpansion_mgr.mpy")),
+    ModuleSpec(Path("bluetooth_mgr.py"), Path("bluetooth_mgr.mpy")),
     ModuleSpec(Path("line_follow.py"), Path("line_follow.mpy")),
     ModuleSpec(Path("motor_moves.py"), Path("motor_moves.mpy")),
     ModuleSpec(Path("servo_test.py"), Path("servo_test.mpy")),
