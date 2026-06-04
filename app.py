@@ -21,7 +21,7 @@ from tildagonos import tildagonos
 from machine import Pin
 import app
 
-from .bluetooth_mgr import bluetooth, RobotBLE, ble_process_command
+from .bluetooth_mgr import bluetooth, RobotBLE, ble_process_command, enable_ble_logging, disable_ble_logging, get_ble_motor_override
 
 # If you could use hard=True in setting up a Pin IRQ hander, which you can't as of BadgeOS V1.10, then it is recommended to
 # allocate the emergency exception buffer to prevent crashes due to OSError: Out of memory when an interrupt occurs and
@@ -75,6 +75,7 @@ H_START = -63
 
 # Timings
 MOTOR_PWM_FREQ = 20000      # 20kHz is a good default for motors as it is above the audible range for most people and works with most motors and ESC
+MOTOR_POWER_SCALE_FACTOR = 512  # Settings store motor power / acceleration divided by this; multiply back to get 0-65535 PWM values
 _LONG_PRESS_MS = 750        # Time for long button press to register, in ms
 _RUN_COUNTDOWN_MS = 5000    # Time after running program until drive starts, in ms
 _AUTO_REPEAT_MS = 200       # Time between auto-repeats, in ms
@@ -105,6 +106,7 @@ _LED_CONTROL_STATES    = [STATE_MOTOR_MOVES, STATE_COUNTDOWN, STATE_MESSAGE, STA
 
 #Misceallaneous Settings
 _LOGGING = False
+_BLE_LOGGING = False
 _IS_SIMULATOR = sys.platform != "esp32"  # True when running in the simulator, not on real badge hardware
 _FWD_DIR_DEFAULT = 0
 _FRONT_FACE_DEFAULT = 0
@@ -212,6 +214,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             # General settings
             self.settings['brightness']    = MySetting(self.settings, _BRIGHTNESS, 0.1, 1.0)
             self.settings['logging']       = MySetting(self.settings, _LOGGING, False, True)
+            self.settings['ble_logging']   = MySetting(self.settings, _BLE_LOGGING, False, True)
             # Direction settings
             self.settings['motor1_dir']    = MySetting(self.settings, _FWD_DIR_DEFAULT, 0, 1, labels=_MOTOR_DIRECTION_LABELS)
             self.settings['motor2_dir']    = MySetting(self.settings, _FWD_DIR_DEFAULT, 0, 1, labels=_MOTOR_DIRECTION_LABELS)
@@ -354,6 +357,9 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self._ble_controller = RobotBLE(self._ble, name="BadgeBot")
         # Register the command processor
         self._ble_controller.on_write(ble_process_command)
+            # Apply BLE logging setting now that _ble_controller exists
+            if self.ble_logging:
+                enable_ble_logging(self._ble_controller)
 
         if self.logging:
             print(f"BadgeBot App V{self.app_version} Initialised")
@@ -380,6 +386,14 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if 'logging' in self.settings:
             return self.settings['logging'].v
         return True
+
+
+        @property
+        def ble_logging(self):
+            """Convenience property to access ble_logging setting."""
+            if 'ble_logging' in self.settings:
+                return self.settings['ble_logging'].v
+            return False
 
 
     @property
@@ -448,9 +462,16 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         """Background update function that is called at a regular interval from the background task loop.
            It dispatches to the appropriate manager based on the current state, and if motor outputs are returned, it sends them to the HexDrive app."""
         bg_fn = self._state_background_dispatch.get(self.current_state)
-        if bg_fn is not None:
-            output = bg_fn(delta)
-            if output is not None and len(self.hexdrive_apps) > 0:
+        output = bg_fn(delta) if bg_fn is not None else None
+
+        if len(self.hexdrive_apps) > 0:
+            # BLE direction buttons override the state's motor output while held,
+            # regardless of whether the current state produced any output.
+            max_pwr = self.settings['max_power'].v * MOTOR_POWER_SCALE_FACTOR if 'max_power' in self.settings else 49152
+            ble_override = get_ble_motor_override(max_pwr)
+            if ble_override is not None:
+                output = ble_override
+            if output is not None:
                 if not self.hexdrive_apps[0].set_motors(self.apply_motor_directions(output)):
                     if self.logging:
                         print("Failed to set motor outputs to HexDrive app")
@@ -528,6 +549,12 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             print("Updating fast access settings")
         self._motor1_reversed: bool = self.settings['motor1_dir'].v != 0
         self._motor2_reversed: bool = self.settings['motor2_dir'].v != 0
+            ble_ctrl = getattr(self, '_ble_controller', None)
+            if ble_ctrl is not None:
+                if self.ble_logging:
+                    enable_ble_logging(ble_ctrl)
+                else:
+                    disable_ble_logging()
 
 
     def hexdiag_setup(self):

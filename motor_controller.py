@@ -23,7 +23,7 @@ try:
 except ImportError:
     _imu = None
 
-from .app import MOTOR_PWM_FREQ
+from .app import MOTOR_PWM_FREQ, MOTOR_POWER_SCALE_FACTOR
 
 # Constants inlined from Sensor_Testing constants.py to avoid splitting
 # application constants into a separate module.
@@ -138,7 +138,7 @@ class MotorController:
         self._accel_calibrated = False
         self._ramp_overshoot_m = 0.0         # estimated extra distance during ramp-down
         self._avg_loop_ms = _TICK_MS           # measured average loop period
-        self._busy = False    
+        self._busy = False
         if self._logging:
             print("MotorController initialised")
 
@@ -153,7 +153,7 @@ class MotorController:
     def logging(self) -> bool:
         """Whether to print diagnostic messages about motor controller activity."""
         return self._logging
-    
+
     @logging.setter
     def logging(self, value: bool):
         self._logging = value
@@ -161,20 +161,20 @@ class MotorController:
     @property
     def max_power(self) -> int:
         """Maximum motor power (PWM value) from settings."""
-        return int(self._settings['max_power'].v)
+        return int(self._settings['max_power'].v) * MOTOR_POWER_SCALE_FACTOR
 
 
     @property
     def acceleration(self) -> int:
         """Acceleration for ramps, in motor PWM per second."""
-        return max(1, int(self._settings['acceleration'].v))
+        return max(1, int(self._settings['acceleration'].v) * MOTOR_POWER_SCALE_FACTOR)
 
 
     @property
     def drive_step_ms(self) -> int:
         """Estimated time in ms to drive one step (for time-based driving)."""
         return int(self._settings['drive_step_ms'].v) if 'drive_step_ms' in self._settings else 0
-    
+
 
     @property
     def turn_step_ms(self) -> int:
@@ -186,7 +186,7 @@ class MotorController:
     def is_busy(self):
         """True while a command is executing."""
         return self._busy
-    
+
 
     # ------------------------------------------------------------------
     # Public high-level commands (all awaitable)
@@ -559,7 +559,7 @@ class MotorController:
                     print("[MC] apply_motor_directions_callback ignored invalid output")
             self._hexdrive.set_motors(output)
 
-    
+
     @staticmethod
     def _slew(current, target, step):
         if current < target:
