@@ -2,7 +2,7 @@
 import asyncio
 import sys
 import time
-from math import cos, pi
+from math import sin, cos, pi
 
 import ota
 import settings
@@ -357,9 +357,39 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self._ble_controller = RobotBLE(self._ble, name="BadgeBot")
         # Register the command processor
         self._ble_controller.on_write(ble_process_command)
-            # Apply BLE logging setting now that _ble_controller exists
-            if self.ble_logging:
-                enable_ble_logging(self._ble_controller)
+
+        # Apply BLE logging setting now that _ble_controller exists
+        if self.ble_logging:
+            enable_ble_logging(self._ble_controller)
+
+# TESTING I2S START
+#        # use frequencies for musical notes A4 and C6
+#        SR = 44100; F_L = 882; F_R = 441
+#        n_l = SR // F_L
+#        n_r = SR // F_R
+#        # need to generate a buffer that is a multiple of both n_l and n_r to avoid stuttering in the output, so we take the least common multiple which for two integers is (a*b)//gcd(a,b)
+#        n = (n_l * n_r) // 1  # gcd is 1 for these frequencies, so this is just n_l * n_r
+#        Amplitude = 16000
+#        buf = bytearray(n * 4)  # 16-bit stereo
+#        for i in range(n):
+#            l = int(cos(2 * pi * i / n_l) * Amplitude)
+#            r = int(cos(2 * pi * i / n_r) * Amplitude)
+#            buf[i*4:i*4+2] = l.to_bytes(2, 'little', True)
+#            buf[i*4+2:i*4+4] = r.to_bytes(2, 'little', True)
+#
+#        i2s = I2S(0, sck=Pin(37), ws=Pin(38), sd=Pin(35),
+#                mode=I2S.TX, bits=16, format=I2S.STEREO,
+#                rate=SR, ibuf=20000)
+#        print("Testing I2S output")
+#        for _ in range(1000):
+#            for _ in range(200):
+#                try:
+#                    i2s.write(buf)
+#                except Exception as e:
+#                    print(f"I2S write error: {e}")
+#        i2s.deinit()
+
+#TESTING I2S END
 
         if self.logging:
             print(f"BadgeBot App V{self.app_version} Initialised")
@@ -549,12 +579,12 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             print("Updating fast access settings")
         self._motor1_reversed: bool = self.settings['motor1_dir'].v != 0
         self._motor2_reversed: bool = self.settings['motor2_dir'].v != 0
-            ble_ctrl = getattr(self, '_ble_controller', None)
-            if ble_ctrl is not None:
-                if self.ble_logging:
-                    enable_ble_logging(ble_ctrl)
-                else:
-                    disable_ble_logging()
+        ble_ctrl = getattr(self, '_ble_controller', None)
+        if ble_ctrl is not None:
+            if self.ble_logging:
+                enable_ble_logging(ble_ctrl)
+            else:
+                disable_ble_logging()
 
 
     def hexdiag_setup(self):

@@ -106,9 +106,8 @@ _SLOTS = const(6)
 
 # Constants for rotation rate measurement and motor test mode.
 _ROTATION_RATE_MEASUREMENT_PERIOD_MS = const(3000)     # how often to update the displayed rotation rate measurement in ms (tradeoff between display responsiveness and stability of the reading)
-_DEFAULT_ROTATION_RATE_EMITTER_DUTY = const(25)        # default duty cycle for the IR emitter when doing rate testing, 0-255 (0=off, 255=full on)
-_DEFAULT_SPOKES_PER_ROTATION = const(3)                # number of times the photodiode will be triggered per full rotation of the wheel
-_MOTOR_TEST_BACKGROUND_UPDATE_PERIOD = const(1000)     # background update period in ms to use during motor test mode (tradeoff between display responsiveness and CPU load)
+_DEFAULT_ROTATION_RATE_EMITTER_DUTY = const(10)        # default duty cycle for the IR emitter when doing rate testing, 0-255 (0=off, 255=full on)
+_DEFAULT_SPOKES_PER_ROTATION = const(10)               # number of times the photodiode will be triggered per full rotation of the wheel
 _ROTATION_RATE_EMITTER_PINS = [const(1), const(2)]            # LS_B & LS_C pins used to drive the IR emitter for rotation rate testing
 _ROTATION_RATE_SENSOR_PINS = [const(0), const(1)]             # HS_F & HS_G pins used to read the phottransistors for rotation rate testing
 _ROTATION_RATE_SENSOR_ENABLE_PINS = [const(3), const(4)]      # LS_D & LS_E pins used to enable the phototransistors for rotation rate testing (set to output and high to enable, input to disable)
@@ -194,7 +193,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
             else:
                 raise RuntimeError("HexTestApp requires BadgeOS Upgrade")
         except Exception as e:      # pylint: disable=broad-except
-            print(f"T:Ver check failed {e}!")
+            print(f"HT:Ver check failed {e}!")
 
         self.config: HexpansionConfig = config
         self._logging: bool = True
@@ -236,7 +235,6 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         self._rotation_rate_measurement_period: int = _ROTATION_RATE_MEASUREMENT_PERIOD_MS
         self._rotation_rate_measurement_period_elapsed: int = 0     # ticks since last rate check, used to compute pulse rate in Hz based on the change in the counter value
         self._rotation_rate_motor_power: int = 0                    # Power applied to motors in TEST mode
-        self._rotation_rate_spokes: int = _DEFAULT_SPOKES_PER_ROTATION
 
         # Auto scan test
         self._scan_mode: bool = False             # True = auto scanning, False = manual
@@ -277,6 +275,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
             self.settings['path']          = MySetting(self.settings, 0, 0, len(_FILE_DEST_LABELS) - 1, labels=_FILE_DEST_LABELS)
             self.settings['serialise']     = MySetting(self.settings, False, False, True)
             self.settings['ir_pwm']        = MySetting(self.settings, _DEFAULT_ROTATION_RATE_EMITTER_DUTY, 0, 255)
+            self.settings['spokes']        = MySetting(self.settings, _DEFAULT_SPOKES_PER_ROTATION, 1, 20)
 
             self.update_settings()
 
@@ -292,7 +291,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                                  HexpansionType(0x10CF, "HexDrive2",   vid=0xCBCB, motors=1, servos=1, sub_type="1 Mot 1 Srvo" )]
 
         # report app starting and which port it is running on
-        print(f"T:HexTest App V{self.VERSION} by RobotMad on port {self.config.port}")
+        print(f"HT:HexTest App V{self.VERSION} by RobotMad on port {self.config.port}")
 
         self._rotation_rate_enable(False)  # start with rotation rate emitter and sensors off until we enter motor test mode
 
@@ -320,8 +319,8 @@ class HexTestApp(app.App):         # pylint: disable=no-member
     # ------------------------------------------------------------------
 
     @property
-    def _rotation_rate_rounding(self) -> int:
-        return (self._rotation_rate_measurement_period * self._rotation_rate_spokes) // 2
+    def rotation_rate_rounding(self) -> int:
+        return (self._rotation_rate_measurement_period * self.rotation_rate_spokes) // 2
 
     @property
     def rotation_rate_emitter_duty(self) -> int:
@@ -337,12 +336,19 @@ class HexTestApp(app.App):         # pylint: disable=no-member
             for pin_num in _ROTATION_RATE_EMITTER_PINS:
                 self.config.ls_pin[pin_num].duty(value)
 
+    @property
+    def rotation_rate_spokes(self) -> int:
+        """Number of times the photodiode will be triggered per full rotation of the wheel."""
+        if 'spokes' in self.settings:
+            return self.settings['spokes'].v
+        return _DEFAULT_SPOKES_PER_ROTATION
+
     # ------------------------------------------------------------------
 
     def update_settings(self):
         """Update settings from EEPROM."""
         if self.logging:
-            print("T:Updating settings from EEPROM")
+            print("HT:Updating settings from EEPROM")
         for s in self.settings:
             self.settings[s].v = platform_settings.get(f"{_PRE}{s}", self.settings[s].d)
             if self.logging:
@@ -355,7 +361,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         try:
             if enable:
                 if self.logging:
-                    print("T:Enabling rotation rate emitters and sensors")
+                    print("HT:Enabling rotation rate emitters and sensors")
                 for pin_num in _ROTATION_RATE_EMITTER_PINS:
                     self.config.ls_pin[pin_num].init(mode=ePin.PWM)  # Set LS pins to output mode to turn on the IR emitters
                     self.config.ls_pin[pin_num].duty(self.rotation_rate_emitter_duty)  # Set LS pins to the current duty cycle to drive the IR emitters)
@@ -364,7 +370,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                     self.config.ls_pin[pin_num].value(1)  # Set LS enable pins high to turn on the phototransistors for rotation rate measurement
             else:
                 if self.logging:
-                    print("T:Disabling rotation rate emitters and sensors")
+                    print("HT:Disabling rotation rate emitters and sensors")
                 for pin_num in _ROTATION_RATE_EMITTER_PINS:
                     self.config.ls_pin[pin_num].init(mode=Pin.IN)  # Set LS pins to input mode to turn off the IR emitters
                 for pin_num in _ROTATION_RATE_SENSOR_ENABLE_PINS:
@@ -551,11 +557,11 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         # look for any type of hexdrive (including HexDrive2 variants) in any port by their VID/PID
         for hexpansion_type in self.HEXPANSION_TYPES:
             if self.logging:
-                print(f"T:Looking for {hexpansion_type.name} (VID:PID {hexpansion_type.vid:04X}:{hexpansion_type.pid:04X}, Motors: {hexpansion_type.motors}, Servos: {hexpansion_type.servos})")
+                print(f"HT:Looking for {hexpansion_type.name} (VID:PID {hexpansion_type.vid:04X}:{hexpansion_type.pid:04X}, Motors: {hexpansion_type.motors}, Servos: {hexpansion_type.servos})")
             ports = get_slots_by_vid_pid(hexpansion_type.vid, hexpansion_type.pid)
             if ports:
                 if self.logging:
-                    print(f"T:Found {hexpansion_type.name} on port(s): {ports}")
+                    print(f"HT:Found {hexpansion_type.name} on port(s): {ports}")
                 self._hexdrive_ports.extend(ports)
                 break
 
@@ -564,7 +570,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
             if hexpansion_app is not None:
                 self._hexdrive_in_use_port = port
                 if self.logging:
-                    print(f"T:Found HexDrive app to test on port {port}")
+                    print(f"HT:Found HexDrive app to test on port {port}")
                 self._hexdrive_app = hexpansion_app
                 break
 
@@ -598,14 +604,14 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                 # could be extended to cope with HexDrive variants for Left and Right motors...
                 if hexpansion_type is not None and hexpansion_type.motors < (pin_num + 1):
                     if self.logging:
-                        print(f"T:Not setting up rotation rate counter on pin {pin_num} (GPIO {gpio_num}) as this HexDrive type only has {hexpansion_type.motors} motors")
+                        print(f"HT:Not setting up rotation rate counter on pin {pin_num} (GPIO {gpio_num}) as this HexDrive type only has {hexpansion_type.motors} motors")
                     continue
                 counter = Counter(None, gpio_num, filter_ns=1000000, logging=False)  # auto-select PCNT unit
                 if counter is not None and counter.unit is not None:
                     self._rotation_rate_counters.append(counter)
                 else:
                     if self.logging:
-                        print(f"T:Failed to allocate PCNT counter for pin {pin_num} (GPIO {gpio_num})")
+                        print(f"HT:Failed to allocate PCNT counter for pin {pin_num} (GPIO {gpio_num})")
                     self.notification = Notification("PCNT Init     Failed")
                     # deinit any counters we did manage to create before returning
                     for c in self._rotation_rate_counters:
@@ -614,12 +620,12 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                     self._rotation_rate_counters = []
                     return False
                 if self.logging:
-                    print(f"T:Rate counter {counter}")
+                    print(f"HT:Rate counter {counter}")
             self._rotation_rate_measurement_period_elapsed = 0
             self._rotation_rate_rpms = [0] * len(self._rotation_rate_counters)
             return True
         if self.logging:
-            print("T:Failed to initialise for motor test mode - no hexdrive to test")
+            print("HT:Failed to initialise for motor test mode - no hexdrive to test")
         self.notification = Notification("HexDrive   not Found")
         return False
 
@@ -648,7 +654,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
             if unique_id != 0:
                 self._hut_id = unique_id
                 if self._logging:
-                    print(f"H:Initialised HUT ID from UID {unique_id} on port {port}")
+                    print(f"HT:Initialised HUT ID from UID {unique_id} on port {port}")
 
         # Mark this port as handled for the current mount cycle so user edits are preserved.
         self._hut_id_seeded_ports.add(port)
@@ -657,7 +663,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
 
     def _stop_motor_test_mode(self):
         if self._logging:
-            print("T:Stopping Motor Test mode and cleaning up")
+            print("HT:Stopping Motor Test mode and cleaning up")
         self._scan_mode = False
         self._scan_done = False
         self._rotation_rate_motor_power = 0
@@ -668,7 +674,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                 try:
                     self._ina226_sensor_mgr.close()
                 except Exception as exc:          # pylint: disable=broad-exception-caught
-                    print("T:INA226 sensor manager close failed:", exc)
+                    print("HT:INA226 sensor manager close failed:", exc)
                 self._ina226_sensor_mgr = None
         self._ina226 = None
 
@@ -677,7 +683,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                 self._hexdrive_app.set_motors((0, 0))
                 self._hexdrive_app.set_power(False)
             except AttributeError as e:
-                print(f"T:Failed to set motor outputs off {e}")
+                print(f"HT:Failed to set motor outputs off {e}")
         self._hexdrive_in_use_port = None
 
         for c in self._rotation_rate_counters:
@@ -691,7 +697,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
 
     def _stop_sensor_test_mode(self):
         if self._logging:
-            print("T:Stopping Sensor Test mode and cleaning up")
+            print("HT:Stopping Sensor Test mode and cleaning up")
         self._sensor_data = {}
         self._display_data = {}
         self._hexdrive_in_use_port = None
@@ -710,7 +716,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                 if not mgr.open(port):
                     mgr.close()
                     if self._logging:
-                        print(f"T:INA226 - no sensors found on port {port}")
+                        print(f"HT:INA226 - no sensors found on port {port}")
                     continue
                 # Find the first INA226 sensor in the discovered list
                 sensor = mgr.get_sensor_by_name("INA226")
@@ -718,13 +724,13 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                     self._ina226 = sensor
                     self._ina226_sensor_mgr = mgr
                     if self._logging:
-                        print(f"T:INA226 found @ 0x{sensor.i2c_addr:02X} on port {port}")
+                        print(f"HT:INA226 found @ 0x{sensor.i2c_addr:02X} on port {port}")
                     return True
                 # No INA226 found; close the manager
                 mgr.close()
         except Exception as e:      # pylint: disable=broad-exception-caught
             if self._logging:
-                print(f"T:INA226 init failed: {e}")
+                print(f"HT:INA226 init failed: {e}")
         return False
 
 
@@ -749,7 +755,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
             self._ina226_sample_count += 1
         except Exception as e:       # pylint: disable=broad-exception-caught
             if self._logging:
-                print(f"T:INA226 sample error: {e}")
+                print(f"HT:INA226 sample error: {e}")
             return
 
 
@@ -769,22 +775,25 @@ class HexTestApp(app.App):         # pylint: disable=no-member
 
 
     def _auto_rotation_rate_step(self):
+        # Advance to next power level
         self._scan_step += 1
         self.refresh = True
         if self._scan_step >= _AUTO_SCAN_STEPS:
             if self._scan_direction == -1:
                 # Scan complete
+                print(f"HT:Completed scan")
                 self._scan_done = True
-                self._scan_direction = 1
+                self._rotation_rate_motor_power = 0
                 #self._auto_fit_calculate()
                 self._save_capture_data_csv()
+                return
             else:
+                print(f"HT:Starting second scan pass in reverse direction")
                 self._scan_direction = -1  # reverse direction for second pass
+            self._scan_step = 0
             self._rotation_detected = False
-            self._rotation_rate_motor_power = 0
-        else:
-            # Advance to next power level
-            self._rotation_rate_motor_power = self._scan_direction * (_AUTO_SCAN_MIN_POWER + (((_MAX_POWER - _AUTO_SCAN_MIN_POWER) * self._scan_step) // (_AUTO_SCAN_STEPS - 1)))
+        # start measurement at the new power level
+        self._rotation_rate_motor_power = self._scan_direction * (_AUTO_SCAN_MIN_POWER + (((_MAX_POWER - _AUTO_SCAN_MIN_POWER) * self._scan_step) // (_AUTO_SCAN_STEPS - 1)))
         self._rotation_rate_measurement_period_elapsed = 0
         self._capture_settling = True
 
@@ -896,7 +905,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                     self.notification = None
             except Exception as e:  # pylint: disable=broad-exception-caught
                 if self.logging:
-                    print(f"T:Error: checking notification status: {e}")
+                    print(f"HT:Error: checking notification status: {e}")
 
         # Unfortunately, even though we can track if there is an active notification that we have triggered,
         # we don't have a way to track if there are any other notifications active that we
@@ -920,7 +929,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                 menu.update(delta)
                 if menu.is_animating != "none":
                     if self.logging:
-                        print("T:Menu is animating")
+                        print("HT:Menu is animating")
                     self.refresh = True
         elif self.button_states.get(BUTTON_TYPES["CANCEL"]) and self.current_state in MINIMISE_VALID_STATES:
             self.button_states.clear()
@@ -935,7 +944,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
 
         if self.current_state != self.previous_state:
             if self.logging:
-                print(f"T:State: {self.previous_state} -> {self.current_state}")
+                print(f"HT:State: {self.previous_state} -> {self.current_state}")
             self.previous_state = self.current_state
             # something has changed - so worth redrawing
             self.refresh = True
@@ -944,7 +953,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
     def _update_state_message(self, delta: int):      # pylint: disable=unused-argument
         if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
             if self.logging:
-                print("T:Message acknowledged by user")
+                print("HT:Message acknowledged by user")
             self.button_states.clear()
             if self.message_type == "reboop":
                 # Reboot has been acknowledged by the user - unfortunately we can't actually reboot the badge from Python.
@@ -1031,7 +1040,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                             power = self._rotation_rate_motor_power
                             self._rotation_rate_rpms = [0] * len(self._rotation_rate_counters)
                             if self._logging:
-                                print(f"T:Auto Scan Step {self._scan_step}/{_AUTO_SCAN_STEPS} - Power: {power}, Rate: 0 rpm, Current: {current_ma}mA")
+                                print(f"HT:Auto Scan Step {self._scan_step+1}/{_AUTO_SCAN_STEPS} - Power: {power}, Rate: 0 rpm, Current: {current_ma}mA")
                             self._capture_data.append((power, [0] * len(self._rotation_rate_counters), current_ma))
                             self._auto_rotation_rate_step()
                             if not self._unsaved_data:
@@ -1053,7 +1062,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                         for index, counter in enumerate(self._rotation_rate_counters):
                             if counter is not None:
                                 count = counter.value(0)
-                                rpm = ((60000 * count) + self._rotation_rate_rounding) // (self._rotation_rate_measurement_period_elapsed * self._rotation_rate_spokes)
+                                rpm = ((60000 * count) + self.rotation_rate_rounding) // (self._rotation_rate_measurement_period_elapsed * self.rotation_rate_spokes)
                                 if rpm > self._max_rpm:
                                     self._max_rpm = rpm
                                 self._rotation_rate_rpms[index] = rpm
@@ -1067,7 +1076,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                                 self._max_current_ma = current_abs
                         power = self._rotation_rate_motor_power
                         if self._logging:
-                            print(f"T:Auto Scan Step {self._scan_step}/{_AUTO_SCAN_STEPS} - Power: {power}, Rates: {self._rotation_rate_rpms} rpm, Current: {current_ma}mA")
+                            print(f"HT:Auto Scan Step {self._scan_step+1}/{_AUTO_SCAN_STEPS} - Power: {power}, Rates: {self._rotation_rate_rpms} rpm, Current: {current_ma}mA")
                         self._capture_data.append((power, self._rotation_rate_rpms, current_ma))
                         self._auto_rotation_rate_step()
                         if self._unsaved_data:
@@ -1083,11 +1092,11 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                 for index, counter in enumerate(self._rotation_rate_counters):
                     if counter is not None:
                         count = counter.value(0)  # read-and-reset to get the count for the elapsed period
-                        self._rotation_rate_rpms[index] = ((60000 * count) + self._rotation_rate_rounding) // (self._rotation_rate_measurement_period_elapsed * self._rotation_rate_spokes)
+                        self._rotation_rate_rpms[index] = ((60000 * count) + self.rotation_rate_rounding) // (self._rotation_rate_measurement_period_elapsed * self.rotation_rate_spokes)
                 self._rotation_rate_measurement_period_elapsed = 0
                 self._consume_ina226_average()
                 #if self.logging:
-                #    print(f"T:Rotation Rates: {self._rotation_rate_rpms}")
+                #    print(f"HT:Rotation Rates: {self._rotation_rate_rpms}")
 
         # Manual mode button handling
         if self.button_states.get(BUTTON_TYPES["UP"]):
@@ -1097,7 +1106,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
             else:
                 self.rotation_rate_emitter_duty = min(255, self.rotation_rate_emitter_duty + _IR_EMITTER_PWM_STEP_SIZE)
                 if self.logging:
-                    print(f"T:IR+Emitter Duty: {self.rotation_rate_emitter_duty}")
+                    print(f"HT:IR+Emitter Duty: {self.rotation_rate_emitter_duty}")
             self.refresh = True
         elif self.button_states.get(BUTTON_TYPES["DOWN"]):
             self.button_states.clear()
@@ -1106,19 +1115,19 @@ class HexTestApp(app.App):         # pylint: disable=no-member
             else:
                 self.rotation_rate_emitter_duty = max(0, self.rotation_rate_emitter_duty - _IR_EMITTER_PWM_STEP_SIZE)
                 if self.logging:
-                    print(f"T:IR-Emitter Duty: {self.rotation_rate_emitter_duty}")
+                    print(f"HT:IR-Emitter Duty: {self.rotation_rate_emitter_duty}")
             self.refresh = True
         elif self.button_states.get(BUTTON_TYPES["RIGHT"]):
             self.button_states.clear()
             self._rotation_rate_motor_power = min(_MAX_POWER, self._rotation_rate_motor_power + 1000)
             if self.logging:
-                print(f"T:Motor+Power: {self._rotation_rate_motor_power}")
+                print(f"HT:Motor+Power: {self._rotation_rate_motor_power}")
             self.refresh = True
         elif self.button_states.get(BUTTON_TYPES["LEFT"]):
             self.button_states.clear()
             self._rotation_rate_motor_power = max(-_MAX_POWER, self._rotation_rate_motor_power - 1000)
             if self.logging:
-                print(f"T:Motor-Power: {self._rotation_rate_motor_power}")
+                print(f"HT:Motor-Power: {self._rotation_rate_motor_power}")
             self.refresh = True
 
 
@@ -1255,6 +1264,8 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                     h = (rpm * chart_h) // max_rpm
                     if h > 0:
                         # colour by index to differentiate multiple counters if present
+                        if power < 0:
+                            index = index + len(self._rotation_rate_counters)  # offset index for negative power to differentiate on the graph
                         ctx.rgb(*self._colour_for_index(index)).rectangle(x, chart_bottom - h - 1, bar_w, 2).fill()
                 if current_ma is not None:
                     current_h = (abs(current_ma) * chart_h) // max_current_ma
@@ -1308,26 +1319,29 @@ class HexTestApp(app.App):         # pylint: disable=no-member
             # Instantaneous current label (updated live during the scan)
             ctx.font_size = label_font_size - 8
             for index, rpm in enumerate(self._rotation_rate_rpms):
-                ctx.rgb(*self._colour_for_index(index)).move_to(chart_left+20, chart_bottom + 5 + ((index + 2) * (ctx.font_size))).text(f"Mtr{index+1}: {rpm}rpm")
+                colour_index = index + len(self._rotation_rate_counters) if self._rotation_rate_motor_power < 0 else index  # offset index for negative power to differentiate on the graph
+                ctx.rgb(*self._colour_for_index(colour_index)).move_to(chart_left+20, chart_bottom + 5 + ((index + 2) * (ctx.font_size))).text(f"Mtr{index+1}: {rpm}rpm")
             ctx.rgb(1.0, 0.0, 1.0).move_to(chart_left+20, chart_bottom + 5 + ctx.font_size).text(f"PWM:{(100*abs(self._rotation_rate_motor_power)+(_MAX_POWER//2))//_MAX_POWER}%")
             ctx.rgb(1.0, 0.2, 0.2).move_to(25, chart_bottom + 5 + ctx.font_size).text(f"{self._last_current_ma}mA")
 
         # Y axis Maximum RPM and Current labels
         ctx.font_size = label_font_size - 8
-        ctx.rgb(1.0, 1.0, 0.0).move_to(-15, chart_top - 5).text("Max")
-        ctx.rgb(0.0, 1.0, 0.5).move_to(chart_left+10, chart_top - 5).text(f"rpm:{self._max_rpm}")
+        ctx.rgb(1.0, 1.0, 0.2).move_to(-15, chart_top - 5).text("Max")
+        ctx.rgb(0.2, 1.0, 1.0).move_to(chart_left+10, chart_top - 5).text(f"rpm:{self._max_rpm}")
         ctx.rgb(1.0, 0.2, 0.2).move_to(25, chart_top - 5).text(f"mA:{self._max_current_ma}")
 
         button_labels(ctx, confirm_label="OK" if self._scan_done else "Quit")
 
 
     def _colour_for_index(self, index: int) -> tuple[float, float, float]:
-        if index == 0:
-            return (0.0, 1.0, 0.5)
-        elif index == 1:
-            return (1.0, 0.5, 0.0)
-        else:
-            return (1.0, 1.0, 1.0)
+        # lookup from table of colours, green, orange, blue, yellow
+        return {
+            0: (0.0, 1.0, 0.5),
+            1: (1.0, 0.5, 0.0),
+            2: (0.0, 0.5, 1.0),
+            3: (0.5, 1.0, 0.0),
+        }.get(index, (1.0, 1.0, 1.0))  # default to white if index out of range
+
 
 
 
@@ -1336,7 +1350,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
     def return_to_menu(self, menu_name: str | None = None):
         """Utility function to return to the main menu from any state. This is used when the user cancels out of a submenu or after acknowledging a warning message."""
         if self.logging:
-            print("T:Returning to menu")
+            print("HT:Returning to menu")
         if menu_name is not None:
             self.set_menu(menu_name)
         self.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
@@ -1349,7 +1363,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
            The message_type can be used to indicate whether this is an 'error' (red) or 'warning' (green) message, which can
            affect both the display and the behaviour when the user acknowledges the message."""
         if self.logging:
-            print(f"T:Showing message: '{msg_content}' with type {msg_type}")
+            print(f"HT:Showing message: '{msg_content}' with type {msg_type}")
         self.message = msg_content
         self.message_colours = msg_colours
         self.message_type = msg_type
@@ -1367,7 +1381,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
            If menu_name is None, it will clear the current menu and return to the previous state
            (e.g. from a submenu back to the main menu)."""
         if self.logging:
-            print(f"T:Set Menu {menu_name}")
+            print(f"HT:Set Menu {menu_name}")
         if self.menu is not None:
             try:
                 self.menu._cleanup()        # pylint: disable=protected-access
@@ -1402,7 +1416,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
     # this appears to be able to be called at any time
     def _main_menu_select_handler(self, item: str, idx: int):
         if self.logging:
-            print(f"T:Main Menu {item} at index {idx}")
+            print(f"HT:Main Menu {item} at index {idx}")
         if item == MAIN_MENU_ITEMS[MENU_ITEM_MOTOR_TEST]:   # Motor Test
             self.button_states.clear()
             if self._motor_test_start():
@@ -1426,16 +1440,16 @@ class HexTestApp(app.App):         # pylint: disable=no-member
 
     def _settings_menu_select_handler(self, item: str, idx: int):
         if self.logging:
-            print(f"T:Setting {item} @ {idx}")
+            print(f"HT:Setting {item} @ {idx}")
         if idx == 0: #Save
             if self.logging:
-                print("T:Settings Save All")
+                print("HT:Settings Save All")
             platform_settings.save()
             self.notification = Notification("  Settings  Saved")
             self.set_menu()
         elif idx == 1: #Default
             if self.logging:
-                print("T:Settings Default All")
+                print("HT:Settings Default All")
             for s in self.settings:
                 self.settings[s].v = self.settings[s].d
                 self.settings[s].persist()
@@ -1492,7 +1506,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         self.refresh = True
         self.auto_repeat_clear()
         if self._logging:
-            print("T:Entered Settings editing mode")
+            print("HT:Entered Settings editing mode")
         self.edit_setting = item
         self.edit_setting_value = self.settings[item].v
         return True
@@ -1508,13 +1522,13 @@ class HexTestApp(app.App):         # pylint: disable=no-member
             if self.auto_repeat_check(delta, False):
                 self.edit_setting_value = self.settings[self.edit_setting].inc(self.edit_setting_value, self.auto_repeat_level)
                 if self._logging:
-                    print(f"T:Setting: {self.edit_setting} (+) Value: {self.edit_setting_value}")
+                    print(f"HT:Setting: {self.edit_setting} (+) Value: {self.edit_setting_value}")
                 self.refresh = True
         elif self.button_states.get(BUTTON_TYPES["DOWN"]):
             if self.auto_repeat_check(delta, False):
                 self.edit_setting_value = self.settings[self.edit_setting].dec(self.edit_setting_value, self.auto_repeat_level)
                 if self._logging:
-                    print(f"T:Setting: {self.edit_setting} (-) Value: {self.edit_setting_value}")
+                    print(f"HT:Setting: {self.edit_setting} (-) Value: {self.edit_setting_value}")
                 self.refresh = True
         else:
             self.auto_repeat_clear()
@@ -1522,18 +1536,18 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                 self.button_states.clear()
                 self.edit_setting_value = self.settings[self.edit_setting].d
                 if self._logging:
-                    print(f"T:Setting: {self.edit_setting} Default: {self.edit_setting_value}")
+                    print(f"HT:Setting: {self.edit_setting} Default: {self.edit_setting_value}")
                 self.refresh = True
                 self.notification = Notification("Default")
             elif self.button_states.get(BUTTON_TYPES["CANCEL"]):
                 self.button_states.clear()
                 if self._logging:
-                    print(f"T:Setting: {self.edit_setting} Cancelled")
+                    print(f"HT:Setting: {self.edit_setting} Cancelled")
                 self.return_to_menu(MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS])
             elif self.button_states.get(BUTTON_TYPES["CONFIRM"]):
                 self.button_states.clear()
                 if self._logging:
-                    print(f"T:Setting: {self.edit_setting} = {self.edit_setting_value}")
+                    print(f"HT:Setting: {self.edit_setting} = {self.edit_setting_value}")
                 self.settings[self.edit_setting].v = self.edit_setting_value
                 self.settings[self.edit_setting].persist()
                 self.notification = Notification(f"  Setting:   {self.edit_setting}={self.edit_setting_value}")
@@ -2301,7 +2315,7 @@ class SensorManager:
         self._read_interval_ms = 10
         self._type = "Generic"
         if self._logging:
-            print("T:SensorManager initialised")
+            print("HT:SensorManager initialised")
 
 
     # ------------------------------------------------------------------
@@ -2331,18 +2345,18 @@ class SensorManager:
             self._i2c = I2C(port)
         except Exception as e:      # pylint: disable=broad-exception-caught
             if self._logging:
-                print(f"T:Cannot open I2C port {port}: {e}")
+                print(f"HT:Cannot open I2C port {port}: {e}")
             return False
 
         try:
             found_addrs = set(self._i2c.scan())
         except Exception as e:      # pylint: disable=broad-exception-caught
             if self._logging:
-                print(f"T:I2C scan failed on port {port}: {e}")
+                print(f"HT:I2C scan failed on port {port}: {e}")
             return False
 
         if self._logging:
-            print(f"T:Port {port} scan: {[hex(a) for a in found_addrs]}")
+            print(f"HT:Port {port} scan: {[hex(a) for a in found_addrs]}")
 
         used_addrs = set()
         for cls in ALL_SENSOR_CLASSES:
@@ -2360,9 +2374,9 @@ class SensorManager:
                     self._sensors.append(sensor)
                     used_addrs.add(address)
                     if self._logging:
-                        print(f"T:  + {cls.NAME} @ 0x{sensor.i2c_addr:02X} {cls.TYPE}")
+                        print(f"HT:  + {cls.NAME} @ 0x{sensor.i2c_addr:02X} {cls.TYPE}")
                 elif self._logging:
-                    print(f"T:  - {cls.NAME} @ 0x{address:02X} begin() failed")
+                    print(f"HT:  - {cls.NAME} @ 0x{address:02X} begin() failed")
 
         self._index = 0
         self._last_data = {}
@@ -2380,7 +2394,7 @@ class SensorManager:
         if len(self._sensors) > 0 and any(getattr(s, 'TYPE', '') == 'Colour' for s in self._sensors):
             config = HexpansionConfig(port)
             if self._logging:
-                print(f"T:LED On port {port} pin {config.ls_pin[_LED_PIN]} for colour sensor")
+                print(f"HT:LED On port {port} pin {config.ls_pin[_LED_PIN]} for colour sensor")
             config.ls_pin[_LED_PIN].init(mode=Pin.OUT)
             config.ls_pin[_LED_PIN].value(1)
             config.ls_pin[_COLOUR_INT_PIN].init(mode=Pin.IN)
@@ -2402,7 +2416,7 @@ class SensorManager:
         if self._port is not None:
             if len(self._sensors) > 0 and any(getattr(s, 'TYPE', '') == 'Colour' for s in self._sensors):
                 if self._logging:
-                    print(f"T:LED Off port {self._port}")
+                    print(f"HT:LED Off port {self._port}")
                 config = HexpansionConfig(self._port)
                 if config is not None:
                     config.ls_pin[_LED_PIN].value(0)

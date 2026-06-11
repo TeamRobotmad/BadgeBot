@@ -20,6 +20,7 @@ from app_components.tokens import label_font_size, button_labels
 from events.input import BUTTON_TYPES
 from machine import I2C
 from system.eventbus import eventbus
+from system.hexpansion import app as hexpansion_app
 from system.hexpansion.events import HexpansionInsertionEvent, HexpansionRemovalEvent
 from system.hexpansion.header import HexpansionHeader, write_header
 from system.hexpansion.util import get_hexpansion_block_devices, detect_eeprom_addr
@@ -251,6 +252,8 @@ class HexpansionMgr:
                 print(f"H:Hexpansion removed from port {port}")
 
 
+    # Although the Badge S/W now provides HexpansionMountedEvent which is emitted after a hexpansion is inserted and successfully mounted,
+    # we still want to listen for the raw insertion event as we want to know about hexpansions with blank eeproms.
     async def _handle_insertion(self, event: HexpansionInsertionEvent):
         if self._check_port_for_known_hexpansions(event.port) or event.port == self._port_selected:
             # A known hexpansion type has been detected on the inserted port, so trigger an update of
@@ -760,6 +763,26 @@ class HexpansionMgr:
                 self._sub_state = _SUB_DONE
             else:
                 self._sub_state = _SUB_EXIT
+
+
+    def _get_header_for_port(self, port: int) -> HexpansionHeader | None:
+        header = None
+        if hexpansion_app is not None:
+            if hasattr(hexpansion_app, "_hexpansion_manager"):
+                manager = hexpansion_app._hexpansion_manager        # pylint: disable=protected-access
+                if manager is not None:
+                    header = manager.hexpansion_headers[port]
+        return header
+
+
+    def get_active_hexdrive_unique_id(self) -> int | None:
+        """Return unique_id of the first active HexDrive port, if available."""
+        app = self._app
+        for port in app.hexdrive_ports:
+            unique_id = self._get_header_for_port(port).unique_id if self._get_header_for_port(port) else None
+            if unique_id is not None:
+                return unique_id
+        return None
 
 
     def _update_state_port_select(self, delta: int):   # pylint: disable=unused-argument
