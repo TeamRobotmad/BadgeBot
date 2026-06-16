@@ -364,6 +364,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
 # TESTING I2S START
         if False:
+            from machine import I2S
             SR = 44100; F_L = 882; F_R = 441
             n_l = SR // F_L
             n_r = SR // F_R
