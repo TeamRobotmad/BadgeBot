@@ -96,7 +96,7 @@ else:
 
 
 # Define the minimum BadgeOS version required to run this app (e.g. if we need features that are only available in a certain version of BadgeOS)
-_MIN_BADGEOS_VERSION = [1, 9, 0]     # v1.9.0 is required to be able to read the EEPROM with 16-bit addressing
+_MIN_BADGEOS_VERSION = [2, 0, 0]     # v2.0.0 is required to be able to read the EEPROM with 16-bit addressing
 
 _PRE = "hextest."  # Prefix for settings keys in EEPROM
 
@@ -104,22 +104,28 @@ _PRE = "hextest."  # Prefix for settings keys in EEPROM
 # Hardware defintions:
 _SLOTS = const(6)
 
+_I2S_RATE = const(22050)  # I2S sample rate in Hz
+_I2S_PORT = const(6)   # Hexpansion port to use for I2S output
+_I2S_SCK  = const(2)   # HS_H is the I2S clock pin
+_I2S_WS   = const(3)   # HS_I is the I2S word select pin
+_I2S_SD   = const(0)   # HS_F is the I2S data pin
+
 # Constants for rotation rate measurement and motor test mode.
 _ROTATION_RATE_MEASUREMENT_PERIOD_MS = const(3000)     # how often to update the displayed rotation rate measurement in ms (tradeoff between display responsiveness and stability of the reading)
 _DEFAULT_ROTATION_RATE_EMITTER_DUTY = const(10)        # default duty cycle for the IR emitter when doing rate testing, 0-255 (0=off, 255=full on)
 _DEFAULT_SPOKES_PER_ROTATION = const(10)               # number of times the photodiode will be triggered per full rotation of the wheel
 _ROTATION_RATE_EMITTER_PINS = [const(1), const(2)]            # LS_B & LS_C pins used to drive the IR emitter for rotation rate testing
-_ROTATION_RATE_SENSOR_PINS = [const(0), const(1)]             # HS_F & HS_G pins used to read the phottransistors for rotation rate testing
+_ROTATION_RATE_SENSOR_PINS = [const(0), const(1)]             # HS_F & HS_G pins used to read the phototransistors for rotation rate testing
 _ROTATION_RATE_SENSOR_ENABLE_PINS = [const(3), const(4)]      # LS_D & LS_E pins used to enable the phototransistors for rotation rate testing (set to output and high to enable, input to disable)
 _IR_EMITTER_PWM_STEP_SIZE = const(2)                   # Step size for adjusting IR emitter brightness in manual mode, 0-255 (0=off, 255=full on)
 _MAX_POWER = const(65535)                              # maximum power level to apply to motors, corresponds to 100% on the HexDrive
 _MOTOR_PWM_FREQUENCY = const(20000)                    # Default PWM frequency to set on the HexDrive for testing, in Hz.
 
 # Rotation Rate Auto scan configuration
-_AUTO_SCAN_STEPS       = const(50)     # Number of power levels to test during auto scan
+_AUTO_SCAN_STEPS       = const(45)     # Number of power levels to test during auto scan
 _AUTO_SCAN_SETTLE_MS   = const(800)    # ms to wait after setting power before starting actual measurement period
 _AUTO_SCAN_MEASURE_MS  = const(10000)  # ms measurement window per step (maximum)
-_AUTO_SCAN_MIN_POWER   = const(15535)  # Minimum power level to test during auto scan (0-65535)
+_AUTO_SCAN_MIN_POWER   = const(35000)  # Minimum power level to test during auto scan (0-65535)
 _FILE = "motor"
 _EXT  = "csv"
 _FILE_DEST_LABELS = ("Badge FS", "Hex FS")
@@ -176,7 +182,7 @@ _HS_PIN_TO_GPIO = {
 
 class HexTestApp(app.App):         # pylint: disable=no-member
     """ HexTest Hexpansion App for BadgeBot."""
-    VERSION = 1         # Increment this when making changes to the app that require the hexpansion app to be re-flashed with the new code.
+    VERSION = 2         # Increment this when making changes to the app that require the hexpansion EEPROM app to be re-flashed with the new code.
 
     def __init__(self, config: HexpansionConfig | None = None):
         super().__init__()
@@ -186,7 +192,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         # What version of BadgeOS are we running on?
         try:
             ver = self._parse_version(ota.get_version())
-            #print(f"D:S/W {ver}")
+            #print(f"HT:S/W {ver}")
             # e.g. v1.9.0-beta.1
             if ver >= _MIN_BADGEOS_VERSION:
                 pass
@@ -240,10 +246,11 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         self._scan_mode: bool = False             # True = auto scanning, False = manual
         self._unsaved_data = False
         self._scan_direction: int = 1             # 1 = forwards, -1 = reverse
+        self._scan_decrease_power: bool = False   # True = decreasing power, False = increasing power
         self._scan_step: int = 0                  # current step index (0.._AUTO_SCAN_STEPS-1)
         self._capture_settling: bool = True          # True = in settle phase, False = in measure phase
         self._rotation_detected: bool = False     # True once motion has been observed during auto scan
-        self._capture_data: list[tuple[int, list[int], int | None]] = []   # list of (power, rpm list, current mA)
+        self._capture_data: list[tuple[int, list[int], int | None, int]] = []   # list of (power, rpm list, current mA, decreasing)
         self._max_rpm: int = 0               # max rpm seen during scan
         self._max_current_ma: int = 0        # max current seen during scan
         self._last_current_ma: int = 0       # latest current sampled in auto mode
@@ -269,13 +276,18 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         self._sample_rate: int = 0  # Hz
         self._new_sample: bool = False
 
+        # Audio
+        self._sequencer: AsyncI2SSequencer | None = None
+
+        # Settings
         if MySetting is not None:
             # General settings
             self.settings['logging']       = MySetting(self.settings, _LOGGING, False, True)
             self.settings['path']          = MySetting(self.settings, 0, 0, len(_FILE_DEST_LABELS) - 1, labels=_FILE_DEST_LABELS)
-            self.settings['serialise']     = MySetting(self.settings, False, False, True)
+            self.settings['serialise']     = MySetting(self.settings, True, False, True)
             self.settings['ir_pwm']        = MySetting(self.settings, _DEFAULT_ROTATION_RATE_EMITTER_DUTY, 0, 255)
             self.settings['spokes']        = MySetting(self.settings, _DEFAULT_SPOKES_PER_ROTATION, 1, 20)
+            self.settings['volume']        = MySetting(self.settings, 4, 0, 10)
 
             self.update_settings()
 
@@ -294,6 +306,20 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         print(f"HT:HexTest App V{self.VERSION} by RobotMad on port {self.config.port}")
 
         self._rotation_rate_enable(False)  # start with rotation rate emitter and sensors off until we enter motor test mode
+
+        # I2S sound output
+        self._i2s_slot: int = _I2S_PORT
+        self._pitch = 14
+        if self._i2s_slot in _HS_PIN_TO_GPIO:
+            sck_pin = _HS_PIN_TO_GPIO[self._i2s_slot][_I2S_SCK]  # I2S clock pin
+            ws_pin  = _HS_PIN_TO_GPIO[self._i2s_slot][_I2S_WS]   # I2S word select pin
+            sd_pin  = _HS_PIN_TO_GPIO[self._i2s_slot][_I2S_SD]   # I2S data pin
+            try:
+                self._sequencer = AsyncI2SSequencer(i2s_id=0, sck_pin=sck_pin, ws_pin=ws_pin, sd_pin=sd_pin, sample_rate=_I2S_RATE, volume=self.settings['volume'].v)
+            except Exception as e:
+                print(f"HT:{self.config.port}:I2S initialization failed: {e}")
+        else:
+            print(f"HT:{self.config.port}:I2S initialization failed: invalid slot {self._i2s_slot}")
 
         # Event handlers for gaining and losing focus
         eventbus.on_async(RequestForegroundPushEvent, self._gain_focus, self)
@@ -353,6 +379,8 @@ class HexTestApp(app.App):         # pylint: disable=no-member
             self.settings[s].v = platform_settings.get(f"{_PRE}{s}", self.settings[s].d)
             if self.logging:
                 print(f"Setting {s} = {self.settings[s].v}")
+        if self._sequencer is not None:
+            self._sequencer.volume = self.settings['volume'].v
 
 
     def _rotation_rate_enable(self, enable: bool = True) -> bool:
@@ -384,7 +412,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
 
 
 
-    def deinitialise(self) -> bool:
+    def deinit(self) -> bool:
         """ De-initialise the app - return True if successful, False if failed."""
         eventbus.remove(HexpansionMountedEvent, self._handle_mounted, self)
         eventbus.remove(HexpansionRemovalEvent, self._handle_removal, self)
@@ -395,6 +423,10 @@ class HexTestApp(app.App):         # pylint: disable=no-member
             counter.deinit()
         for hs_pin in self.config.pin:
             hs_pin.init(mode=Pin.IN)
+        if self._sequencer is not None:
+            self._sequencer.deinit()
+            self._sequencer = None
+
         return True
 
 
@@ -471,8 +503,8 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         try:
             if event.app == self:
                 if self._logging:
-                    print(f"D:{self.config.port}:Stop")
-                self.deinitialise()
+                    print(f"HT:{self.config.port}:Stop")
+                self.deinit()
         except (AttributeError, TypeError):
             pass
 
@@ -581,8 +613,10 @@ class HexTestApp(app.App):         # pylint: disable=no-member
             #Setup UUT = HexDrive
             try:
                 if self._hexdrive_app.initialise() and self._hexdrive_app.set_power(True) and self._hexdrive_app.set_freq(_MOTOR_PWM_FREQUENCY):
+                    self._hexdrive_app.set_logging(self.logging)
                     self._hexdrive_app.set_keep_alive(2000)   # Updates can be quite slow as we are using the draw function
-            except AttributeError:
+            except AttributeError as e:
+                print(f"HT:Failed to initialise HexDrive app for motor test mode: {e}")
                 pass
 
             # Setup INA226:
@@ -627,6 +661,8 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         if self.logging:
             print("HT:Failed to initialise for motor test mode - no hexdrive to test")
         self.notification = Notification("HexDrive   not Found")
+        if self._sequencer is not None:
+            self._sequencer.play(SEQ_ERROR)
         return False
 
     def _get_header_for_port(self, port: int) -> HexpansionHeader | None:
@@ -779,23 +815,33 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         self._scan_step += 1
         self.refresh = True
         if self._scan_step >= _AUTO_SCAN_STEPS:
-            if self._scan_direction == -1:
-                # Scan complete
-                print(f"HT:Completed scan")
-                self._scan_done = True
-                self._rotation_rate_motor_power = 0
-                #self._auto_fit_calculate()
-                self._save_capture_data_csv()
-                return
+            if self._scan_decrease_power:
+                self._scan_decrease_power = False
+                if self._scan_direction == -1:
+                    # Scan complete
+                    print(f"HT:Completed scan")
+                    self._scan_done = True
+                    self._rotation_rate_motor_power = 0
+                    #self._auto_fit_calculate()
+                    self._save_capture_data_csv()
+                    if self._sequencer is not None:
+                        self._sequencer.play(SEQ_COMPLETE)
+                    return
+                else:
+                    print(f"HT:Starting second scan pass in reverse direction")
+                    self._scan_direction = -1  # reverse direction for second pass
+                self._rotation_detected = False
             else:
-                print(f"HT:Starting second scan pass in reverse direction")
-                self._scan_direction = -1  # reverse direction for second pass
+                print(f"HT:Decreasing power")
+                self._scan_decrease_power = True
             self._scan_step = 0
-            self._rotation_detected = False
         # start measurement at the new power level
-        self._rotation_rate_motor_power = self._scan_direction * (_AUTO_SCAN_MIN_POWER + (((_MAX_POWER - _AUTO_SCAN_MIN_POWER) * self._scan_step) // (_AUTO_SCAN_STEPS - 1)))
+        step = self._scan_step if not self._scan_decrease_power else (_AUTO_SCAN_STEPS - 1 - self._scan_step)
+        self._rotation_rate_motor_power = self._scan_direction * (_AUTO_SCAN_MIN_POWER + (((_MAX_POWER - _AUTO_SCAN_MIN_POWER) * step) // (_AUTO_SCAN_STEPS - 1)))
         self._rotation_rate_measurement_period_elapsed = 0
         self._capture_settling = True
+        if self._sequencer is not None:
+            self._sequencer.play(SEQ_KEYPRESS)
 
 
     def _data_save_path_option(self):
@@ -815,6 +861,9 @@ class HexTestApp(app.App):         # pylint: disable=no-member
             print("HT:Failed to read HexTest EEPROM header")
             return None, False
         try:
+            eeprom_addr, addr_len = detect_eeprom_addr(self.config.i2c)
+            if eeprom_addr is None:
+               return None, False
             _, partition = get_hexpansion_block_devices(self.config.i2c, header, eeprom_addr, addr_len=addr_len)
         except RuntimeError as exc:
             print(f"HT:Failed to get block device: {exc}")
@@ -854,14 +903,15 @@ class HexTestApp(app.App):         # pylint: disable=no-member
             return False
 
         rpm_count = len(self._rotation_rate_rpms)
-        header = ["power"] + [f"rpm{index + 1}" for index in range(rpm_count)] + ["ma"]
+        header = ["power"] + [f"rpm{index + 1}" for index in range(rpm_count)] + ["ma"] + ["decreasing"]
         try:
             with open(output_path, "wb") as csv_file:
                 csv_file.write((",".join(header) + "\n").encode())
-                for power, rpms, current_ma in self._capture_data:
+                for power, rpms, current_ma, decreasing in self._capture_data:
                     row = [str(power)]
                     row.extend(str(rpm) for rpm in rpms)
                     row.append(str(current_ma))
+                    row.append(str(decreasing))
                     csv_file.write((",".join(row) + "\n").encode())
         except Exception as exc:      # pylint: disable=broad-exception-caught
             print(f"HT:Failed to save CSV {output_path}: {exc}")
@@ -1005,6 +1055,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                 self._scan_mode = True
                 self._scan_done = False
                 self._scan_step = 0
+                self._scan_decrease_power = False
                 self._scan_direction = 1
                 self._rotation_rate_motor_power = self._scan_direction * _AUTO_SCAN_MIN_POWER
                 self._rotation_rate_measurement_period = _AUTO_SCAN_MEASURE_MS
@@ -1028,8 +1079,7 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                         for counter in self._rotation_rate_counters:
                             if counter is not None:
                                 count += counter.value(0)  # read-and-reset to discard
-                        if count == 0 and not self._rotation_detected:
-
+                        if count == 0 and (not self._rotation_detected or self._scan_decrease_power):
                             # There has been no motion from any motors - so we can skip the measure phase and move straight to the next power level
                             current_ma = self._consume_ina226_average()
                             if current_ma is not None:
@@ -1041,11 +1091,12 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                             self._rotation_rate_rpms = [0] * len(self._rotation_rate_counters)
                             if self._logging:
                                 print(f"HT:Auto Scan Step {self._scan_step+1}/{_AUTO_SCAN_STEPS} - Power: {power}, Rate: 0 rpm, Current: {current_ma}mA")
-                            self._capture_data.append((power, [0] * len(self._rotation_rate_counters), current_ma))
+                            self._capture_data.append((power, [0] * len(self._rotation_rate_counters), current_ma, self._scan_decrease_power))
+                            if self._scan_decrease_power:
+                                self._scan_step = _AUTO_SCAN_STEPS  #Force termination
                             self._auto_rotation_rate_step()
                             if not self._unsaved_data:
                                 self._unsaved_data = True
-
                         else:
                             self._rotation_detected = True
                             # estimate how long we need to measure for based on the count we got during the settle period, to ensure we get a good RPM (2%)
@@ -1077,10 +1128,17 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                         power = self._rotation_rate_motor_power
                         if self._logging:
                             print(f"HT:Auto Scan Step {self._scan_step+1}/{_AUTO_SCAN_STEPS} - Power: {power}, Rates: {self._rotation_rate_rpms} rpm, Current: {current_ma}mA")
-                        self._capture_data.append((power, self._rotation_rate_rpms, current_ma))
+                        self._capture_data.append((power, self._rotation_rate_rpms, current_ma, self._scan_decrease_power))
                         self._auto_rotation_rate_step()
                         if self._unsaved_data:
                             self._unsaved_data = True
+            elif self._sequencer is not None:
+                # Scan is complete - no further updates required - play sound every 30 seconds to indicate that the scan is complete and the user can exit.
+                self._rotation_rate_measurement_period_elapsed += delta
+                if self._rotation_rate_measurement_period_elapsed >= 30000:
+                    self._rotation_rate_measurement_period_elapsed = 0
+                    self._sequencer.play(SEQ_COMPLETE)
+
 
             # In auto mode, no manual button control for power/IR
             return
@@ -1107,6 +1165,10 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                 self.rotation_rate_emitter_duty = min(255, self.rotation_rate_emitter_duty + _IR_EMITTER_PWM_STEP_SIZE)
                 if self.logging:
                     print(f"HT:IR+Emitter Duty: {self.rotation_rate_emitter_duty}")
+            if self._pitch < len(NOTE_LIST) - 1:
+                self._pitch += 1
+            if self._sequencer is not None:
+                self._sequencer.play_note_by_index(self._pitch)
             self.refresh = True
         elif self.button_states.get(BUTTON_TYPES["DOWN"]):
             self.button_states.clear()
@@ -1116,6 +1178,10 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                 self.rotation_rate_emitter_duty = max(0, self.rotation_rate_emitter_duty - _IR_EMITTER_PWM_STEP_SIZE)
                 if self.logging:
                     print(f"HT:IR-Emitter Duty: {self.rotation_rate_emitter_duty}")
+            if self._pitch > 0:
+                self._pitch -= 1
+            if self._sequencer is not None:
+                self._sequencer.play_note_by_index(self._pitch)
             self.refresh = True
         elif self.button_states.get(BUTTON_TYPES["RIGHT"]):
             self.button_states.clear()
@@ -1253,25 +1319,26 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         max_current_ma = self._max_current_ma if self._max_current_ma > 0 else 1
 
         if n > 1:
-            # Plot data points as bars.
+            # Plot data points as bars. Offset between those from increasign power vs decreasing power to make them distinguishable.
             # Auto-scan results contain a list/tuple of per-counter RPMs.
-            bar_w = max(1, chart_w // _AUTO_SCAN_STEPS)
+            bar_w = max(1, chart_w // (2 * _AUTO_SCAN_STEPS))
             for i in range(n):
-                power, rpms, current_ma = self._capture_data[i]
+                power, rpms, current_ma, decreasing = self._capture_data[i]
                 # allow for the minimum power level being above zero, and for negative power levels, by using the absolute value of power and offsetting the X position accordingly
-                x = chart_left + ((abs(power) - _AUTO_SCAN_MIN_POWER) * chart_w) // (_MAX_POWER - _AUTO_SCAN_MIN_POWER)
+                x = chart_left + ((abs(power) - _AUTO_SCAN_MIN_POWER) * chart_w) // (_MAX_POWER - _AUTO_SCAN_MIN_POWER) + (bar_w if decreasing else 0)
                 for index, rpm in enumerate(rpms):
                     h = (rpm * chart_h) // max_rpm
                     if h > 0:
                         # colour by index to differentiate multiple counters if present
                         if power < 0:
                             index = index + len(self._rotation_rate_counters)  # offset index for negative power to differentiate on the graph
+                        if decreasing:
+                            index = index + len(self._rotation_rate_counters) * 2  # offset index for decreasing power to differentiate on the graph
                         ctx.rgb(*self._colour_for_index(index)).rectangle(x, chart_bottom - h - 1, bar_w, 2).fill()
                 if current_ma is not None:
                     current_h = (abs(current_ma) * chart_h) // max_current_ma
                     marker_y = chart_bottom - current_h
-                    ctx.rgb(1.0, 0.2, 0.2)
-                    ctx.rectangle(x, marker_y - 1, bar_w, 2).fill()
+                    ctx.rgb(1.0,0.2,0.2).rectangle(x, marker_y - 1, bar_w, 2).fill()
 
         # Title and max RPM label
         ctx.font_size = label_font_size
@@ -1313,13 +1380,18 @@ class HexTestApp(app.App):         # pylint: disable=no-member
                 ctx.rgb(*self._colour_for_index(index)).move_to(x1, y1).line_to(x2, y2).stroke()
 
         else:
-            progress = (self._scan_step * 100) // _AUTO_SCAN_STEPS
+            # Calculate progress taking into account whether we are in the first or second pass of the scan, and whether we are increasing or decreasing power.
+            previous_steps = _AUTO_SCAN_STEPS if self._scan_decrease_power else 0
+            previous_steps += ((2 * _AUTO_SCAN_STEPS) if self._scan_direction == -1 else 0)
+            progress = (previous_steps + self._scan_step * 100) // (_AUTO_SCAN_STEPS * 4)  # 0-25% for first pass, 25-50% for second pass, 50-75% for third pass, 75-100% for fourth pass
             ctx.rgb(1.0,1.0,1.0).move_to(-50, chart_top - 25).text(f"Scan {progress}%")
 
             # Instantaneous current label (updated live during the scan)
             ctx.font_size = label_font_size - 8
             for index, rpm in enumerate(self._rotation_rate_rpms):
                 colour_index = index + len(self._rotation_rate_counters) if self._rotation_rate_motor_power < 0 else index  # offset index for negative power to differentiate on the graph
+                if self._scan_decrease_power:
+                    colour_index = colour_index + len(self._rotation_rate_counters) * 2  # offset index for decreasing power to differentiate on the graph
                 ctx.rgb(*self._colour_for_index(colour_index)).move_to(chart_left+20, chart_bottom + 5 + ((index + 2) * (ctx.font_size))).text(f"Mtr{index+1}: {rpm}rpm")
             ctx.rgb(1.0, 0.0, 1.0).move_to(chart_left+20, chart_bottom + 5 + ctx.font_size).text(f"PWM:{(100*abs(self._rotation_rate_motor_power)+(_MAX_POWER//2))//_MAX_POWER}%")
             ctx.rgb(1.0, 0.2, 0.2).move_to(25, chart_bottom + 5 + ctx.font_size).text(f"{self._last_current_ma}mA")
@@ -1340,6 +1412,10 @@ class HexTestApp(app.App):         # pylint: disable=no-member
             1: (1.0, 0.5, 0.0),
             2: (0.0, 0.5, 1.0),
             3: (0.5, 1.0, 0.0),
+            4: (0.0, 0.5, 0.3),
+            5: (0.5, 0.3, 0.0),
+            6: (0.0, 0.3, 0.5),
+            7: (0.3, 0.5, 0.0)
         }.get(index, (1.0, 1.0, 1.0))  # default to white if index out of range
 
 
@@ -1420,6 +1496,8 @@ class HexTestApp(app.App):         # pylint: disable=no-member
         if item == MAIN_MENU_ITEMS[MENU_ITEM_MOTOR_TEST]:   # Motor Test
             self.button_states.clear()
             if self._motor_test_start():
+                if self._sequencer is not None:
+                    self._sequencer.play(SEQ_STARTUP)
                 self.set_menu(None)
                 self.current_state = STATE_MOTOR_TEST
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_SENSOR_TEST]: # Sensor Test
@@ -1568,6 +1646,77 @@ class HexTestApp(app.App):         # pylint: disable=no-member
 
 
     # ------------------------------------------------------------------
+
+
+    # ------------------------------------------------------------------
+    # Audio
+    # ------------------------------------------------------------------
+    #def play_tone(self, freq: int = 440, amplitude: int = 32000, duration: int = 1000):
+    #    # populate a single cycle of a sine wave at the given frequency
+    #    # and play it for the given duration in milliseconds
+    #    # use I2S to output the audio to the DAC, which is connected to the speaker
+    #    # The audio output is mono, so we only need to generate a single channel of audio data.
+    #    # I2S has already been configured in the main loop, so we just need to write the audio data to the I2S buffer.
+    #    if self._i2s is None:
+    #         return
+    #     # check if a tone is already playing, and if so, stop it before starting a new one
+    #    if self._i2s_cycles > 0:
+    #        self._i2s_cycles = 1
+    #        print("HT:Stopping previous tone")
+    #        while self._i2s_cycles > 0:
+    #            time.sleep_ms(10)
+    #        self._i2s.irq(None)  # disable callback
+    #    try:
+    #        from math import sin, pi
+    #        _CH = 1                      # mono
+    #        n: int = _I2S_RATE // freq   # number of samples per cycle
+    #        c: int = 0                   # number of cycles per buffer
+    #        buffer_len: int = 0
+
+            # Ensure that n is large enough to avoid excessive interrupt load. If n is too small, the I2S buffer will be emptied too quickly and the callback will be called too frequently, which can cause audio glitches.
+    #        while buffer_len < _MIN_SAMPLES_PER_INTERRUPT:
+    #            buffer_len += n
+    #            c += 1
+
+    #        self._i2s_buffer = bytearray(n * 2 * _CH)  # 16-bit sample
+
+    #        for i in range(buffer_len):
+    #            l = int(sin(2 * pi * i / n) * amplitude)
+    #            self._i2s_buffer[i*2*_CH:i*2*_CH+2] = l.to_bytes(2, 'little', True)
+    #            if _CH == 2:  # Stereo
+    #                r = int(sin(2 * pi * i / n) * amplitude)
+    #                self._i2s_buffer[i*4+2:i*4+4] = r.to_bytes(2, 'little', True)
+   #         print(f"HT: Playing tone @ {freq}Hz for {duration}ms")
+   #         # How many buffers to play for the given duration
+   #         self._i2s_cycles = (duration * freq) // (c * 1000)
+   #         if self._i2s_cycles == 0:
+   #             self._i2s_cycles = 1                  # ensure at least one buffer worth is played
+   #         self._i2s.irq(self._i2s_callback)         # i2s_callback is called when buf is emptied
+
+    #    except Exception as e:
+    #        print(f"HT: Error preparing tone: {e}")
+    #        return
+
+        #try:
+        #    _ = self._i2s.write(bytes(self._i2s_buffer))  # returns immediately
+        #except Exception as e:
+        #    print(f"HT: Error Writing I2S: {e}")
+
+
+
+    #def _i2s_callback(self, event):
+    #    """Callback function for I2S events. This is called when the I2S buffer is emptied and needs more data."""
+    #    try:
+    #        if self._i2s_cycles > 0:
+    #            self._i2s_cycles -= 1
+    #            if self._i2s_cycles == 0:
+    #                print("HT: I2S Tone playback complete")
+    #                self._i2s.irq(None)  # disable callback
+   #                 return
+   #         self._i2s.write(bytes(self._i2s_buffer))
+   #     except Exception as e:
+   #         print(f"HT: Error in I2S callback: {e}")
+   #         self._i2s.irq(None)  # disable callback
 
 
 class HexpansionType:
@@ -2521,5 +2670,345 @@ def format_voltage_mv(voltage_mv: int | None) -> str:
     whole = absolute // 1000
     fraction = (absolute % 1000) // 10
     return f"{sign}{whole}.{fraction:02d}V"
+
+
+# ------------------------------------------------------------------
+# Audio Engine
+# ------------------------------------------------------------------
+
+
+# Frequency Map Definition (A3 to A7)
+# Create an indexed index list for rapid up/down navigation lookup
+# NOTE_LIST = list(NOTE_FREQS.keys()) # does not work because dict keys are not guaranteed to be in order in MicroPython
+# Guaranteed order array for Up/Down index tracking
+NOTE_LIST = (
+    "REST",
+    # Octave 2
+    "C2", "C#2", "D2", "D#2", "E2", "F2", "F#2", "G2", "G#2", "A2", "A#2", "B2",
+    # Octave 3
+    "C3", "C#3", "D3", "D#3", "E3", "F3", "F#3", "G3", "G#3", "A3", "A#3", "B3",
+    # Octave 4
+    "C4", "C#4", "D4", "D#4", "E4", "F4", "F#4", "G4", "G#4", "A4", "A#4", "B4",
+    # Octave 5
+    "C5", "C#5", "D5", "D#5", "E5", "F5", "F#5", "G5", "G#5", "A5", "A#5", "B5",
+    # Octave 6
+    "C6", "C#6", "D6", "D#6", "E6", "F6", "F#6", "G6", "G#6", "A6", "A#6", "B6",
+    # Octave 7
+    "C7", "C#7", "D7", "D#7", "E7", "F7", "F#7", "G7", "G#7", "A7", "A#7", "B7",
+    # Octave 8
+    "C8", "C#8", "D8", "D#8", "E8", "F8", "F#8", "G8", "G#8", "A8", "A#8", "B8",
+    # Octave 9
+    "C9", "C#9", "D9", "D#9", "E9", "F9", "F#9", "G9", "G#9", "A9", "A#9", "B9"
+)
+
+# Frequency mapping dictionary (A3 to A9)
+NOTE_FREQS = {
+    "REST": 0,
+    # Octave 2
+    "C2": 65.41,  "C#2": 69.30,  "D2": 73.42,  "D#2": 77.78,  "E2": 82.41,  "F2": 87.31,  "F#2": 92.50,  "G2": 98.00,  "G#2": 103.83, "A2": 110.00, "A#2": 116.54, "B2": 123.47,
+    # Octave 3
+    "C3": 130.81, "C#3": 138.59, "D3": 146.83, "D#3": 154.60, "E3": 164.81, "F3": 174.61, "F#3": 185.00, "G3": 196.00, "G#3": 207.65, "A3": 220.00, "A#3": 233.08, "B3": 246.94,
+    # Octave 4
+    "C4": 261.63, "C#4": 277.18, "D4": 293.66, "D#4": 311.13, "E4": 329.63, "F4": 349.23, "F#4": 369.99, "G4": 392.00, "G#4": 415.30, "A4": 440.00, "A#4": 466.16, "B4": 493.88,
+    # Octave 5
+    "C5": 523.25, "C#5": 554.37, "D5": 587.33, "D#5": 622.25, "E5": 659.25, "F5": 698.46, "F#5": 739.99, "G5": 783.99, "G#5": 830.61, "A5": 880.00, "A#5": 932.33, "B5": 987.77,
+    # Octave 6
+    "C6": 1046.50,"C#6": 1108.73,"D6": 1174.66,"D#6": 1244.51,"E6": 1318.51,"F6": 1396.91,"F#6": 1479.98,"G6": 1567.98,"G#6": 1661.22,"A6": 1760.00,"A#6": 1864.66,"B6": 1975.53,
+    # Octave 7
+    "C7": 2093.00,"C#7": 2217.46,"D7": 2349.32,"D#7": 2489.02,"E7": 2637.02,"F7": 2793.83,"F#7": 2959.96,"G7": 3135.96,"G#7": 3322.44,"A7": 3520.00,"A#7": 3729.31,"B7": 3951.07,
+    # Octave 8
+    "C8": 4186.01,"C#8": 4434.92,"D8": 4698.63,"D#8": 4978.03,"E8": 5274.04,"F8": 5587.65,"F#8": 5919.91,"G8": 6271.93,"G#8": 6644.88,"A8": 7040.00,"A#8": 7458.62,"B8": 7902.13,
+    # Octave 9
+    "C9": 8372.01,"C#9": 8869.84,"D9": 9397.27,"D#9": 9956.06,"E9": 10548.08,"F9": 11175.30,"F#9": 11839.82,"G9": 12543.85,"G#9": 13289.75,"A9": 14080.00,"A#9": 14917.24,"B9": 15804.26
+}
+
+
+_WAVEFORM_SINE = 0
+_WAVEFORM_SQUARE = 1
+_WAVEFORM_TRIANGLE = 2
+
+# 1. Windows-Style Startup Tune (Nostalgic rising progression)
+SEQ_STARTUP = [
+    ("D#4", 150, 4, _WAVEFORM_SINE), ("A#4", 150, 4, _WAVEFORM_SINE), ("F5", 150, 5, _WAVEFORM_SINE), ("A#5", 150, 5, _WAVEFORM_SINE),
+    ("D#6", 200, 6, _WAVEFORM_SINE), ("A#5", 200, 5, _WAVEFORM_SINE), ("F6", 600, 7, _WAVEFORM_SINE)
+]
+
+# 2. Keypress UI Tick (Tiny, fast, high-pitched chirp)
+SEQ_KEYPRESS = [
+    ("A6", 50, 3, _WAVEFORM_SQUARE)
+]
+
+# 3. Warning Alert (Alternating high-low tones with a brief gap)
+SEQ_WARNING = [
+    ("A5", 150, 6, _WAVEFORM_SINE), ("REST", 50, 0, _WAVEFORM_SINE), ("E5", 150, 6, _WAVEFORM_SINE),
+    ("REST", 50, 0, _WAVEFORM_SINE), ("A5", 150, 6, _WAVEFORM_SINE), ("REST", 50, 0, _WAVEFORM_SINE), ("E5", 150, 6, _WAVEFORM_SINE)
+]
+
+# 4. Error Alert (Harsh low-pitch buzz)
+SEQ_ERROR = [
+    ("A3", 120, 7, _WAVEFORM_SINE), ("REST", 40, 0, _WAVEFORM_SINE), ("A3", 300, 8, _WAVEFORM_SINE)
+]
+
+# 5. Task Complete Fanfare (Bright upbeat major arpeggio)
+SEQ_COMPLETE = [
+    ("C5", 100, 4, _WAVEFORM_SINE), ("E5", 100, 4, _WAVEFORM_SINE), ("G5", 100, 4, _WAVEFORM_SINE), ("C6", 400, 7, _WAVEFORM_SINE)
+]
+
+# 6. Waiting Mode / Heartbeat (Gentle rhythmic background pulses)
+SEQ_WAITING = [
+    ("E4", 80, 3, _WAVEFORM_SINE), ("REST", 100, 0, _WAVEFORM_SINE), ("E4", 80, 3, _WAVEFORM_SINE), ("REST", 1200, 0, _WAVEFORM_SINE)
+]
+
+class AsyncI2SSequencer:
+    def __init__(self, i2s_id=0, sck_pin=16, ws_pin=17, sd_pin=18, sample_rate: int=22050, max_duration_ms: int=2000, volume: int=5, channels: int=1):
+        from machine import I2S
+
+        self.sample_rate: int = sample_rate
+        self._channels: int = channels  # Mono output channel count
+        self._volume: int = volume
+        # Determine absolute worst-case maximum buffer limits
+        # 16-bit mono = 2 bytes per sample
+        bytes_per_sample: int  = 2 * self._channels
+        self.max_samples: int  = int((sample_rate * max_duration_ms) / 1000)
+        max_buffer_bytes: int = self.max_samples * bytes_per_sample
+
+        # 2. Permanent static heap allocations (Created EXACTLY once)
+        # We pre-allocate the maximum sizes needed so the GC never touches this at runtime
+        self._static_output_buffer: bytearray = bytearray(max_buffer_bytes)
+        self._static_base_block: bytearray = bytearray(2000 * bytes_per_sample) # Caps base block at ~2000 samples
+
+        # Create persistent memoryviews over our static memory blocks
+        self.out_view: memoryview = memoryview(self._static_output_buffer)
+        self.base_view: memoryview = memoryview(self._static_base_block)
+
+        # Initialize I2S peripheral in standard blocking mode (managed asynchronously)
+        self.audio_out = I2S(
+            i2s_id,
+            sck=Pin(sck_pin),
+            ws=Pin(ws_pin),
+            sd=Pin(sd_pin),
+            mode=I2S.TX,
+            bits=16,
+            format=I2S.MONO,
+            rate=self.sample_rate,
+            ibuf=16384
+        )
+
+        self.current_task = None
+        self.interrupted = asyncio.Event()
+
+
+    @property
+    def volume(self) -> int:
+        """Return the current volume level (0 to 10)."""
+        return self._volume
+
+
+    @volume.setter
+    def volume(self, value: int):
+        """Set the volume level (0 to 10)."""
+        if not (0 <= value <= 10):
+            raise ValueError("Volume must be between 0 and 10")
+        print(f"[Audio] Volume set to {value}/10")
+        self._volume = value
+
+
+    def _generate_wave(self, frequency, duration_ms: int, volume: int, waveform: int):
+        """Calculates high-precision multi-cycle blocks for perfect high frequencies.
+        Fills the pre-allocated static buffers in-place.
+        Returns a sliced memoryview pointing to valid data limits.
+        """
+        if frequency == 0:
+            return None
+
+        from math import pi, sin
+        start_time = time.ticks_ms()
+
+        target_samples_per_cycle = self.sample_rate / frequency
+        bytes_per_sample = 2 * self._channels
+
+        # 1. Determine multi-cycle window rules
+        if frequency > 800:
+            best_cycles = 1
+            best_error = float('inf')
+            best_total_samples = 0
+            for cycles in range(1, 31):
+                total_samples_float = target_samples_per_cycle * cycles
+                rounded_samples = int(round(total_samples_float))
+                error = abs(total_samples_float - rounded_samples)
+                if error < best_error:
+                    best_error = error
+                    best_cycles = cycles
+                    best_total_samples = rounded_samples
+                # look for potential to end early if we find a good enough match (error < 0.025 samples)
+                if best_error < 0.025:
+                    break
+            print(f"[Audio] {frequency}Hz: {best_cycles} cycles, {best_total_samples} samples, error={best_error:.4f}")
+            num_base_cycles = best_cycles
+            samples_in_base_block = best_total_samples
+        else:
+            num_base_cycles = 1
+            samples_in_base_block = int(round(target_samples_per_cycle))
+
+        # 2. Hard Safety Check: Protect against base block buffer overflows
+        if samples_in_base_block * bytes_per_sample > len(self._static_base_block):
+            samples_in_base_block = len(self._static_base_block) // bytes_per_sample
+
+        # 3. Calculate target duration and apply safety capping bounds
+        block_duration_ms = (samples_in_base_block / self.sample_rate) * 1000
+        num_blocks_needed = max(1, int(round(duration_ms / block_duration_ms)))
+        total_samples = num_blocks_needed * samples_in_base_block
+
+        # Safety Capping: If the requested duration exceeds our static buffer limits,
+        # truncate it cleanly at a whole block boundary within our safe zone.
+        if total_samples > self.max_samples:
+            num_blocks_needed = self.max_samples // samples_in_base_block
+            total_samples = num_blocks_needed * samples_in_base_block
+            print(f"[Warning] Note truncated to fit within static buffer limits ({self.max_samples} samples)")
+
+        # 4. Render the sine wave directly into our permanent static base block slice
+        # Human Auditory Curve Mapping (0-100 UI to 0.0-1.0 Exponential Scalar)
+        # Using a square curve (k=2) for natural log feel on small speakers
+        amplitude = int(32767 * ((self._volume * volume) / 100.0) ** 2)
+
+        if waveform == _WAVEFORM_SINE:
+            omega = (2 * pi * num_base_cycles) / samples_in_base_block
+        elif waveform == _WAVEFORM_TRIANGLE:
+            # triangle wave: linear ramp up and down
+            half_cycle = samples_in_base_block // (2 * num_base_cycles)
+            slope = (2 * amplitude) / half_cycle
+        elif waveform == _WAVEFORM_SQUARE:
+            # square wave: simple high/low toggle
+            half_cycle = samples_in_base_block // (2 * num_base_cycles)
+        else:
+            raise ValueError("Unsupported waveform type")
+        for n in range(samples_in_base_block):
+            if waveform == _WAVEFORM_SINE:
+                sample = int(amplitude * sin(n * omega))
+            elif waveform == _WAVEFORM_TRIANGLE:
+                # triangle wave: linear ramp up and down
+                if n % (2 * half_cycle) < half_cycle:
+                    sample = int(-amplitude + slope * (n % (2 * half_cycle)))
+                else:
+                    sample = int(amplitude - slope * (n % (2 * half_cycle) - half_cycle))
+            elif waveform == _WAVEFORM_SQUARE:
+                # square wave: simple high/low toggle
+                if n % (2 * half_cycle) < half_cycle:
+                    sample = amplitude
+                else:
+                    sample = -amplitude
+
+            self._static_base_block[n*2*self._channels:n*2*self._channels+2] = sample.to_bytes(2, 'little', True)
+            if self._channels == 2:  # Stereo
+                self._static_base_block[n*4+2:n*4+4] = sample.to_bytes(2, 'little', True)
+
+        # 5. Extract strict target window slices over the pre-allocated memory blocks
+        active_base_slice = self.base_view[0 : samples_in_base_block * bytes_per_sample]
+        active_output_slice = self.out_view[0 : total_samples * bytes_per_sample]
+
+        # Seed the first block using fast native in-place copy
+        block_len = len(active_base_slice)
+        active_output_slice[0:block_len] = active_base_slice
+
+        # Fast, zero-allocation exponential doubling duplication loop
+        current_filled = block_len
+        total_len = len(active_output_slice)
+
+        while current_filled < total_len:
+            next_chunk_size = min(current_filled, total_len - current_filled)
+            active_output_slice[current_filled : current_filled + next_chunk_size] = active_output_slice[0 : next_chunk_size]
+            current_filled += next_chunk_size
+
+        print(f"[Audio] Generated {total_samples} samples for {frequency}Hz with base_block {samples_in_base_block} in {time.ticks_diff(time.ticks_ms(), start_time)}ms")
+
+        # Return the exact slice containing our generated data
+        return active_output_slice, block_len
+
+
+    async def _play_sequence_task(self, sequence):
+        """Asynchronous worker that iterates through the sequence definitions."""
+        try:
+            for note, duration_ms, amplitude, waveform in sequence[:128]: # Strict 128 tone limit enforced
+                # Instant termination check before executing the next tone segment
+                if self.interrupted.is_set():
+                    print("[Audio] Sequence interrupted, halting playback.")
+                    break
+
+                freq = NOTE_FREQS.get(note, 0)
+
+                # Handling Rests:
+                if freq == 0 or amplitude <= 0:
+                    amplitude = 0
+
+                # Generate the sound chunk dynamically to conserve runtime RAM
+                wave_data, block_len = self._generate_wave(freq, duration_ms, amplitude, waveform)
+
+                if wave_data is None:
+                    continue
+
+                # write the generated wave data in multiples of the base block size to the I2S output
+                # so that if interrutped we end on a zero crossing.
+                replay_len = block_len
+                while replay_len < 4096 and replay_len < len(wave_data):
+                    replay_len += block_len
+
+                # Write to I2S loop chunks. Co-loading sleep allows asyncio yielding.
+                bytes_written = 0
+                while bytes_written < len(wave_data):
+                    if self.interrupted.is_set():
+                        print("[Audio] Sequence interrupted during write, halting playback.")
+                        return
+                    if 0 < bytes_written:
+                        # no waiting for the first write, subsequent writes yield control to avoid blocking
+                        await asyncio.sleep_ms(10)
+
+                    # Write block yields control via minimal delay to prevent blocking core execution
+                    irq_state = disable_irq()
+                    written = self.audio_out.write(wave_data[bytes_written:bytes_written + replay_len])
+                    enable_irq(irq_state)
+
+                    bytes_written += written
+                    print(f"[Audio] Wrote {written} bytes to I2S, total {bytes_written}/{len(wave_data)}")
+
+
+        except asyncio.CancelledError:
+            print("[Audio] Sequence task cancelled.")
+            #pass # Gracefully handle task termination on quick-switch interruptions
+
+
+    def play(self, sequence):
+        """Triggers a sequence immediately, cutting off any active sounds."""
+        self.interrupted.set() # Flag current running task loop to halt execution
+
+        if self.current_task and not self.current_task.done():
+            print("[Audio] Interrupting current sequence...")
+            self.current_task.cancel()
+
+        self.interrupted.clear()
+        # Schedule the new task sequence immediately onto the MicroPython asyncio loop
+        self.current_task = asyncio.create_task(self._play_sequence_task(sequence))
+
+
+    def play_note_by_index(self, index: int, duration_ms: int=1000, amplitude: int=10):
+        """
+        Accepts an integer index, looks up the note name,
+        and plays it immediately while interrupting any prior notes.
+        """
+        # Constrain index safely within bounds of our available notes
+        safe_index = max(0, min(index, len(NOTE_LIST) - 1))
+        note_name = NOTE_LIST[safe_index]
+
+        # Format the single note request as a single-element sequence loop array
+        single_note_sequence = [(note_name, duration_ms, amplitude, _WAVEFORM_TRIANGLE)]
+
+        print(f"[UI Pitch Test] Index: {safe_index} -> Note: {note_name} ({NOTE_FREQS[note_name]} Hz)")
+        self.play(single_note_sequence)
+
+
+    def deinit(self):
+        """Safely release the hardware peripheral."""
+        if self.current_task:
+            self.current_task.cancel()
+        self.audio_out.deinit()
 
 __app_export__ = HexTestApp
