@@ -93,6 +93,7 @@ _SINGLE_PORT_HEXPANSION_REFS = (
     ("hexsense_port", "HexSense", "HEXSENSE_HEXPANSION_INDEX"),
     ("hextest_port",  "HexTest",  "HEXTEST_HEXPANSION_INDEX"),
     ("hexdiag_port",  "HexDiag",  "HEXDIAG_HEXPANSION_INDEX"),
+    ("hexaudio_port", "HexAudio", "HEXAUDIO_HEXPANSION_INDEX"),
 )
 
 # ---- Settings initialisation -----------------------------------------------
@@ -490,16 +491,6 @@ class HexpansionMgr:
             app.button_states.clear()
             self._hexpansion_init_type = (self._hexpansion_init_type - 1) % len(app.HEXPANSION_TYPES)
             app.refresh = True
-        #elif app.button_states.get(BUTTON_TYPES["LEFT"]):
-        #    app.button_states.clear()
-        #    # "Left" is a shortcut button to HexDrive
-        #    self._hexpansion_init_type = app.HEXDRIVE_HEXPANSION_INDEX
-        #    app.refresh = True
-        #elif app.button_states.get(BUTTON_TYPES["RIGHT"]):
-        #    app.button_states.clear()
-        #    # "Right" is a shortcut button to HexSense
-        #    self._hexpansion_init_type = app.HEXSENSE_HEXPANSION_INDEX
-        #    app.refresh = True
 
 
     def _update_state_erase_confirm(self, delta: int):       # pylint: disable=unused-argument
@@ -623,6 +614,7 @@ class HexpansionMgr:
         print(f"\thexsense_port:{app.hexsense_port}")
         print(f"\thextest_port:{app.hextest_port}")
         print(f"\thexdiag_port:{app.hexdiag_port}")
+        print(f"\thexaudio_port:{app.hexaudio_port}")
         print(f"\thexdrive_ports:{app.hexdrive_ports}")
         print(f"\thexpansion_update_required = {app.hexpansion_update_required}")
         print(f"\tmode = {self._mode}")
@@ -779,7 +771,8 @@ class HexpansionMgr:
         """Return unique_id of the first active HexDrive port, if available."""
         app = self._app
         for port in app.hexdrive_ports:
-            unique_id = self._get_header_for_port(port).unique_id if self._get_header_for_port(port) else None
+            header = self._get_header_for_port(port)
+            unique_id = header.unique_id if header else None
             if unique_id is not None:
                 return unique_id
         return None
@@ -851,8 +844,7 @@ class HexpansionMgr:
             app.draw_message(ctx, ["Hexpansion", f"in slot {self._detected_port}:", "Init EEPROM as", hexpansion_type, f"{hexpansion_sub_type if hexpansion_sub_type else ''}?"], \
                                   [(1, 1, 0), (1, 1, 0), (1, 1, 0), (1, 0, 1), (1, 0, 1)], label_font_size)
             button_labels(ctx, confirm_label="Yes", up_label=app.special_chars['up'], down_label="\u25BC", cancel_label="No")
-            #            left_label=app.HEXPANSION_TYPES[app.HEXDRIVE_HEXPANSION_INDEX].name, \
-            #            right_label=app.HEXPANSION_TYPES[app.HEXSENSE_HEXPANSION_INDEX].name)
+
             return True
         elif self._sub_state == _SUB_PORT_SELECT:
             self._draw_port_select(ctx)

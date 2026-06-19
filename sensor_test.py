@@ -192,11 +192,6 @@ class SensorTestMgr:
                     app.update_period = sensor_mgr.read_interval
                     self._sub_state = _SUB_READING
                     break
-        elif app.hexsense_port is not None and sensor_mgr.open(app.hexsense_port):
-            # If no HexDrive, but a HexSense is present, try its port
-            self._port_selected = app.hexsense_port
-            app.update_period = sensor_mgr.read_interval
-            self._sub_state = _SUB_READING
         else:
             # Otherwise, start in port selection mode
             self._port_selected = 1

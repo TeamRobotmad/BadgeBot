@@ -99,12 +99,12 @@ class AutoDriveMgr:
 
 
     # ------------------------------------------------------------------
-    
+
     @property
     def logging(self) -> bool:
         """Whether to print debug logs from the AutoDriveMgr."""
         return self._logging
-    
+
     @logging.setter
     def logging(self, value: bool):
         self._logging = value
@@ -128,8 +128,6 @@ class AutoDriveMgr:
             for port in app.hexdrive_ports:
                 if port != sensor_test.port_selected:
                     ports_to_try.append(port)
-            if app.hexsense_port is not None and app.hexsense_port != sensor_test.port_selected:
-                ports_to_try.append(app.hexsense_port)
             for probe_port in ports_to_try:
                 if sensor_test.open_sensor_port(probe_port):
                     sensor_test.port_selected = probe_port
@@ -259,7 +257,7 @@ class AutoDriveMgr:
             self._mc_task.cancel()
             self._mc_task = None
         if self._mc is not None:
-            self._mc.stop()        
+            self._mc.stop()
         self._active = False
         self.motor_output = (0, 0)
         self.target_output = (0, 0)
