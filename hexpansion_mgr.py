@@ -625,7 +625,7 @@ class HexpansionMgr:
         """ Check if the currently configured hexpansion of the given type is still present, and
             if not, check if there is another hexpansion of the same type that can be switched to, or if the hexpansion has been removed entirely."""
         app = self._app
-        hexpansion_app = None
+        check_hexpansion_app = None
         hexpansion_was_present = port is not None
         old_port = port
         if hexpansion_was_present:
@@ -647,7 +647,7 @@ class HexpansionMgr:
                 port = new_port
                 if app.HEXPANSION_TYPES[type_index].app_name is not None:
                     self._hexpansion_state_by_slot[port - 1] = _HEXPANSION_STATE_RECOGNISED # may be updated to _RECOGNISED_APP_OK or _RECOGNISED_OLD_APP after checking for the correct app
-                    hexpansion_app = self._check_hexpansion_app_on_port(port, type_index)
+                    check_hexpansion_app = self._check_hexpansion_app_on_port(port, type_index)
                 else:
                     self._hexpansion_state_by_slot[port - 1] = _HEXPANSION_STATE_RECOGNISED_NO_APP
             elif hexpansion_was_present:
@@ -659,7 +659,7 @@ class HexpansionMgr:
                 assert old_port is not None
                 app.notification = Notification(f"{name} removed", port=old_port)
 
-        return port, hexpansion_app
+        return port, check_hexpansion_app
 
 
     def _update_state_check(self, delta):       # pylint: disable=unused-argument
@@ -1071,12 +1071,12 @@ class HexpansionMgr:
     def _check_hexpansion_app_on_port(self, port: int, type_index: int, ) -> object | None:
         """Check if the app for the hexpansion on the given port is present and correct"""
         app = self._app
-        hexpansion_app = self._find_hexpansion_app(port)
-        if hexpansion_app is not None:
+        check_hexpansion_app = self._find_hexpansion_app(port)
+        if check_hexpansion_app is not None:
             # Read version from the running app object's VERSION attribute.
             # EEPROM apps expose this on the class so per-port app instances
             # can report their loaded code version reliably.
-            version = getattr(hexpansion_app, "VERSION", getattr(hexpansion_app, "version", None))
+            version = getattr(check_hexpansion_app, "VERSION", getattr(check_hexpansion_app, "version", None))
             expected = app.HEXPANSION_TYPES[type_index].app_mpy_version
             if expected is None:
                 # No expected version recorded for this type – treat any running app as current.
@@ -1093,7 +1093,7 @@ class HexpansionMgr:
                 self._hexpansion_state_by_slot[port - 1] = _HEXPANSION_STATE_RECOGNISED_APP_OK
             if self._logging:
                 print(f"H:{app.HEXPANSION_TYPES[type_index].name} app found on port {port}")
-        return hexpansion_app
+        return check_hexpansion_app
 
     # ------------------------------------------------------------------
     # EEPROM operations
@@ -1363,8 +1363,8 @@ class HexpansionMgr:
                     print(f"H:Unexpectedly no hexpansion type for port {port} when checking app - skipping")
                 self._waiting_app_port = None
                 return False
-            hexpansion_app = self._check_hexpansion_app_on_port(port, type_index)
-            if hexpansion_app is not None:
+            check_hexpansion_app = self._check_hexpansion_app_on_port(port, type_index)
+            if check_hexpansion_app is not None:
                 if self._hexpansion_state_by_slot[port - 1] == _HEXPANSION_STATE_RECOGNISED_APP_OK:
                     self._sub_state = _SUB_CHECK
                 elif self._hexpansion_state_by_slot[port - 1] == _HEXPANSION_STATE_RECOGNISED_OLD_APP:

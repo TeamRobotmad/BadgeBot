@@ -51,7 +51,7 @@ class AutotuneMgr:
         self.follower = follower
         self.autotuner = None
         self._logging: bool = logging
-        if self._logging: 
+        if self._logging:
             print("AutotuneMgr initialised")
 
     # ------------------------------------------------------------------
@@ -104,7 +104,7 @@ class AutotuneMgr:
             print("H:Failed to initialise HexDrive for autotune")
         app.notification = Notification("HexDrive Init Failed")
         return False
-    
+
 
     # ------------------------------------------------------------------
     # Begin tuning (called after countdown completes)
@@ -160,12 +160,12 @@ class AutotuneMgr:
                 app.current_state = STATE_COUNTDOWN
                 app.refresh = True
 
-        if (self.follower.sample_time > 1000):
+        if self.follower.sample_time > 1000:
             sample_count = self.follower.line_sensors.sample_count_and_reset()
             self.follower.sensor_rate = int(((self.follower.sample_time / self.follower.line_sensors.num_sensors) * sample_count) // self.follower.sample_time)
             self.follower.sample_time = 0
-            app.refresh = True                
-        
+            app.refresh = True
+
         return True
 
 
@@ -178,7 +178,7 @@ class AutotuneMgr:
         Returns motor output tuple, or None if not active."""
         if self.autotuner is not None and self.autotuner.is_running:
             #self.follower.line_sensors.read()
-            self.follower.line_sensors.read_blocking()    # wait for sensor reading        
+            self.follower.line_sensors.read_blocking()    # wait for sensor reading
             left_raw  = self.follower.line_sensors.raw_value(0)
             right_raw = self.follower.line_sensors.raw_value(1)
             error = self.follower.compute_error(left_raw, right_raw)
@@ -193,20 +193,21 @@ class AutotuneMgr:
 
 
     def autotune_complete(self):
-        app = self._app
-        app.refresh = True
-        if self.autotuner.is_complete:
-            gains = self.autotuner.get_gains()
-            if gains is not None:
-                app.settings['pid_kp'].v = int(1000 * gains[0])
-                app.settings['pid_ki'].v = int(1000 * gains[1])
-                app.settings['pid_kd'].v = int(1000 * gains[2])
-                app.settings['pid_kp'].persist()
-                app.settings['pid_ki'].persist()
-                app.settings['pid_kd'].persist()
-                if self._logging:
-                    print(f"AUTOTUNE: Gains saved to settings: Kp={gains[0]:.4f} Ki={gains[1]:.6f} Kd={gains[2]:.4f}")
-            app.notification = Notification(" Tuning    Complete")
+        if self.autotuner is not None:
+            app = self._app
+            app.refresh = True
+            if self.autotuner.is_complete:
+                gains = self.autotuner.get_gains()
+                if gains is not None:
+                    app.settings['pid_kp'].v = int(1000 * gains[0])
+                    app.settings['pid_ki'].v = int(1000 * gains[1])
+                    app.settings['pid_kd'].v = int(1000 * gains[2])
+                    app.settings['pid_kp'].persist()
+                    app.settings['pid_ki'].persist()
+                    app.settings['pid_kd'].persist()
+                    if self._logging:
+                        print(f"AUTOTUNE: Gains saved to settings: Kp={gains[0]:.4f} Ki={gains[1]:.6f} Kd={gains[2]:.4f}")
+                app.notification = Notification(" Tuning    Complete")
 
 
     # ------------------------------------------------------------------
@@ -229,13 +230,13 @@ class AutotuneMgr:
             app.draw_message(ctx,
                 ["PID Auto Tune:", status,
                  f"Cross: {diag['crossings']}/{diag['target']}",
-                 f"T={diag['elapsed']//1000}s",
+                 f"T={int(diag['elapsed'])//1000}s",
                  f"Rate: {self.follower.sensor_rate} sps"],
                 [(1, 1, 0), (1, 1, 0), (0, 1, 1), (0.7, 0.7, 0.7), (1, 0, 1)], label_font_size)
             button_labels(ctx, cancel_label="Stop")
         elif self.autotuner.is_complete:
             diag = self.autotuner.get_diagnostics()
-            q = diag['quality']
+            q = int(diag['quality'])
             q_colour = (0, 1, 0) if q >= 60 else (1, 1, 0) if q >= 30 else (1, 0, 0)
             app.draw_message(ctx,
                 ["Tune Complete",
