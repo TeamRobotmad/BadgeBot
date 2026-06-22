@@ -94,6 +94,7 @@ class _FakeHexDriveApp:
     * ``get_status()`` – returns True (PWM ready)
     * ``set_motors()`` – no-op
     """
+    VERSION = 6  # Match the real HexDriveApp.VERSION
 
     def __init__(self, port: int, version: int):
         _ensure_sim_initialized()
@@ -145,8 +146,6 @@ def install_fake_hexpansion(vid: int, pid: int, port: int,
         in the corresponding ``HexpansionType``.  Defaults to
         ``HexDriveApp`` (name = ``"HexDriveApp"``).
     app_version : int, optional
-        Value returned by ``get_version()``.  If *None* it is imported from
-        ``hexdrive.VERSION`` at call time.
 
     Yields
     ------
@@ -158,8 +157,7 @@ def install_fake_hexpansion(vid: int, pid: int, port: int,
     if app_class is None:
         app_class = HexDriveApp
     if app_version is None:
-        from sim.apps.BadgeBot.EEPROM.hexdrive import VERSION
-        app_version = VERSION
+        app_version = HexDriveApp.VERSION
 
     fake_app = app_class(port, app_version)
 

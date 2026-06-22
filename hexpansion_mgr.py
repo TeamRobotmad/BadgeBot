@@ -91,7 +91,6 @@ _MODE_INTERACTIVE = 3   # Interactive mode for user interactions for initialisat
 # WHEN Badge hexpansion handling has stabillised - revisit this and make much much simpler...
 _SINGLE_PORT_HEXPANSION_REFS = (
     ("hexsense_port", "HexSense", "HEXSENSE_HEXPANSION_INDEX"),
-    ("hextest_port",  "HexTest",  "HEXTEST_HEXPANSION_INDEX"),
     ("hexdiag_port",  "HexDiag",  "HEXDIAG_HEXPANSION_INDEX"),
     ("hexaudio_port", "HexAudio", "HEXAUDIO_HEXPANSION_INDEX"),
 )
@@ -612,7 +611,6 @@ class HexpansionMgr:
         print(f"\tPorts to initialise: {self._ports_to_initialise}")
         print(f"\tPorts to check app: {self._ports_to_check_app}")
         print(f"\thexsense_port:{app.hexsense_port}")
-        print(f"\thextest_port:{app.hextest_port}")
         print(f"\thexdiag_port:{app.hexdiag_port}")
         print(f"\thexaudio_port:{app.hexaudio_port}")
         print(f"\thexdrive_ports:{app.hexdrive_ports}")

@@ -75,7 +75,7 @@ class FakeI2C:
 def OPT4060_module():
     """Import and return the OPT4060 module (after sim init)."""
     _ensure_sim()
-    import sim.apps.BadgeBot.sensors.OPT4060 as mod
+    import sim.apps.BadgeBot.sensors.opt4060 as mod
     return mod
 
 
@@ -222,13 +222,15 @@ def test_measure_returns_xyz(sensor, OPT4060_module):
         i2c.set_reg16(addr, ch_reg + 1, 0x6400)
 
     result = sensor.read()
-    assert 'x' in result
-    assert 'y' in result
-    assert 'z' in result
+    assert 'r' in result
+    assert 'g' in result
+    assert 'b' in result
+    assert 'w' in result
     # All channels should decode to mantissa 100 << 0 = 100
-    assert result['x'] == '100'
-    assert result['y'] == '100'
-    assert result['z'] == '100'
+    assert result['r'] == '100'
+    assert result['g'] == '100'
+    assert result['b'] == '100'
+    assert result['w'] == '100'
 
 
 def test_measure_timeout(OPT4060_module, fake_i2c):

@@ -218,7 +218,7 @@ Hexpansion apps stored on EEPROM are minified before being compiled to `.mpy` to
 | Source | Artifact |
 |--------|----------|
 | `vendor/HexDrive2/hexdrive2.py` | `EEPROM/hexdrive2.mpy` |
-| `EEPROM/hexdrive.py` | `EEPROM/hexdrive.mpy` |
+| `vendor/HexDrive/hexdrive.py` | `EEPROM/hexdrive.mpy` |
 
 The pipeline uses `dev/minify.py` which:
 1. Renames internal `self.*` attributes to short names via an AST transform (source stays readable)
@@ -236,7 +236,7 @@ python dev/minify.py
 
 Or to minify a single file (as `download_to_device.py` does):
 ```
-python dev/minify.py --source EEPROM/hexdrive.py --artifact EEPROM/hexdrive.mpy
+python dev/minify.py --source vendor/HexDrive/hexdrive.py --artifact EEPROM/hexdrive.mpy
 ```
 
 `python-minifier` is listed in `dev/dev_requirements.txt` and is installed as part of the standard dev-environment setup.

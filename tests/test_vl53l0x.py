@@ -88,7 +88,7 @@ def test_read_restores_stop_variable_and_returns_range(vl53l0x_module):
     sensor, i2c = _make_sensor_environment(vl53l0x_module)
 
     assert sensor.begin(i2c) is True
-    assert sensor.read() == {"dist_mm": "345"}
+    assert sensor.read() == {"dist": "345"}
     assert any(
         reg == vl53l0x_module._STOP_VARIABLE_REG and payload == b"\xAB"
         for _, reg, payload in i2c.write_log

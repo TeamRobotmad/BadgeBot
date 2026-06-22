@@ -40,9 +40,8 @@ class ModuleSpec:
 
 # Add new runtime modules here as the project grows.
 MODULES: tuple[ModuleSpec, ...] = (
-    ModuleSpec(Path("EEPROM/hexdrive.py"), Path("EEPROM/hexdrive.mpy"), minify=True),
-    ModuleSpec(Path("vendor/HexDrive2/hexdrive2.py"), Path("EEPROM/hexdrive2.mpy"), minify=True),
-    ModuleSpec(Path("EEPROM/hextest.py"), Path("EEPROM/hextest.mpy"), minify=True),
+    ModuleSpec(Path("vendor/HexDrive/hexdrive.py"), Path("EEPROM/hexdrive.mpy"), minify=False),
+    ModuleSpec(Path("vendor/HexDrive2/hexdrive2.py"), Path("EEPROM/hexdrive2.mpy"), minify=False),
     ModuleSpec(Path("app.py"), Path("app.mpy")),
     ModuleSpec(Path("autotune.py"), Path("autotune.mpy")),
     ModuleSpec(Path("autotune_mgr.py"), Path("autotune_mgr.mpy")),

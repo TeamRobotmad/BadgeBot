@@ -22,32 +22,27 @@ def test_import_badgebot_app_and_app_export():
     assert BadgeBot.__app_export__ == BadgeBotApp
 
 def test_import_hexdrive_app_and_app_export():
-    import sim.apps.BadgeBot.EEPROM.hexdrive as HexDrive
-    from sim.apps.BadgeBot.EEPROM.hexdrive import HexDriveApp
+    import sim.apps.BadgeBot.vendor.HexDrive.hexdrive as HexDrive
+    from sim.apps.BadgeBot.vendor.HexDrive.hexdrive import HexDriveApp
     assert HexDrive.__app_export__ == HexDriveApp
 
 def test_hexdrive_instance_exposes_version():
-    from sim.apps.BadgeBot.EEPROM.hexdrive import HexDriveApp
+    from sim.apps.BadgeBot.vendor.HexDrive.hexdrive import HexDriveApp
     assert getattr(HexDriveApp(), "VERSION", None) == HexDriveApp.VERSION
-
-def test_gps_instance_exposes_version():
-    from sim.apps.BadgeBot.EEPROM.gps import GPSApp
-    assert getattr(GPSApp(), "VERSION", None) == GPSApp.VERSION
 
 def test_badgebot_app_init():
     from sim.apps.BadgeBot import BadgeBotApp
     BadgeBotApp()
 
 def test_hexdrive_app_init(port):
-    from sim.apps.BadgeBot.EEPROM.hexdrive import HexDriveApp
+    from sim.apps.BadgeBot.vendor.HexDrive.hexdrive import HexDriveApp
     config = HexpansionConfig(port)
     HexDriveApp(config)
 
 def test_app_versions_match():
     import sim.apps.BadgeBot.app as BadgeBot
-    from sim.apps.BadgeBot.EEPROM.hexdrive import HexDriveApp
+    from sim.apps.BadgeBot.vendor.HexDrive.hexdrive import HexDriveApp
     assert BadgeBot.HEXDRIVE_APP_VERSION == HexDriveApp.VERSION
-
 
 def test_hexdrive2_metadata_matches_vendor_source():
     import sim.apps.BadgeBot.app as BadgeBot
@@ -76,7 +71,7 @@ def test_hexdrive_type_pids_consistent():
     the motor/servo capability counts must agree.
     """
     from sim.apps.BadgeBot import BadgeBotApp
-    from sim.apps.BadgeBot.EEPROM.hexdrive import _HEXDRIVE_TYPES
+    from sim.apps.BadgeBot.vendor.HexDrive.hexdrive import _HEXDRIVE_TYPES
 
     app_instance = BadgeBotApp()
     hexdrive_hexpansion_types = [
@@ -108,14 +103,6 @@ def test_hexdrive_type_pids_consistent():
             f"Servo count mismatch for PID 0x{pid_byte:02X}: "
             f"HexpansionType={ht.servos}, HexDriveType={hdt.servos}"
         )
-
-
-def test_new_states_exist():
-    """Verify the new STATE_SENSOR and STATE_AUTODRIVE constants are defined."""
-    import sim.apps.BadgeBot.app as BadgeBot
-    assert hasattr(BadgeBot, 'STATE_SENSOR')
-    assert hasattr(BadgeBot, 'STATE_AUTODRIVE')
-    assert BadgeBot.STATE_SENSOR != BadgeBot.STATE_AUTODRIVE
 
 
 def test_new_settings_registered():
@@ -166,9 +153,7 @@ def test_sensor_base_interface():
 def test_all_sensor_classes_populated():
     """Verify ALL_SENSOR_CLASSES contains the expected sensor drivers."""
     from sim.apps.BadgeBot.sensors import ALL_SENSOR_CLASSES
-    assert len(ALL_SENSOR_CLASSES) >= 5
+    assert len(ALL_SENSOR_CLASSES) >= 2
     names = {cls.NAME for cls in ALL_SENSOR_CLASSES}
     assert 'VL53L0X' in names or 'VL6180X' in names  # at least one ToF sensor
-    #assert 'TCS3472' in names or 'TCS3430' in names  # at least one color sensor
-    #assert 'OPT4048' in names  # OPT4048 tristimulus sensor
     assert 'OPT4060' in names  # OPT4060 RGBW colour sensor

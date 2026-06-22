@@ -88,7 +88,7 @@ MINIFIABLE: tuple[MinifySpec, ...] = (
         _PRESERVE_HEXDRIVE2,
     ),
     MinifySpec(
-        ROOT / "EEPROM" / "hexdrive.py",
+        ROOT / "vendor" / "HexDrive" / "hexdrive.py",
         ROOT / "EEPROM" / "hexdrive.mpy",
         _PRESERVE_HEXDRIVE,
     ),
