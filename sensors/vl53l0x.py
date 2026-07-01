@@ -158,11 +158,11 @@ class VL53L0X(SensorBase):
         deadline = time.ticks_add(time.ticks_ms(), timeout)
         while self._read_u8(_SYSRANGE_START) & 0x01:
             if time.ticks_diff(deadline, time.ticks_ms()) <= 0:
-                return {"dist_mm": "timeout"}
+                return {"dist": "timeout"}
             time.sleep_ms(1)
 
         if not self._wait_for_interrupt_ready():
-            return {"dist_mm": "timeout"}
+            return {"dist": "timeout"}
 
         # The range value lives 10 bytes into the RESULT_RANGE_STATUS block in
         # ST's register map; this offset matches the reference driver.
