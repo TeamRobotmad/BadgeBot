@@ -4,6 +4,7 @@ class Pin:
     IN: int
     OUT: int
     PWM: int
+    IRQ_RISING: int
     IRQ_FALLING: int
 
     def __init__(self, *_args: Any, **_kwargs: Any) -> None: ...
