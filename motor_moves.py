@@ -21,7 +21,7 @@
 #   init_settings(settings)  – register motor-moves specific settings
 
 import asyncio
-
+from system.eventbus import eventbus
 from events.input import BUTTON_TYPES, Button
 from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
@@ -232,7 +232,25 @@ class MotorMovesMgr:
         app.scroll_mode_enable(False)
         app.animation_counter = 0
         self._sub_state = _SUB_HELP
+
+
+        # TESTING RANGE SENSOR START
+        if 0 < len(app.hexdrive_apps):
+            range_app = app.hexdrive_apps[0]
+            # the hexdrive_app could be for V1 or V2, only V2 has the range sensor support
+            if hasattr(range_app, "range_enable"):
+                range_app.range_enable(True)
+                print("B:Range Enabled")
+        # TESTING RANGE SENSOR END
+
         return True
+
+# TESTING RANGE SENSOR START
+    def handle_range_event(self, event):
+        print("B:Range Event")
+        print("B:Range:", event.range)
+        #self._range = event.range
+# TESTING RANGE SENSOR END
 
 
     # ------------------------------------------------------------------
@@ -243,6 +261,21 @@ class MotorMovesMgr:
         """Build the power plan and start running (called after countdown).
         When a MotorController is available, uses it for IMU-aided execution."""
         app = self._app
+
+        # TESTING RANGE SENSOR START
+        if 0 < len(app.hexdrive_apps):
+            range_app = app.hexdrive_apps[0]
+            if hasattr(range_app, "range_enable"):
+                range_app.range_enable(True)
+                range_app.set_colour_led(True)
+                eventbus.on(
+                    range_app.RangeEvent,
+                    self.handle_range_event,
+                    self
+                )
+                print("B:Range Event enabled")
+        # TESTING RANGE SENSOR END
+
         if app.motor_controller is not None and self.drive_mode == DRIVE_MODE_DISTANCE:
             # Use the MotorController for gyro-aided execution
             self._mc_task = asyncio.get_event_loop().create_task(
@@ -253,7 +286,7 @@ class MotorMovesMgr:
             self.power_plan_iter = chain(*(instr.power_plan for instr in self.instructions))
             if self.logging:
                 print(f"M:Beginning motor moves with power plan iterator based on {len(self.instructions)} instructions")
-            if len(app.hexdrive_apps) > 0:
+            if 0 < len(app.hexdrive_apps):
                 if app.hexdrive_apps[0].initialise() and app.hexdrive_apps[0].set_power(True) and app.hexdrive_apps[0].set_freq(MOTOR_PWM_FREQ):
                     app.hexdrive_apps[0].set_logging(False)
                 else:
@@ -488,8 +521,16 @@ class MotorMovesMgr:
         if self.logging:
             print("Robot reset")
         if len(app.hexdrive_apps) > 0:
-            app.hexdrive_apps[0].set_power(False)
-
+            range_app = app.hexdrive_apps[0]
+            range_app.set_power(False)
+            # TESTING RANGE SENSOR START
+            if hasattr(range_app, "range_enable"):
+                range_app.range_enable(False)
+                range_app.set_colour_led(False)
+                # stop listenting to range events
+                eventbus.remove(range_app.RangeEvent, self.handle_range_event, self)
+                print("B:Range Event disabled")
+        # TESTING RANGE SENSOR END
 
     def reset_instructions(self):
         """Reset the instruction list and related state."""
