@@ -1146,8 +1146,8 @@ class Encoder(_PCNTUnitBase):
         phase_a: int,
         phase_b: int,
         filter_ns: int = 0,
-        max: int | None = None,
-        min: int = 0,
+        max_count: int | None = None,
+        min_count: int = 0,
         logging: bool = False,
     ):
         self.phase_a = phase_a
@@ -1161,7 +1161,7 @@ class Encoder(_PCNTUnitBase):
         super().__init__(unit, logging)
         if self.unit is None:
             return
-        if not self.init(phase_a, phase_b, filter_ns=filter_ns, max=max, min=min):
+        if not self.init(phase_a, phase_b, filter_ns=filter_ns, max_count=max_count, min_count=min_count):
             self._log(f"PCNT: failed to configure encoder on unit {self.unit}")
             self.unit = None
 
@@ -1179,8 +1179,8 @@ class Encoder(_PCNTUnitBase):
         phase_a: int,
         phase_b: int,
         filter_ns: int = 0,
-        max: int | None = None,
-        min: int = 0,
+        max_count: int | None = None,
+        min_count: int = 0,
     ) -> bool:
         """Configure the unit for 4x quadrature decoding on *phase_a* and *phase_b*."""
         unit = self.unit
@@ -1190,9 +1190,9 @@ class Encoder(_PCNTUnitBase):
             self._log("PCNT: encoder phase_a and phase_b must use different GPIOs")
             return False
 
-        range_enabled = max is not None and not (max == 0 and min == 0)
-        range_max = 0 if max is None else max
-        range_min = 0 if max is None else min
+        range_enabled = max_count is not None and not (max_count == 0 and min_count == 0)
+        range_max = 0 if max_count is None else max_count
+        range_min = 0 if max_count is None else min_count
         if range_enabled and range_max < range_min:
             self._log(f"PCNT U{unit}: invalid encoder range min={range_min}, max={range_max}")
             return False
