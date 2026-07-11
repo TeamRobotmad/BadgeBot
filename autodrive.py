@@ -94,8 +94,6 @@ class AutoDriveMgr:
         self.target_output: tuple = (0, 0)   # desired motor output
         self.motor_output: tuple = (0, 0)    # ramped output sent to motors
         self.status: str = ""
-        self.range_sensor_stats = SensorStats("Range")
-        self.colour_sensor_stats = SensorStats("Colour")
         if self._logging:
             print("AutoDriveMgr initialised")
 
@@ -199,10 +197,9 @@ class AutoDriveMgr:
         g_str   = f"{self.gyro_dps:+.1f}dps"
         deg_str = f"{self.imu_deg:.1f}deg/{self.target_deg:.1f}deg" if self.target_deg else f"{self.imu_deg:.1f}deg"
         # stats to 1 dp in Hz
-        stats_str = f"R:{self.range_sensor_stats.rate:.1f} C:{self.colour_sensor_stats.rate:.1f}"
         lines   = ["Auto Drive", sub_label, f"Dist:{d_str}",
-                   f"Gyro:{g_str} {deg_str}", stats_str, self.status]
-        colours = [(1,1,1), (0,1,1), (1,1,0), (0,0.9,0.4), (1,1,0), (0.8,0.8,0.8)]
+                   f"Gyro:{g_str} {deg_str}", self.status]
+        colours = [(1,1,1), (0,1,1), (1,1,0), (0,0.9,0.4), (0.8,0.8,0.8)]
         self._app.draw_message(ctx, lines, colours, label_font_size)
 
         # Polar bar chart of scan (angle -> distance)
@@ -632,8 +629,7 @@ class AutoDriveMgr:
                     print("B:Colour Event disabled")
             except RuntimeError as e:
                 print(f"B:Sensor disable failed: {e}")
-            self.range_sensor_stats.reset()
-            self.colour_sensor_stats.reset()
+
 
 
     # ------------------------------------------------------------------
@@ -645,7 +641,6 @@ class AutoDriveMgr:
         print(f"B:EventRange:{event.range}mm")
         #print(f"B:Last Range:{self._app.hexdrive_apps[0].range}mm")
         self.distance = event.range
-        self.range_sensor_stats.new_sample()
 
 
 
@@ -653,46 +648,3 @@ class AutoDriveMgr:
         """Handle colour events from the colour sensor."""
         print(f"B:EventColour:{event.colour} ({event.colour_name})")
         #print(f"B:Last Colour:{self._app.hexdrive_apps[0].colour} ({self._app.hexdrive_apps[0].colour_name})")
-        self.colour_sensor_stats.new_sample()
-
-
-# a class to hold sensor meta-data statistics for display in the UI, it is told when a new sensor reading is available and it keeps track of the
-# sample update rate averaged over a defined period of time e.g. default to 5 seconds
-# it does NOT use time functions but takes in a delta when called from update
-# it is initialised with a name of the sensor for which it is providing stats
-class SensorStats():
-    def __init__(self, name: str, sample_period_ms: int=5000):
-        self.name: str = name
-        self.sample_period_ms: int = sample_period_ms
-        self.sample_count: int = 0
-        self.sample_timer: int = 0
-        self.sample_rate: float = 0.0
-
-
-    def update(self, delta: int) -> None:
-        """Update the sample timer and calculate the sample rate."""
-        self.sample_timer += delta
-        if self.sample_timer >= self.sample_period_ms:
-            # Calculate the sample rate in Hz
-            self.sample_rate = (self.sample_count / self.sample_timer) * 1000.0
-            # Reset the counters for the next period
-            self.sample_count = 0
-            self.sample_timer = 0
-
-
-    def new_sample(self) -> None:
-        """Increment the sample count when a new sensor reading is available."""
-        self.sample_count += 1
-
-
-    def reset(self) -> None:
-        """Reset the sample count and timer."""
-        self.sample_count = 0
-        self.sample_timer = 0
-        self.sample_rate = 0.0
-
-
-    @property
-    def rate(self) -> float:
-        """Return the current sample rate in Hz."""
-        return self.sample_rate
