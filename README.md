@@ -223,7 +223,7 @@ Hexpansion apps stored on EEPROM are minified before being compiled to `.mpy` to
 The pipeline uses `dev/minify.py` which:
 1. Renames internal `self.*` attributes to short names via an AST transform (source stays readable)
 2. Strips docstrings with `python-minifier`
-3. Compiles with `mpy-cross -O2`
+3. Compiles with `mpy-cross -march=xtensawin -O2`
 
 Typical savings are ~5% compared with compiling from source directly.
 

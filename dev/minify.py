@@ -5,7 +5,7 @@ Pipeline:
      (source stays readable; only the build artefact is shrunk)
   2. Strip docstrings via python-minifier
      (--remove-literal-statements --no-hoist-literals)
-  3. Compile with mpy-cross -O2
+  3. Compile with mpy-cross -march=xtensawin -O2
 
 Standalone – minify all configured vendor modules and show size comparison:
     python dev/minify.py
@@ -211,7 +211,7 @@ def minify_file(
 
         artifact.parent.mkdir(parents=True, exist_ok=True)
         #cmd = [str(MPY_CROSS), "-O2", "-o", str(artifact), str(temp_min)]
-        cmd = [str(MPY_CROSS), "-O2", "-o", str(artifact), str(source)]
+        cmd = [str(MPY_CROSS), "-march=xtensawin", "-O2", "-o", str(artifact), str(source)]
 
         r = subprocess.run(cmd, capture_output=True, text=True)
         #temp_min.unlink()

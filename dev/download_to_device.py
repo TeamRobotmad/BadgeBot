@@ -443,7 +443,7 @@ def _compile_changed_modules(
         else:
             _log("INFO", f"compile {spec.source} -> {spec.artifact}")
             _run_command(
-                [_tool("mpy-cross"), "-v", str(spec.source), "-o", str(spec.artifact)],
+                [_tool("mpy-cross"), "-march=xtensawin", "-v", str(spec.source), "-o", str(spec.artifact)],
                 dry_run=dry_run,
             )
 
