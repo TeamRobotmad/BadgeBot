@@ -21,6 +21,13 @@ from tildagonos import tildagonos
 from machine import Pin
 import app
 
+try:
+    from micropython import const
+except ImportError:
+    # CPython / simulator fallback – const() is just an identity function
+    # on MicroPython; replicate that so module-level const() calls work.
+    const = lambda x: x         #pylint: disable=unnecessary-lambda-assignment
+
 from .bluetooth_mgr import bluetooth, RobotBLE, ble_process_command, enable_ble_logging, disable_ble_logging, get_ble_motor_override
 
 # If you could use hard=True in setting up a Pin IRQ hander, which you can't as of BadgeOS V1.10, then it is recommended to
@@ -34,7 +41,7 @@ from .utils import draw_logo_animated, parse_version
 HEXDRIVE_APP_VERSION = 6
 HEXDRIVE2_APP_VERSION = 2
 
-SETTINGS_NAME_PREFIX = "badgebot."  # Prefix for settings keys in EEPROM
+SETTINGS_NAME_PREFIX = "badgebot"  # Prefix for settings keys in EEPROM
 APP_VERSION = "2.0" # BadgeBot App Version Number
 
 # If you change the URL then you will need to regenerate the QR code
@@ -73,29 +80,29 @@ _BRIGHTNESS = 1.0
 H_START = -63
 
 # Timings
-MOTOR_PWM_FREQ = 20000      # 20kHz is a good default for motors as it is above the audible range for most people and works with most motors and ESC
-MOTOR_POWER_SCALE_FACTOR = 512  # Settings store motor power / acceleration divided by this; multiply back to get 0-65535 PWM values
-_LONG_PRESS_MS = 750        # Time for long button press to register, in ms
-_RUN_COUNTDOWN_MS = 5000    # Time after running program until drive starts, in ms
-_AUTO_REPEAT_MS = 200       # Time between auto-repeats, in ms
-_AUTO_REPEAT_COUNT_THRES = 10 # Number of auto-repeats before increasing level
-_AUTO_REPEAT_SPEED_LEVEL_MAX = 4  # Maximum level of auto-repeat speed increases
-_AUTO_REPEAT_LEVEL_MAX = 3  # Maximum level of auto-repeat digit increases
-DEFAULT_BACKGROUND_UPDATE_PERIOD = 100    # mS when not moving
+MOTOR_PWM_FREQ = const(20000)      # 20kHz is a good default for motors as it is above the audible range for most people and works with most motors and ESC
+MOTOR_POWER_SCALE_FACTOR = const(512)  # Settings store motor power / acceleration divided by this; multiply back to get 0-65535 PWM values
+_LONG_PRESS_MS = const(750)        # Time for long button press to register, in ms
+_RUN_COUNTDOWN_MS = const(5000)    # Time after running program until drive starts, in ms
+_AUTO_REPEAT_MS = const(200)       # Time between auto-repeats, in ms
+_AUTO_REPEAT_COUNT_THRES = const(10) # Number of auto-repeats before increasing level
+_AUTO_REPEAT_SPEED_LEVEL_MAX = const(4)  # Maximum level of auto-repeat speed increases
+_AUTO_REPEAT_LEVEL_MAX = const(3)  # Maximum level of auto-repeat digit increases
+DEFAULT_BACKGROUND_UPDATE_PERIOD = const(100)    # mS when not moving
 
 # App states
-STATE_MENU = 0
-STATE_MESSAGE = 1         # Message display
-STATE_LOGO =  2           # Logo display
-STATE_COUNTDOWN = 3       # Shared countdown (Motor Moves & PID AutoTune)
-STATE_SETTINGS = 4        # Edit Settings
-STATE_MOTOR_MOVES = 5     # Motor Moves (sub-states managed by MotorMovesMgr)
-STATE_SERVO = 6           # Servo test
-STATE_FOLLOWER = 7        # Line Follower
-STATE_AUTOTUNE = 8        # PID Auto Tune
-STATE_SENSOR = 9          # Sensor Test
-STATE_AUTODRIVE = 10      # Autonomous Drive
-STATE_HEXPANSION = 11     # Hexpansion Management (sub-states managed by HexpansionMgr)
+STATE_MENU = const(0)
+STATE_MESSAGE = const(1)         # Message display
+STATE_LOGO =  const(2)           # Logo display
+STATE_COUNTDOWN = const(3)       # Shared countdown (Motor Moves & PID AutoTune)
+STATE_SETTINGS = const(4)        # Edit Settings
+STATE_MOTOR_MOVES = const(5)     # Motor Moves (sub-states managed by MotorMovesMgr)
+STATE_SERVO = const(6)           # Servo test
+STATE_FOLLOWER = const(7)        # Line Follower
+STATE_AUTOTUNE = const(8)        # PID Auto Tune
+STATE_SENSOR = const(9)          # Sensor Test
+STATE_AUTODRIVE = const(10)      # Autonomous Drive
+STATE_HEXPANSION = const(11)     # Hexpansion Management (sub-states managed by HexpansionMgr)
 
 # App states where user can minimise app (Menu, Message, Logo)
 MINIMISE_VALID_STATES = [STATE_MENU, STATE_MESSAGE, STATE_LOGO]
@@ -107,22 +114,22 @@ _LED_CONTROL_STATES    = [STATE_MOTOR_MOVES, STATE_COUNTDOWN, STATE_MESSAGE, STA
 _LOGGING = False
 _BLE_LOGGING = False
 _IS_SIMULATOR = sys.platform != "esp32"  # True when running in the simulator, not on real badge hardware
-_FWD_DIR_DEFAULT = 0
-_FRONT_FACE_DEFAULT = 0
+_FWD_DIR_DEFAULT = const(0)
+_FRONT_FACE_DEFAULT = const(0)
 
 
 # Main Menu Items
 MAIN_MENU_ITEMS = ["Line Follower","Motor Moves", "Servo Test", "PID Auto Tune", "Sensor Test", "Auto Drive", "Hexpansions", "Settings", "About","Exit"]
-MENU_ITEM_LINE_FOLLOWER = 0
-MENU_ITEM_MOTOR_MOVES = 1
-MENU_ITEM_SERVO_TEST = 2
-MENU_ITEM_PID_AUTOTUNE = 3
-MENU_ITEM_SENSOR_TEST = 4
-MENU_ITEM_AUTO_DRIVE = 5
-MENU_ITEM_HEXPANSION = 6
-MENU_ITEM_SETTINGS = 7
-MENU_ITEM_ABOUT = 8
-MENU_ITEM_EXIT = 9
+MENU_ITEM_LINE_FOLLOWER = const(0)
+MENU_ITEM_MOTOR_MOVES = const(1)
+MENU_ITEM_SERVO_TEST = const(2)
+MENU_ITEM_PID_AUTOTUNE = const(3)
+MENU_ITEM_SENSOR_TEST = const(4)
+MENU_ITEM_AUTO_DRIVE = const(5)
+MENU_ITEM_HEXPANSION = const(6)
+MENU_ITEM_SETTINGS = const(7)
+MENU_ITEM_ABOUT = const(8)
+MENU_ITEM_EXIT = const(9)
 
 # Front face direction labels (0=BtnA corner between slots 6 & 1, each step = 30° CW)
 _FRONT_FACE_LABELS = (
@@ -130,6 +137,9 @@ _FRONT_FACE_LABELS = (
     "BtnD", "Slot 4", "BtnE", "Slot 5", "BtnF", "Slot 6",
 )
 _MOTOR_DIRECTION_LABELS = ("Normal", "Reverse")
+
+_FILE_DEST_LABELS = ("Badge FS", "Hex FS")
+
 
 # Import sub-modules after constants are defined so they can safely
 # `from .app import STATE_*` without circular-import timing issues.
@@ -167,6 +177,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     """Main application class for BadgeBot.  Manages overall state, user input, and delegates to functional area managers for specific features."""
     def __init__(self):
         super().__init__()
+
+        self._bluetooth_enabled: bool = False
 
         # UI Button Controls
         self.button_states = Buttons(self)
@@ -213,6 +225,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             # General settings
             self.settings['brightness']    = MySetting(self.settings, _BRIGHTNESS, 0.1, 1.0)
             self.settings['logging']       = MySetting(self.settings, _LOGGING, False, True)
+            self.settings['path']          = MySetting(self.settings, 0, 0, len(_FILE_DEST_LABELS) - 1, labels=_FILE_DEST_LABELS)
+
             self.settings['ble_logging']   = MySetting(self.settings, _BLE_LOGGING, False, True)
             # Direction settings
             self.settings['motor1_dir']    = MySetting(self.settings, _FWD_DIR_DEFAULT, 0, 1, labels=_MOTOR_DIRECTION_LABELS)
@@ -239,16 +253,16 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             pass
 
         # make use of special characters if running on compatible badge s/w version
-        version_triplet = tuple(part if isinstance(part, int) else 0 for part in (ver[:3] if ver is not None else []))
-        if len(version_triplet) == 3 and version_triplet >= (2, 0, 0):   # font has not yet been updated...
+        #version_triplet = tuple(part if isinstance(part, int) else 0 for part in (ver[:3] if ver is not None else []))
+        #if len(version_triplet) == 3 and version_triplet >= (2, 0, 0):   # font has not yet been updated...
             #if self.logging:
             #    print(f"Using special characters for arrows (font updated in BadgeSW V{version_triplet})")
-            self.special_chars = { 'up': "\u25B2",        # up arrow
-                                # 'down': "\u25BC",     # down arrow - has always existed
-                                  'left': "\u25C0",     # left arrow
-                                  'right': "\u25B6" }   # right arrow
-        else:
-            self.special_chars = {'up': "^", 'left': "<", 'right': ">"}
+            #self.special_chars = { 'up': "\u25B2",        # up arrow
+            #                    # 'down': "\u25BC",     # down arrow - has always existed
+            #                      'left': "\u25C0",     # left arrow
+            #                      'right': "\u25B6" }   # right arrow
+        #else:
+        #    self.special_chars = {'up': "^", 'left': "<", 'right': ">"}
 
 
         # Hexpansion related - SEE ALSO hexpansion_mgr to update _SINGLE_PORT_HEXPANSION_REFS
@@ -353,14 +367,15 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         asyncio.get_event_loop().create_task(self._gain_focus(RequestForegroundPushEvent(self)))
 
         # BluetoothLE setup
-        self._ble = bluetooth.BLE()
-        self._ble_controller = RobotBLE(self._ble, name="BadgeBot")
-        # Register the command processor
-        self._ble_controller.on_write(ble_process_command)
+        if self._bluetooth_enabled:
+            self._ble = bluetooth.BLE()
+            self._ble_controller = RobotBLE(self._ble, name="BadgeBot")
+            # Register the command processor
+            self._ble_controller.on_write(ble_process_command)
 
-        # Apply BLE logging setting now that _ble_controller exists
-        if self.ble_logging:
-            enable_ble_logging(self._ble_controller)
+            # Apply BLE logging setting now that _ble_controller exists
+            if self.ble_logging:
+                enable_ble_logging(self._ble_controller)
 
 # TESTING I2S START
         if False:
@@ -567,11 +582,11 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     def update_settings(self):
         """Update settings from EEPROM."""
         if self.logging:
-            print("Updating settings from EEPROM")
+            print("B:Updating settings from EEPROM")
         for s in self.settings:
-            self.settings[s].v = settings.get(f"{SETTINGS_NAME_PREFIX}{s}", self.settings[s].d)
+            self.settings[s].v = settings.get(f"{SETTINGS_NAME_PREFIX}.{s}", self.settings[s].d)
             if self.logging:
-                print(f"Setting {s} = {self.settings[s].v}")
+                print(f"B:Setting {s} = {self.settings[s].v}")
 
 
     def fast_settings_update(self):
@@ -595,6 +610,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 self._diag_config.pin[i].init(mode=Pin.IN)
             self._diag_config = None
         if self.hexdiag_port is not None and self._diag_config is None:
+            print(f"B:HexDiag on port {self.hexdiag_port}")
             self._diag_config = HexpansionConfig(self.hexdiag_port)
             for i in range(4):
                 self._diag_config.pin[i].init(mode=Pin.OUT)
@@ -1191,6 +1207,9 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             self._settings_menu_position = self.menu.position if self.menu else 0
         self.set_menu()
 
+
+#### DIAGNOSTICS OUTPUT ###
+# For monitoring with a scope
 def diagnostics_output(index: int, value: int):
     """Output diagnostic values to the HS pins on the diagnostics hexpansion, for measurement with an oscilloscope"""
     if emit_diagnostics_output is not None:
