@@ -140,7 +140,7 @@ class MotorController:
         self._avg_loop_ms = _TICK_MS           # measured average loop period
         self._busy = False
         if self._logging:
-            print("MotorController initialised")
+            print("B:MotorController initialised")
 
     # ------------------------------------------------------------------
     # Properties
