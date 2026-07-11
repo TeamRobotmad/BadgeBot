@@ -841,8 +841,8 @@ class HexpansionMgr:
             hexpansion_sub_type = app.HEXPANSION_TYPES[self._hexpansion_init_type].sub_type
             app.draw_message(ctx, ["Hexpansion", f"in slot {self._detected_port}:", "Init EEPROM as", hexpansion_type, f"{hexpansion_sub_type if hexpansion_sub_type else ''}?"], \
                                   [(1, 1, 0), (1, 1, 0), (1, 1, 0), (1, 0, 1), (1, 0, 1)], label_font_size)
-            button_labels(ctx, confirm_label="Yes", up_label=app.special_chars['up'], down_label="\u25BC", cancel_label="No")
-
+            button_labels(ctx, confirm_label="Yes", up_label="\u25B2", down_label="\u25BC", cancel_label="No",
+                          left_label="\u25C0", right_label="\u25B6")
             return True
         elif self._sub_state == _SUB_PORT_SELECT:
             self._draw_port_select(ctx)
