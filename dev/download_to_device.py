@@ -57,14 +57,14 @@ MODULES: tuple[ModuleSpec, ...] = (
     ModuleSpec(Path("sensor_manager.py"), Path("sensor_manager.mpy")),
     ModuleSpec(Path("sensor_test.py"), Path("sensor_test.mpy")),
     ModuleSpec(Path("autodrive.py"), Path("autodrive.mpy")),
-    ModuleSpec(Path("sensors/__init__.py"), Path("sensors/__init__.mpy")),
-    ModuleSpec(Path("sensors/sensor_base.py"), Path("sensors/sensor_base.mpy")),
+    #ModuleSpec(Path("sensors/__init__.py"), Path("sensors/__init__.mpy")),
+    #ModuleSpec(Path("sensors/sensor_base.py"), Path("sensors/sensor_base.mpy")),
     #ModuleSpec(Path("sensors/tcs3430.py"), Path("sensors/tcs3430.mpy")),
     #ModuleSpec(Path("sensors/tcs3472.py"), Path("sensors/tcs3472.mpy")),
-    ModuleSpec(Path("sensors/vl53l0x.py"), Path("sensors/vl53l0x.mpy")),
+    #ModuleSpec(Path("sensors/vl53l0x.py"), Path("sensors/vl53l0x.mpy")),
     #ModuleSpec(Path("sensors/vl6180x.py"), Path("sensors/vl6180x.mpy")),
-    ModuleSpec(Path("sensors/opt4060.py"), Path("sensors/opt4060.mpy")),
-    ModuleSpec(Path("sensors/ina226.py"), Path("sensors/ina226.mpy")),
+    #ModuleSpec(Path("sensors/opt4060.py"), Path("sensors/opt4060.mpy")),
+    #ModuleSpec(Path("sensors/ina226.py"), Path("sensors/ina226.mpy")),
 )
 
 # Files copied to the device as-is (no compilation).

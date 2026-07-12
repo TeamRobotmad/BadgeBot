@@ -33,14 +33,14 @@ RUNTIME_MODULES = {
 
 # Sensor driver modules inside the sensors/ package
 SENSOR_MODULES = {
-    "sensors/__init__",
-    "sensors/sensor_base",
+    #"sensors/__init__",
+    #"sensors/sensor_base",
     #"sensors/tcs3430",
     #"sensors/tcs3472",
-    "sensors/vl53l0x",
+    #"sensors/vl53l0x",
     #"sensors/vl6180x",
-    "sensors/opt4060",
-    "sensors/ina226",
+    #"sensors/opt4060",
+    #"sensors/ina226",
 }
 
 files_to_mpy = {Path(f"{module}.py") for module in RUNTIME_MODULES}

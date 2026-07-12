@@ -140,6 +140,8 @@ _MOTOR_DIRECTION_LABELS = ("Normal", "Reverse")
 
 _FILE_DEST_LABELS = ("Badge FS", "Hex FS")
 
+_MIN_BADGEOS_VERSION = (2, 0, 0)     # v2.0.0 is required to be able to use the new hexpansion utilite
+
 
 # Import sub-modules after constants are defined so they can safely
 # `from .app import STATE_*` without circular-import timing issues.
@@ -171,7 +173,7 @@ LineFollowMgr, _line_follow_init_settings                 = _try_import('line_fo
 (AutotuneMgr,)                                            = _try_import('autotune_mgr',  'AutotuneMgr')
 SensorTestMgr, _sensor_test_init_settings                 = _try_import('sensor_test',   'SensorTestMgr', 'init_settings')
 AutoDriveMgr, _autodrive_init_settings                    = _try_import('autodrive',     'AutoDriveMgr', 'init_settings')
-emit_diagnostics_output, set_diagnostics_output           = _try_import('diagnostics',   'diagnostics_output', 'set_diagnostics_output')
+emit_diagnostics_output, set_diagnostics_output           = _try_import('diagnostics',   'output', 'set_output')
 
 class BadgeBotApp(app.App):         # pylint: disable=no-member
     """Main application class for BadgeBot.  Manages overall state, user input, and delegates to functional area managers for specific features."""
@@ -219,6 +221,11 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self._motor1_reversed: bool = False       # 0 or 1 to control direction of motor 1, set based on settings
         self._motor2_reversed: bool = False       # 0 or 1 to control direction of motor 2, set based on settings
 
+        # Overall app state (controls what is displayed and what user inputs are accepted)
+        self.current_state = STATE_HEXPANSION
+        self.previous_state = self.current_state
+        self.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD   # mS
+
         # Settings - common settings first, then each module registers its own later
         self.settings: dict = {}
         if MySetting is not None:
@@ -240,30 +247,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             self.update_settings()
             self.fast_settings_update()
 
-        # Check what version of the Badge s/w we are running on
-        ver: list[int | str] | None = None
-        try:
-            ver = parse_version(ota.get_version())
-            if ver is not None:
-                if self.logging:
-                    print(f"BadgeSW V{ver}")
-                # Potential to do things differently based on badge s/w version
-                # e.g. if ver < [1, 9, 0]:
-        except Exception: # pylint: disable=broad-exception-caught
-            pass
-
-        # make use of special characters if running on compatible badge s/w version
-        #version_triplet = tuple(part if isinstance(part, int) else 0 for part in (ver[:3] if ver is not None else []))
-        #if len(version_triplet) == 3 and version_triplet >= (2, 0, 0):   # font has not yet been updated...
-            #if self.logging:
-            #    print(f"Using special characters for arrows (font updated in BadgeSW V{version_triplet})")
-            #self.special_chars = { 'up': "\u25B2",        # up arrow
-            #                    # 'down': "\u25BC",     # down arrow - has always existed
-            #                      'left': "\u25C0",     # left arrow
-            #                      'right': "\u25B6" }   # right arrow
-        #else:
-        #    self.special_chars = {'up': "^", 'left': "<", 'right': ">"}
-
+        if set_diagnostics_output is not None:
+            set_diagnostics_output(self.diagnostics_output)
 
         # Hexpansion related - SEE ALSO hexpansion_mgr to update _SINGLE_PORT_HEXPANSION_REFS
         #                                       pid      name         vid          eeprom total size        eeprom page size      app mpy name                 app mpy version                       app name                motors    servos    sensors    sub_type
@@ -346,11 +331,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         # Servo Hardware
         self.num_servos: int = 0        # initialised to 0 until we detect a HexDrive Hexpansion and can set this based on the actual number of servos it has
 
-        # Overall app state (controls what is displayed and what user inputs are accepted)
-        self.current_state = STATE_HEXPANSION
-        self.previous_state = self.current_state
-        self.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD   # mS
-
         # Countdown timer value
         self.countdown_value: int = 0
 
@@ -376,6 +356,35 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             # Apply BLE logging setting now that _ble_controller exists
             if self.ble_logging:
                 enable_ble_logging(self._ble_controller)
+
+        # Check what version of the Badge s/w we are running on
+        ver: list[int | str] | None = None
+        try:
+            ver = parse_version(ota.get_version())
+            if ver is not None:
+                if self.logging:
+                    print(f"B:BadgeSW V{ver}")
+                version_triplet = tuple(part if isinstance(part, int) else 0 for part in (ver[:3] if ver is not None else []))
+                if len(version_triplet) == 3 and version_triplet >= _MIN_BADGEOS_VERSION:
+                    # Potential to do things differently based on badge s/w version
+                    pass
+                else:
+                    print(f"B:BadgeSW V{ver} is too old (requires V{_MIN_BADGEOS_VERSION})")
+                    self.show_message(["BadgeBot:", "Please", "Upgrade", "BadgeOS"], [(0.5,1.0,0.5),(1,1,1),(1,1,1),(1,1,1)], "reboop")
+        except Exception as e: # pylint: disable=broad-exception-caught
+            print(f"B:Ver check failed {e}!")
+
+        # make use of special characters if running on compatible badge s/w version
+        #version_triplet = tuple(part if isinstance(part, int) else 0 for part in (ver[:3] if ver is not None else []))
+        #if len(version_triplet) == 3 and version_triplet >= (2, 0, 0):   # font has not yet been updated...
+            #if self.logging:
+            #    print(f"Using special characters for arrows (font updated in BadgeSW V{version_triplet})")
+            #self.special_chars = { 'up': "\u25B2",        # up arrow
+            #                    # 'down': "\u25BC",     # down arrow - has always existed
+            #                      'left': "\u25C0",     # left arrow
+            #                      'right': "\u25B6" }   # right arrow
+        #else:
+        #    self.special_chars = {'up': "^", 'left': "<", 'right': ">"}
 
 # TESTING I2S START
         if False:
@@ -408,7 +417,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 #TESTING I2S END
 
         if self.logging:
-            print(f"BadgeBot App V{self.app_version} Initialised")
+            print(f"B:BadgeBot App V{self.app_version} Initialised")
 
 
     def _register_state_functions(self, state: int, manager: object | None):
@@ -461,7 +470,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     async def _gain_focus(self, event: RequestForegroundPushEvent):
         if event.app is self:
             if self.logging:
-                print(f"BadgeBot gained focus in state {self.current_state}")
+                print(f"B:BadgeBot gained focus in state {self.current_state}")
             if self.current_state in _LED_CONTROL_STATES:
                 eventbus.emit(PatternDisable())
             if self.scroll_mode_enabled:
@@ -471,7 +480,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     async def _lose_focus(self, event: RequestForegroundPopEvent):
         if event.app is self:
             if self.logging:
-                print(f"BadgeBot lost focus from state {self.current_state}")
+                print(f"B:BadgeBot lost focus from state {self.current_state}")
             eventbus.emit(PatternEnable())
             self.pattern_status = True
             if self.scroll_mode_enabled:
@@ -592,7 +601,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     def fast_settings_update(self):
         """Update fast access settings from the main settings dictionary."""
         if self.logging:
-            print("Updating fast access settings")
+            print("B:Updating fast access settings")
         self._motor1_reversed: bool = self.settings['motor1_dir'].v != 0
         self._motor2_reversed: bool = self.settings['motor2_dir'].v != 0
         ble_ctrl = getattr(self, '_ble_controller', None)
@@ -619,6 +628,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     def diagnostics_output(self, index: int, value: int):
         """Output diagnostic values to the HS pins on the diagnostics hexpansion, for measurement with an oscilloscope"""
         if self._diag_config is not None and 0 <= index < 4:
+            print(f"B:Diag output {index} = {value}")
             self._diag_config.pin[index].value(value)
 
 
@@ -1212,10 +1222,11 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 # For monitoring with a scope
 def diagnostics_output(index: int, value: int):
     """Output diagnostic values to the HS pins on the diagnostics hexpansion, for measurement with an oscilloscope"""
+    #print(f"B: Expected Diagnostics Output: index={index}, value={value}, emit_diagnostics_output={emit_diagnostics_output}")
     if emit_diagnostics_output is not None:
         emit_diagnostics_output(index, value)
 
-
+# This doesn't seem to be working as expected so there is now an explicit call to register the diagnostics output function.
 def __app_init__(app_instance):
     """Register the active app instance as the shared diagnostics sink."""
     if set_diagnostics_output is not None:
