@@ -180,7 +180,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     def __init__(self):
         super().__init__()
 
-        self._bluetooth_enabled: bool = False
+        self._bluetooth_enabled: bool = True
 
         # UI Button Controls
         self.button_states = Buttons(self)
@@ -258,12 +258,12 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                                  HexpansionType(0xCBCC, "HexDrive",                                                               app_mpy_name="hexdrive", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp",           servos=4, sub_type="4 Servo" ),
                                  HexpansionType(0xCBCD, "HexDrive",                                                               app_mpy_name="hexdrive", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=1, servos=2, sub_type="1 Mot 2 Srvo" ),
 
-                                 HexpansionType(0x10C8, "HexDrive2",   vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive2", app_mpy_version=HEXDRIVE2_APP_VERSION, app_name="HexDriveApp", motors=2, servos=2, sub_type="Uncommitted" ),
-                                 HexpansionType(0x10C9, "HexDrive2",   vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive2", app_mpy_version=HEXDRIVE2_APP_VERSION, app_name="HexDriveApp",           servos=2, sub_type="2 Servo" ),
-                                 HexpansionType(0x10CA, "HexDrive2",   vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive2", app_mpy_version=HEXDRIVE2_APP_VERSION, app_name="HexDriveApp", motors=2,           sub_type="2 Motor" ),
-                                 HexpansionType(0x11CE, "HexDrive2",   vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive2", app_mpy_version=HEXDRIVE2_APP_VERSION, app_name="HexDriveApp", motors=1,           sub_type="Left Motor" ),
-                                 HexpansionType(0x12CE, "HexDrive2",   vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive2", app_mpy_version=HEXDRIVE2_APP_VERSION, app_name="HexDriveApp", motors=1,           sub_type="Right Motor" ),
-                                 HexpansionType(0x10CF, "HexDrive2",   vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive2", app_mpy_version=HEXDRIVE2_APP_VERSION, app_name="HexDriveApp", motors=1, servos=1, sub_type="1 Mot 1 Srvo" ),
+                                 HexpansionType(0x10C8, "HexDrive2",   vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive2", app_mpy_version=HEXDRIVE2_APP_VERSION, app_name="HexDriveApp", motors=2, servos=2, sensors=2, sub_type="Uncommitted" ),
+                                 HexpansionType(0x10C9, "HexDrive2",   vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive2", app_mpy_version=HEXDRIVE2_APP_VERSION, app_name="HexDriveApp",           servos=2, sensors=2, sub_type="2 Servo" ),
+                                 HexpansionType(0x10CA, "HexDrive2",   vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive2", app_mpy_version=HEXDRIVE2_APP_VERSION, app_name="HexDriveApp", motors=2,           sensors=2, sub_type="2 Motor" ),
+                                 HexpansionType(0x11CE, "HexDrive2",   vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive2", app_mpy_version=HEXDRIVE2_APP_VERSION, app_name="HexDriveApp", motors=1,           sensors=2, sub_type="Left Motor" ),
+                                 HexpansionType(0x12CE, "HexDrive2",   vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive2", app_mpy_version=HEXDRIVE2_APP_VERSION, app_name="HexDriveApp", motors=1,           sensors=2, sub_type="Right Motor" ),
+                                 HexpansionType(0x10CF, "HexDrive2",   vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive2", app_mpy_version=HEXDRIVE2_APP_VERSION, app_name="HexDriveApp", motors=1, servos=1, sensors=2, sub_type="1 Mot 1 Srvo" ),
 
                                  HexpansionType(0x2000, "HexSense",    vid=0xCBCB, eeprom_total_size=65536, eeprom_page_size=128,                                                                                                              sub_type="Line Follow" ),
                                  HexpansionType(0x4000, "HexDiag",     vid=0xCBCB, eeprom_total_size=65536, eeprom_page_size=128,                                                                                                              sub_type="Scope Pins" ),
@@ -324,6 +324,9 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
         # Motor Driver Hardware
         self.num_motors: int = 0        # initialised to 0 until we detect a HexDrive Hexpansion and can set this based on the actual number of motors it has
+
+        # Sensor Hardware
+        self.num_sensors: int = 0       # initialised to 0 until we detect some Sensors
 
         # Line Sensors Hardware
         self.num_line_sensors: int = 0  # initialised to 0 until we detect a HexSense Hexpansion and can set this based on the actual number of sensors it has
@@ -554,7 +557,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     def enable_sensor_test(self):
         """Whether the Sensor Test feature is enabled, based on whether we have detected sensor hardware and have the manager available."""
         #print(f"Checking if Sensor Test is enabled: sensor_test_mgr={'present' if self._sensor_test_mgr is not None else 'absent'}")
-        return self._sensor_test_mgr is not None
+        return self.num_sensors > 0 and self._sensor_test_mgr is not None
 
 
     @property
@@ -628,7 +631,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     def diagnostics_output(self, index: int, value: int):
         """Output diagnostic values to the HS pins on the diagnostics hexpansion, for measurement with an oscilloscope"""
         if self._diag_config is not None and 0 <= index < 4:
-            print(f"B:Diag output {index} = {value}")
             self._diag_config.pin[index].value(value)
 
 
@@ -667,8 +669,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         # didn't trigger, so we need to perform extra display refresh cycles in case.
         # As the draw function is VERY slow, and hence it stalls background updates
         # we only do extra refresh cycles if the update period is long.
-        if self.update_period >= DEFAULT_BACKGROUND_UPDATE_PERIOD:
-            self.refresh = True
+        #if self.update_period >= DEFAULT_BACKGROUND_UPDATE_PERIOD:
+        #    self.refresh = True
 
         # manage LED PatternEnable/Disable for all states
         #self._pattern_management()

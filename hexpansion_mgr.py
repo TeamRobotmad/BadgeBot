@@ -686,11 +686,13 @@ class HexpansionMgr:
             app.hexdrive_apps = []
             app.num_motors = 0
             app.num_servos = 0
+            app.num_sensors = 0
             for port in app.hexdrive_ports:
                 hexdrive_type_idx = self._hexpansion_type_by_slot[port - 1]
                 if hexdrive_type_idx is not None and 0 <= hexdrive_type_idx < len(app.HEXPANSION_TYPES):
                     app.num_motors   += app.HEXPANSION_TYPES[hexdrive_type_idx].motors
                     app.num_servos   += app.HEXPANSION_TYPES[hexdrive_type_idx].servos
+                    app.num_sensors  += app.HEXPANSION_TYPES[hexdrive_type_idx].sensors
 
         if len(app.hexdrive_ports) != len (app.hexdrive_apps):
             hexdrive_apps = []
