@@ -991,7 +991,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             # Font is not central in the height allocated to it due to space for descenders etc...
             # this is most obvious when there is only one line of text
             # # position fine tuned to fit around button labels when showing 5 lines of text
-            y_position = int(0.35 * ctx.font_size) if num_lines == 1 else int((i_num-((num_lines-2)/2)) * ctx.font_size - 2)
+            y_position = int(0.35 * ctx.font_size) if num_lines == 1 else int((i_num-((num_lines-2)/2)) * ctx.font_size - 12)
             ctx.rgb(*colour).move_to(-width//2, y_position).text(text_line)
 
 
