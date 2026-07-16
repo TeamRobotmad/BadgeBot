@@ -46,7 +46,7 @@ jobs:
         run: |
           set -euo pipefail
           version="${{ steps.version.outputs.version }}"
-          branch="release-v${version}"
+          branch="release-v${version}.0"
 
           git checkout -b "$branch"
 
