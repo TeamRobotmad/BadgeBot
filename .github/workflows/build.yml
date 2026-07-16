@@ -1,4 +1,4 @@
-name: Release
+name: Build BadgeBot Release
 
 on:
   push:
@@ -57,14 +57,3 @@ jobs:
           git add -A
           git commit -m "release v${version}"
           git push origin "$branch"
-
-      - name: Create GitHub release
-        if: steps.check.outputs.exists == 'false'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          version="${{ steps.version.outputs.version }}"
-          gh release create "v${version}" \
-            --target "release-v${version}" \
-            --title "v${version}" \
-            --generate-notes
