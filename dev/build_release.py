@@ -1,5 +1,6 @@
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -51,7 +52,6 @@ EXTERNAL_MODULES = (
 )
 
 files_to_keep = {
-    Path("app.py"),
     Path("tildagon.toml"),
     Path("metadata.json"),
 }
@@ -119,19 +119,26 @@ if __name__ == "__main__":
             check=True,
         )
 
+    processes = []
+
     for file in files_to_mpy:
         print(f"Mpy-ing file: {file}")
-        mpy_cross.run(file, "-march=xtensawin", "-v")
+        processes.append((file, mpy_cross.run(file, "-march=xtensawin", "-v")))
 
     for spec in EXTERNAL_MODULES:
         print(f"Mpy-ing file: {spec.source} -> {spec.artifact}")
         spec.artifact.parent.mkdir(parents=True, exist_ok=True)
-        mpy_cross.run(str(spec.source), "-march=xtensawin", "-v", "-o", str(spec.artifact))
+        processes.append((spec.source, mpy_cross.run(str(spec.source), "-march=xtensawin", "-v", "-o", str(spec.artifact))))
+
+    for source, process in processes:
+        if process.wait() != 0:
+            raise RuntimeError(f"mpy-cross failed to compile {source} (exit code {process.returncode})")
 
     found_files = set(find_files("."))
 
     if not files_to_keep.issubset(found_files):
-        raise FileNotFoundError(f"Some of {files_to_keep} are not found so assuming wrong directory. "
+        missed_files = files_to_keep.difference(found_files)
+        raise FileNotFoundError(f"{missed_files} are not found."
                                 "Please run this script from BadgeBot dir.")
 
     files_to_remove = found_files.difference(files_to_keep)
@@ -143,3 +150,12 @@ if __name__ == "__main__":
     for file in files_to_remove:
         print(f"Removing file: {file}")
         os.remove(file)
+
+    for ignored_dir in IGNORED_SOURCE_DIRS:
+        if ignored_dir.exists():
+            print(f"Removing directory: {ignored_dir}")
+            shutil.rmtree(ignored_dir)
+        parent = ignored_dir.parent
+        if parent != Path(".") and parent.is_dir() and not any(parent.iterdir()):
+            print(f"Removing directory: {parent}")
+            parent.rmdir()

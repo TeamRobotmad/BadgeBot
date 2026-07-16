@@ -46,7 +46,7 @@ jobs:
         run: |
           set -euo pipefail
           version="${{ steps.version.outputs.version }}"
-          branch="release-v${version}"
+          branch="release-v${version}.0"
 
           git checkout -b "$branch"
 
@@ -56,5 +56,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "release v${version}"
+          git commit -m "release v${version}.0"
           git push origin "$branch"
