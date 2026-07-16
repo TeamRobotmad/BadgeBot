@@ -119,16 +119,16 @@ if __name__ == "__main__":
             check=True,
         )
 
-    found_files = set(find_files("."))
-
     for file in files_to_mpy:
         print(f"Mpy-ing file: {file}")
-        mpy_cross.run(file, "-v")
+        mpy_cross.run(file, "-march=xtensawin", "-v")
 
     for spec in EXTERNAL_MODULES:
         print(f"Mpy-ing file: {spec.source} -> {spec.artifact}")
         spec.artifact.parent.mkdir(parents=True, exist_ok=True)
-        mpy_cross.run(str(spec.source), "-v", "-o", str(spec.artifact))
+        mpy_cross.run(str(spec.source), "-march=xtensawin", "-v", "-o", str(spec.artifact))
+
+    found_files = set(find_files("."))
 
     if not files_to_keep.issubset(found_files):
         raise FileNotFoundError(f"Some of {files_to_keep} are not found so assuming wrong directory. "
