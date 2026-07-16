@@ -150,12 +150,7 @@ _RES_CTRL_CONV_READY_MASK  = 0x0004   # Bit 2
 _RES_CTRL_FLAG_H_MASK      = 0x0002   # Bit 1
 _RES_CTRL_FLAG_L_MASK      = 0x0001   # Bit 0
 
-# Legacy single-bit names (used internally by driver logic)
-_FLAG_READY     = _RES_CTRL_CONV_READY_MASK
-_FLAG_OVERLOAD  = _RES_CTRL_OVERLOAD_MASK
-_FLAG_HIGH      = _RES_CTRL_FLAG_H_MASK
-_FLAG_LOW       = _RES_CTRL_FLAG_L_MASK
-
+_READ_TIMEOUT_MS = 100    # Max time to wait for conversion-ready status in _measure()
 
 class OPT4060(SensorBase):
     """Driver for the TI OPT4060 RGBW colour sensor.
@@ -278,13 +273,16 @@ class OPT4060(SensorBase):
 
         return True
 
-    def _measure(self) -> dict:
-        # Poll status for conversion-ready; timeout after READ_INTERVAL_MS
-        deadline = time.ticks_add(time.ticks_ms(), self.READ_INTERVAL_MS)
+    def _measure(self, timeout: int = _READ_TIMEOUT_MS) -> dict:
+        if self._i2c is None:
+            return {"Error": "not initialized"}
+
+        # Poll status for conversion-ready
+        deadline = time.ticks_add(time.ticks_ms(), timeout)
         while True:
             st = self._read_u16_be(_REG_RES_CTRL)
-            if st & _FLAG_READY:
-                self._overload = bool(st & _FLAG_OVERLOAD)
+            if st & _RES_CTRL_CONV_READY_MASK:
+                self._overload = bool(st & _RES_CTRL_OVERLOAD_MASK)
                 break
             if time.ticks_diff(deadline, time.ticks_ms()) <= 0:
                 return {"Error": "timeout"}
@@ -298,10 +296,10 @@ class OPT4060(SensorBase):
         blue  = self._decode_channel(raw, 8)
         w     = self._decode_channel(raw, 12)
         return {
-            "red":   str(red),
-            "green": str(green),
-            "blue":  str(blue),
-            "w":     str(w),
+            "r": str(red),
+            "g": str(green),
+            "b": str(blue),
+            "w": str(w),
         }
 
     @staticmethod

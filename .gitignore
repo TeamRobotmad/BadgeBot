@@ -6,4 +6,7 @@ BadgeBot.code-workspace
 .editorconfig
 .venv/
 .venv-wsl*/
-
+# minify.py build artefacts
+vendor/**/*.min.py
+vendor/**/*.renamed.py
+EEPROM/*.renamed.py

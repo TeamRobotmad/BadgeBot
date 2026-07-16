@@ -10,6 +10,7 @@ Public interface (called by the main app):
   init_settings(settings)  – register auto-drive specific settings
 """
 import asyncio
+from system.eventbus import eventbus
 from events.input import BUTTON_TYPES
 from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
@@ -74,8 +75,7 @@ class AutoDriveMgr:
         self._mc_task = None              # async task for MC turn/drive
         self._active = False
         self.sub_state: int = _AUTO_SUB_DRIVE
-        self.distance = None            # latest ToF reading in mm (int or None)
-        self.lux = None                 # latest lux reading (float or None)
+        self.distance: int | None = None # latest ToF reading in mm (int or None)
         self.sensor_timer: int = 0      # ms since last sensor read
         self.scan_data: list = []       # list of (angle_deg, dist_mm) pairs
         self.scan_slot: int = 0         # sample count (for display)
@@ -99,12 +99,12 @@ class AutoDriveMgr:
 
 
     # ------------------------------------------------------------------
-    
+
     @property
     def logging(self) -> bool:
         """Whether to print debug logs from the AutoDriveMgr."""
         return self._logging
-    
+
     @logging.setter
     def logging(self, value: bool):
         self._logging = value
@@ -116,31 +116,9 @@ class AutoDriveMgr:
     def start(self) -> bool:
         """Enter the Auto Drive flow from the main menu."""
         app = self._app
-        sensor_test = app.sensor_test_mgr
 
-        # Ensure we have a sensor before enabling auto-drive / motors
-        sensor_open = False
-        if sensor_test.sensor_mgr is not None and sensor_test.sensor_mgr.is_open:
-            # Already open — use as-is
-            sensor_open = True
-        else:
-            ports_to_try = [sensor_test.port_selected]
-            for port in app.hexdrive_ports:
-                if port != sensor_test.port_selected:
-                    ports_to_try.append(port)
-            if app.hexsense_port is not None and app.hexsense_port != sensor_test.port_selected:
-                ports_to_try.append(app.hexsense_port)
-            for probe_port in ports_to_try:
-                if sensor_test.open_sensor_port(probe_port):
-                    sensor_test.port_selected = probe_port
-                    app.update_period = sensor_test.sensor_mgr.read_interval
-                    sensor_open = True
-                    break
-            if not sensor_open:
-                app.notification = Notification(f"No sensor\n{ports_to_try}")
-                self.status = "No sensor"
-                self._active = False
-                return False
+        if not self._enable_sensors():
+            return False
 
         # Sensor is available: enter auto-drive mode and power motors
         app.set_menu(None)
@@ -148,15 +126,14 @@ class AutoDriveMgr:
         app.update_period = 10
         app.refresh = True
         if len(app.hexdrive_apps) > 0:
-            app.hexdrive_apps[0].set_power(True)
-            app.hexdrive_apps[0].set_freq(MOTOR_PWM_FREQ)
-
+            hexdrive_app = app.hexdrive_apps[0]
+            hexdrive_app.set_power(True)
+            hexdrive_app.set_freq(MOTOR_PWM_FREQ)
 
         # Reset driving state
         self._active = True
         self.sub_state = _AUTO_SUB_DRIVE
         self.distance = None
-        self.lux = None
         self.sensor_timer = 0
         self.scan_data = []
         self.forward_hold_ms = _AUTO_MIN_FWD_MS
@@ -203,7 +180,7 @@ class AutoDriveMgr:
         self.sensor_timer += delta
         if self.sensor_timer >= _AUTO_SENSOR_READ_MS:
             self.sensor_timer = 0
-            self._read_sensor()
+            #self._read_sensor()
             # Record (angle, dist) snapshot on every sensor tick during a scan
             if self.sub_state == _AUTO_SUB_SCAN:
                 self._scan_record_sample()
@@ -217,10 +194,10 @@ class AutoDriveMgr:
                       _AUTO_SUB_TURN_BACK:  "Returning"}
         sub_label = sub_labels.get(self.sub_state, "?")
         d_str   = f"{self.distance}mm" if self.distance is not None else "---"
-        lx_str  = f"{self.lux:.0f}lx"  if self.lux      is not None else "---"
         g_str   = f"{self.gyro_dps:+.1f}dps"
         deg_str = f"{self.imu_deg:.1f}deg/{self.target_deg:.1f}deg" if self.target_deg else f"{self.imu_deg:.1f}deg"
-        lines   = ["Auto Drive", sub_label, f"Dist:{d_str} Lux:{lx_str}",
+        # stats to 1 dp in Hz
+        lines   = ["Auto Drive", sub_label, f"Dist:{d_str}",
                    f"Gyro:{g_str} {deg_str}", self.status]
         colours = [(1,1,1), (0,1,1), (1,1,0), (0,0.9,0.4), (0.8,0.8,0.8)]
         self._app.draw_message(ctx, lines, colours, label_font_size)
@@ -259,14 +236,17 @@ class AutoDriveMgr:
             self._mc_task.cancel()
             self._mc_task = None
         if self._mc is not None:
-            self._mc.stop()        
+            self._mc.stop()
         self._active = False
         self.motor_output = (0, 0)
         self.target_output = (0, 0)
         if len(self._app.hexdrive_apps) > 0:
-            self._app.hexdrive_apps[0].set_motors((0, 0))
-            self._app.hexdrive_apps[0].set_power(False)
+            hexdrive_app = self._app.hexdrive_apps[0]
+            hexdrive_app.set_motors((0, 0))
+            hexdrive_app.set_power(False)
+            self._disable_sensors()
         self.status = ""
+
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -286,26 +266,11 @@ class AutoDriveMgr:
         if magnitude > _AUTO_GYRO_DEADBAND_DPS:
             self.imu_deg += magnitude * (delta / 1000.0)
 
-    def _read_sensor(self):
-        """Read the current sensor and store numeric distance and lux."""
-        sm = self._app.sensor_test_mgr.sensor_mgr
-        if sm is None or not sm.is_open:
-            return
-        try:
-            data = sm.read_current()
-            r = str(data.get("range_mm", ""))
-            self.distance = int(r.replace("mm", "")) if "mm" in r else None
-            lx = str(data.get("lux", ""))
-            self.lux = float(lx.replace("lx", "")) if "lx" in lx else None
-        except Exception:           # pylint: disable=broad-except
-            self.distance = None
-            self.lux = None
-        if self._logging:
-            print(f"A:sens dist={self.distance} lux={self.lux}")
 
     def _stop_motors(self):
         self.target_output = (0, 0)
         self.motor_output = (0, 0)
+
 
     @staticmethod
     def _slew(current: int, target: int, step: int) -> int:
@@ -314,6 +279,7 @@ class AutoDriveMgr:
         if current > target:
             return max(current - step, target)
         return current
+
 
     def _apply_output_ramp(self, delta: int):
         accel = max(1, int(self._app.settings['acceleration'].v))
@@ -331,6 +297,7 @@ class AutoDriveMgr:
             self._slew(cur_r, target_r, step),
         )
 
+
     def _enter_drive(self):
         """Enter forward-drive mode with scan holdoff."""
         self.sub_state = _AUTO_SUB_DRIVE
@@ -341,6 +308,7 @@ class AutoDriveMgr:
         speed = max(self._app.settings['auto_speed'].v, _AUTO_CRUISE_MIN_PWM)
         self.target_output = (speed, speed)
         self.status = "Fwd"
+
 
     def _update_drive(self, delta: int):
         """Drive forward; trigger a scan if an obstacle is detected within threshold.
@@ -425,11 +393,13 @@ class AutoDriveMgr:
         if self._logging:
             print("A:Starting scan dist=" + str(self.distance) + "mm")
 
+
     def _scan_record_sample(self):
         """Record the current ToF reading paired with the current gyro angle."""
         dist = self.distance if self.distance is not None else _AUTO_CLEAR_DIST_MM
         self.scan_data.append((self.imu_deg, dist))
         self.scan_slot = len(self.scan_data)
+
 
     def _update_scan(self, delta: int):
         """Spin clockwise while the gyro integrates to 360deg, recording (angle, dist) per
@@ -556,6 +526,7 @@ class AutoDriveMgr:
         if self._logging:
             print(f"A:TurnBack start - target={self.best_dist}mm dir={'left' if self.turn_dir > 0 else 'right'} deg_target={self.target_deg:.1f}deg")
 
+
     def _update_turn_back(self, delta: int):
         """Sweep back in the opposite direction until the ToF reading matches best_dist.
 
@@ -595,3 +566,85 @@ class AutoDriveMgr:
                 if not reasons:   reasons.append("timeout")
                 print(f"A:TurnBack done ({', '.join(reasons)}) target={self.best_dist}mm deg={self.target_deg:.1f}deg")
             self._enter_drive()
+
+
+    def _enable_sensors(self) -> bool:
+        """Enable the range and colour sensors on the HexDrive if present."""
+        num_sensors_enabled = 0
+        if 0 < len(self._app.hexdrive_apps):
+            hexdrive_app = self._app.hexdrive_apps[0]
+            # the hexdrive_app could be for V1 or V2, only V2 has the range sensor support
+            try:
+                if hasattr(hexdrive_app, "range_enable"):
+                    hexdrive_app.range_enable(True)
+                    print("B:Range Sensor Enabled")
+                    num_sensors_enabled += 1
+                    if hasattr(hexdrive_app, "RangeEvent"):
+                        eventbus.on(
+                            hexdrive_app.RangeEvent,
+                            self._handle_range_event,
+                            self
+                        )
+                        print("B:Range Event enabled")
+            except RuntimeError as e:
+                print(f"B:Range enable failed: {e}")
+
+            try:
+                if hasattr(hexdrive_app, "colour_enable"):
+                    if hasattr(hexdrive_app, "set_flood_led"):
+                        hexdrive_app.set_flood_led(True)
+                    hexdrive_app.colour_enable(True)
+                    num_sensors_enabled += 1
+                    print("B:Colour Enabled")
+                    if hasattr(hexdrive_app, "ColourEvent"):
+                        eventbus.on(
+                            hexdrive_app.ColourEvent,
+                            self._handle_colour_event,
+                            self
+                        )
+                        print("B:Colour Event enabled")
+            except RuntimeError as e:
+                print(f"B:Colour enable failed: {e}")
+        return num_sensors_enabled > 0
+
+
+    def _disable_sensors(self):
+        """Disable the range and colour sensors on the HexDrive if present."""
+        hexdrive_app = self._app.hexdrive_apps[0] if len(self._app.hexdrive_apps) > 0 else None
+        if hexdrive_app is not None:
+            try:
+                if hasattr(hexdrive_app, "range_enable"):
+                    hexdrive_app.range_enable(False)
+                if hasattr(hexdrive_app, "set_flood_led"):
+                    hexdrive_app.set_flood_led(False)
+                if hasattr(hexdrive_app, "colour_enable"):
+                    hexdrive_app.colour_enable(False)
+                # stop listenting to range events
+                if hasattr(hexdrive_app, "RangeEvent"):
+                    eventbus.remove(hexdrive_app.RangeEvent, self._handle_range_event, self)
+                    print("B:Range Event disabled")
+                # stop listening to colour events
+                if hasattr(hexdrive_app, "ColourEvent"):
+                    eventbus.remove(hexdrive_app.ColourEvent, self._handle_colour_event, self)
+                    print("B:Colour Event disabled")
+            except RuntimeError as e:
+                print(f"B:Sensor disable failed: {e}")
+
+
+
+    # ------------------------------------------------------------------
+    # Event Handlers
+    # ------------------------------------------------------------------
+
+    def _handle_range_event(self, event):
+        """Handle range events from the range sensor."""
+        print(f"B:EventRange:{event.range}mm")
+        #print(f"B:Last Range:{self._app.hexdrive_apps[0].range}mm")
+        self.distance = event.range
+
+
+
+    def _handle_colour_event(self, event):
+        """Handle colour events from the colour sensor."""
+        print(f"B:EventColour:{event.colour} ({event.colour_name})")
+        #print(f"B:Last Colour:{self._app.hexdrive_apps[0].colour} ({self._app.hexdrive_apps[0].colour_name})")

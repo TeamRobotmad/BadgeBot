@@ -2,7 +2,7 @@
 import asyncio
 import sys
 import time
-from math import cos, pi
+from math import sin, cos, pi
 
 import ota
 import settings
@@ -21,6 +21,15 @@ from tildagonos import tildagonos
 from machine import Pin
 import app
 
+try:
+    from micropython import const
+except ImportError:
+    # CPython / simulator fallback – const() is just an identity function
+    # on MicroPython; replicate that so module-level const() calls work.
+    const = lambda x: x         #pylint: disable=unnecessary-lambda-assignment
+
+from .bluetooth_mgr import bluetooth, RobotBLE, ble_process_command, enable_ble_logging, disable_ble_logging, get_ble_motor_override
+
 # If you could use hard=True in setting up a Pin IRQ hander, which you can't as of BadgeOS V1.10, then it is recommended to
 # allocate the emergency exception buffer to prevent crashes due to OSError: Out of memory when an interrupt occurs and
 # there is no memory available to handle the exception.
@@ -28,13 +37,12 @@ import app
 #micropython.alloc_emergency_exception_buf(100)
 
 from .utils import draw_logo_animated, parse_version
-from .EEPROM.hexdrive import VERSION as HEXDRIVE_APP_VERSION
 
+HEXDRIVE_APP_VERSION = 6
+HEXDRIVE2_APP_VERSION = 2
 
-_SETTINGS_NAME_PREFIX = "badgebot."  # Prefix for settings keys in EEPROM
-APP_VERSION = "1.5" # BadgeBot App Version Number
-
-_DIAG_PORT = None  # Hexpansion port to use for diagnostic timing measurements
+SETTINGS_NAME_PREFIX = "badgebot"  # Prefix for settings keys in EEPROM
+APP_VERSION = "2.0" # BadgeBot App Version Number
 
 # If you change the URL then you will need to regenerate the QR code
 # using the generate_qr_code.py script, and update the _QR_CODE constant below with the new code generated for your URL
@@ -72,28 +80,29 @@ _BRIGHTNESS = 1.0
 H_START = -63
 
 # Timings
-MOTOR_PWM_FREQ = 20000      # 20kHz is a good default for motors as it is above the audible range for most people and works with most motors and ESC
-_LONG_PRESS_MS = 750        # Time for long button press to register, in ms
-_RUN_COUNTDOWN_MS = 5000    # Time after running program until drive starts, in ms
-_AUTO_REPEAT_MS = 200       # Time between auto-repeats, in ms
-_AUTO_REPEAT_COUNT_THRES = 10 # Number of auto-repeats before increasing level
-_AUTO_REPEAT_SPEED_LEVEL_MAX = 4  # Maximum level of auto-repeat speed increases
-_AUTO_REPEAT_LEVEL_MAX = 3  # Maximum level of auto-repeat digit increases
-DEFAULT_BACKGROUND_UPDATE_PERIOD = 100    # mS when not moving
+MOTOR_PWM_FREQ = const(20000)      # 20kHz is a good default for motors as it is above the audible range for most people and works with most motors and ESC
+MOTOR_POWER_SCALE_FACTOR = const(512)  # Settings store motor power / acceleration divided by this; multiply back to get 0-65535 PWM values
+_LONG_PRESS_MS = const(750)        # Time for long button press to register, in ms
+_RUN_COUNTDOWN_MS = const(5000)    # Time after running program until drive starts, in ms
+_AUTO_REPEAT_MS = const(200)       # Time between auto-repeats, in ms
+_AUTO_REPEAT_COUNT_THRES = const(10) # Number of auto-repeats before increasing level
+_AUTO_REPEAT_SPEED_LEVEL_MAX = const(4)  # Maximum level of auto-repeat speed increases
+_AUTO_REPEAT_LEVEL_MAX = const(3)  # Maximum level of auto-repeat digit increases
+DEFAULT_BACKGROUND_UPDATE_PERIOD = const(100)    # mS when not moving
 
 # App states
-STATE_MENU = 0
-STATE_MESSAGE = 1         # Message display
-STATE_LOGO =  2           # Logo display
-STATE_COUNTDOWN = 3       # Shared countdown (Motor Moves & PID AutoTune)
-STATE_SETTINGS = 4        # Edit Settings
-STATE_MOTOR_MOVES = 5     # Motor Moves (sub-states managed by MotorMovesMgr)
-STATE_SERVO = 6           # Servo test
-STATE_FOLLOWER = 7        # Line Follower
-STATE_AUTOTUNE = 8        # PID Auto Tune
-STATE_SENSOR = 9          # Sensor Test
-STATE_AUTODRIVE = 10      # Autonomous Drive
-STATE_HEXPANSION = 11     # Hexpansion Management (sub-states managed by HexpansionMgr)
+STATE_MENU = const(0)
+STATE_MESSAGE = const(1)         # Message display
+STATE_LOGO =  const(2)           # Logo display
+STATE_COUNTDOWN = const(3)       # Shared countdown (Motor Moves & PID AutoTune)
+STATE_SETTINGS = const(4)        # Edit Settings
+STATE_MOTOR_MOVES = const(5)     # Motor Moves (sub-states managed by MotorMovesMgr)
+STATE_SERVO = const(6)           # Servo test
+STATE_FOLLOWER = const(7)        # Line Follower
+STATE_AUTOTUNE = const(8)        # PID Auto Tune
+STATE_SENSOR = const(9)          # Sensor Test
+STATE_AUTODRIVE = const(10)      # Autonomous Drive
+STATE_HEXPANSION = const(11)     # Hexpansion Management (sub-states managed by HexpansionMgr)
 
 # App states where user can minimise app (Menu, Message, Logo)
 MINIMISE_VALID_STATES = [STATE_MENU, STATE_MESSAGE, STATE_LOGO]
@@ -103,23 +112,24 @@ _LED_CONTROL_STATES    = [STATE_MOTOR_MOVES, STATE_COUNTDOWN, STATE_MESSAGE, STA
 
 #Misceallaneous Settings
 _LOGGING = False
+_BLE_LOGGING = False
 _IS_SIMULATOR = sys.platform != "esp32"  # True when running in the simulator, not on real badge hardware
-_FWD_DIR_DEFAULT = 0
-_FRONT_FACE_DEFAULT = 0
+_FWD_DIR_DEFAULT = const(0)
+_FRONT_FACE_DEFAULT = const(0)
 
 
 # Main Menu Items
 MAIN_MENU_ITEMS = ["Line Follower","Motor Moves", "Servo Test", "PID Auto Tune", "Sensor Test", "Auto Drive", "Hexpansions", "Settings", "About","Exit"]
-MENU_ITEM_LINE_FOLLOWER = 0
-MENU_ITEM_MOTOR_MOVES = 1
-MENU_ITEM_SERVO_TEST = 2
-MENU_ITEM_PID_AUTOTUNE = 3
-MENU_ITEM_SENSOR_TEST = 4
-MENU_ITEM_AUTO_DRIVE = 5
-MENU_ITEM_HEXPANSION = 6
-MENU_ITEM_SETTINGS = 7
-MENU_ITEM_ABOUT = 8
-MENU_ITEM_EXIT = 9
+MENU_ITEM_LINE_FOLLOWER = const(0)
+MENU_ITEM_MOTOR_MOVES = const(1)
+MENU_ITEM_SERVO_TEST = const(2)
+MENU_ITEM_PID_AUTOTUNE = const(3)
+MENU_ITEM_SENSOR_TEST = const(4)
+MENU_ITEM_AUTO_DRIVE = const(5)
+MENU_ITEM_HEXPANSION = const(6)
+MENU_ITEM_SETTINGS = const(7)
+MENU_ITEM_ABOUT = const(8)
+MENU_ITEM_EXIT = const(9)
 
 # Front face direction labels (0=BtnA corner between slots 6 & 1, each step = 30° CW)
 _FRONT_FACE_LABELS = (
@@ -127,6 +137,11 @@ _FRONT_FACE_LABELS = (
     "BtnD", "Slot 4", "BtnE", "Slot 5", "BtnF", "Slot 6",
 )
 _MOTOR_DIRECTION_LABELS = ("Normal", "Reverse")
+
+_FILE_DEST_LABELS = ("Badge FS", "Hex FS")
+
+_MIN_BADGEOS_VERSION = (2, 0, 0)     # v2.0.0 is required to be able to use the new hexpansion utilite
+
 
 # Import sub-modules after constants are defined so they can safely
 # `from .app import STATE_*` without circular-import timing issues.
@@ -151,19 +166,21 @@ def _try_import(module_name, *attr_names):
     return nones
 
 HexpansionMgr, HexpansionType, _hexpansion_init_settings = _try_import('hexpansion_mgr', 'HexpansionMgr', 'HexpansionType', 'init_settings')
-SettingsMgr, MySetting                                    = _try_import('settings_mgr',   'SettingsMgr', 'MySetting')
-MotorMovesMgr, _motor_moves_init_settings                 = _try_import('motor_moves',    'MotorMovesMgr', 'init_settings')
-ServoTestMgr, _servo_test_init_settings                   = _try_import('servo_test',     'ServoTestMgr', 'init_settings')
-LineFollowMgr, _line_follow_init_settings                 = _try_import('line_follow',    'LineFollowMgr', 'init_settings')
-(AutotuneMgr,)                                            = _try_import('autotune_mgr',   'AutotuneMgr')
-SensorTestMgr, _sensor_test_init_settings                 = _try_import('sensor_test',    'SensorTestMgr', 'init_settings')
-AutoDriveMgr, _autodrive_init_settings                    = _try_import('autodrive',      'AutoDriveMgr', 'init_settings')
-
+SettingsMgr, MySetting                                    = _try_import('settings_mgr',  'SettingsMgr', 'MySetting')
+MotorMovesMgr, _motor_moves_init_settings                 = _try_import('motor_moves',   'MotorMovesMgr', 'init_settings')
+ServoTestMgr, _servo_test_init_settings                   = _try_import('servo_test',    'ServoTestMgr', 'init_settings')
+LineFollowMgr, _line_follow_init_settings                 = _try_import('line_follow',   'LineFollowMgr', 'init_settings')
+(AutotuneMgr,)                                            = _try_import('autotune_mgr',  'AutotuneMgr')
+SensorTestMgr, _sensor_test_init_settings                 = _try_import('sensor_test',   'SensorTestMgr', 'init_settings')
+AutoDriveMgr, _autodrive_init_settings                    = _try_import('autodrive',     'AutoDriveMgr', 'init_settings')
+emit_diagnostics_output, set_diagnostics_output           = _try_import('diagnostics',   'output', 'set_output')
 
 class BadgeBotApp(app.App):         # pylint: disable=no-member
     """Main application class for BadgeBot.  Manages overall state, user input, and delegates to functional area managers for specific features."""
     def __init__(self):
         super().__init__()
+
+        self._bluetooth_enabled: bool = True
 
         # UI Button Controls
         self.button_states = Buttons(self)
@@ -187,8 +204,11 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.message: list = []
         self.message_colours: list = []
         self.message_type: str | None = None
+        self.message_return_state: int | None = None
         self.current_menu: str | None = None
         self.menu: Menu | None = None
+        self._main_menu_position: int = 0
+        self._settings_menu_position: int = 0
         self.scroll_mode_enabled: bool = False  # Whether pressing the "C" button can toggle scroll mode on/off, which allows the user to scroll through lines on the display.
         self.scroll_ignore_next_c_button: bool = False # Used to ignore the "C" button event that triggers scroll mode on, otherwise it would immediately toggle scroll mode off again
         self.is_scroll: bool = False        # Whether we are in scroll mode - this is displayed by a green border around the screen
@@ -201,12 +221,20 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self._motor1_reversed: bool = False       # 0 or 1 to control direction of motor 1, set based on settings
         self._motor2_reversed: bool = False       # 0 or 1 to control direction of motor 2, set based on settings
 
+        # Overall app state (controls what is displayed and what user inputs are accepted)
+        self.current_state = STATE_HEXPANSION
+        self.previous_state = self.current_state
+        self.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD   # mS
+
         # Settings - common settings first, then each module registers its own later
         self.settings: dict = {}
         if MySetting is not None:
             # General settings
             self.settings['brightness']    = MySetting(self.settings, _BRIGHTNESS, 0.1, 1.0)
             self.settings['logging']       = MySetting(self.settings, _LOGGING, False, True)
+            self.settings['path']          = MySetting(self.settings, 0, 0, len(_FILE_DEST_LABELS) - 1, labels=_FILE_DEST_LABELS)
+
+            self.settings['ble_logging']   = MySetting(self.settings, _BLE_LOGGING, False, True)
             # Direction settings
             self.settings['motor1_dir']    = MySetting(self.settings, _FWD_DIR_DEFAULT, 0, 1, labels=_MOTOR_DIRECTION_LABELS)
             self.settings['motor2_dir']    = MySetting(self.settings, _FWD_DIR_DEFAULT, 0, 1, labels=_MOTOR_DIRECTION_LABELS)
@@ -219,78 +247,50 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             self.update_settings()
             self.fast_settings_update()
 
-        # Check what version of the Badge s/w we are running on
-        ver: list[int | str] | None = None
-        try:
-            ver = parse_version(ota.get_version())
-            if ver is not None:
-                if self.logging:
-                    print(f"BadgeSW V{ver}")
-                # Potential to do things differently based on badge s/w version
-                # e.g. if ver < [1, 9, 0]:
-        except Exception: # pylint: disable=broad-exception-caught
-            pass
-
-        # make use of special characters if running on compatible badge s/w version
-        version_triplet = tuple(part if isinstance(part, int) else 0 for part in (ver[:3] if ver is not None else []))
-        if len(version_triplet) == 3 and version_triplet > (1, 10, 0):
-            self.special_chars = { 'up': "\u25B2",        # up arrow
-                                # 'down': "\u25BC",     # down arrow - has always existed
-                                  'left': "\u25C0",     # left arrow
-                                  'right': "\u25B6" }   # right arrow
-        else:
-            self.special_chars = {'up': "^", 'left': "<", 'right': ">"}
-
+        if set_diagnostics_output is not None:
+            set_diagnostics_output(self.diagnostics_output)
 
         # Hexpansion related - SEE ALSO hexpansion_mgr to update _SINGLE_PORT_HEXPANSION_REFS
         #                                       pid      name         vid          eeprom total size        eeprom page size      app mpy name                 app mpy version                       app name                motors    servos    sensors    sub_type
         assert HexpansionType is not None
-        self.HEXPANSION_TYPES = [HexpansionType(0xCBCB, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2, servos=4, sub_type="Uncommitted" ),
-                                 HexpansionType(0xCBCA, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2,           sub_type="2 Motor" ),
-                                 HexpansionType(0xCBCC, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp",           servos=4, sub_type="4 Servo" ),
-                                 HexpansionType(0xCBCD, "HexDrive",                                                               app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=1, servos=2, sub_type="1 Mot 2 Srvo" ),
-                                 HexpansionType(0x0100, "HexSense",    vid=0xCBCB, eeprom_total_size=65536, eeprom_page_size=128,                                                                                                    sensors=2,  sub_type="2 Line Sensors"),
-                                 HexpansionType(0x0200, "HexDriveV2",  vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2, servos=2, sub_type="Uncommitted" ),
-                                 HexpansionType(0x0201, "HexDriveV2",  vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2,           sub_type="2 Motor" ),
-                                 HexpansionType(0x0202, "HexDriveV2",  vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive.mpy", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp",           servos=2, sub_type="2 Servo" ),
-                                 HexpansionType(0x0300, "HexTest",     vid=0xCBCB, eeprom_total_size=65536, eeprom_page_size=128),
-                                 HexpansionType(0x0400, "HexDiag",     vid=0xCBCB, eeprom_total_size=65536, eeprom_page_size=128),
-                                 #HexpansionType(0x1295, "GPS", app_mpy_name="gps.mpy", app_mpy_version=1, app_name="GPSApp"), # eeprom_total_size= 2048, eeprom_page_size= 16),
-                                 #HexpansionType(0xD15C, "Flopagon",                eeprom_total_size= 2048, eeprom_page_size= 16), # EEPROM too small for the app
-                                 #HexpansionType(0xCAFF, "Club Mate",               eeprom_total_size= 8192, eeprom_page_size= 32, app_mpy_name="caffeine.mpy", app_name="CaffeineJitter"),
+        self.HEXPANSION_TYPES = [HexpansionType(0xCBCB, "HexDrive",                                                               app_mpy_name="hexdrive", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2, servos=4, sub_type="Uncommitted" ),
+                                 HexpansionType(0xCBCA, "HexDrive",                                                               app_mpy_name="hexdrive", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=2,           sub_type="2 Motor" ),
+                                 HexpansionType(0xCBCC, "HexDrive",                                                               app_mpy_name="hexdrive", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp",           servos=4, sub_type="4 Servo" ),
+                                 HexpansionType(0xCBCD, "HexDrive",                                                               app_mpy_name="hexdrive", app_mpy_version=HEXDRIVE_APP_VERSION, app_name="HexDriveApp", motors=1, servos=2, sub_type="1 Mot 2 Srvo" ),
 
-                                 HexpansionType(0x0000, "Unknown",   sub_type=""),       # Virtual type to represent unrecognised hexpansions
-                                 HexpansionType(0xFFFF, "Blank",     sub_type="")]       # Virtual type to represent blank EEPROMs
+                                 HexpansionType(0x10C8, "HexDrive2",   vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive2", app_mpy_version=HEXDRIVE2_APP_VERSION, app_name="HexDriveApp", motors=2, servos=2, sensors=2, sub_type="Uncommitted" ),
+                                 HexpansionType(0x10C9, "HexDrive2",   vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive2", app_mpy_version=HEXDRIVE2_APP_VERSION, app_name="HexDriveApp",           servos=2, sensors=2, sub_type="2 Servo" ),
+                                 HexpansionType(0x10CA, "HexDrive2",   vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive2", app_mpy_version=HEXDRIVE2_APP_VERSION, app_name="HexDriveApp", motors=2,           sensors=2, sub_type="2 Motor" ),
+                                 HexpansionType(0x11CE, "HexDrive2",   vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive2", app_mpy_version=HEXDRIVE2_APP_VERSION, app_name="HexDriveApp", motors=1,           sensors=2, sub_type="Left Motor" ),
+                                 HexpansionType(0x12CE, "HexDrive2",   vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive2", app_mpy_version=HEXDRIVE2_APP_VERSION, app_name="HexDriveApp", motors=1,           sensors=2, sub_type="Right Motor" ),
+                                 HexpansionType(0x10CF, "HexDrive2",   vid=0xCBCB, eeprom_total_size=32768, eeprom_page_size= 64, app_mpy_name="hexdrive2", app_mpy_version=HEXDRIVE2_APP_VERSION, app_name="HexDriveApp", motors=1, servos=1, sensors=2, sub_type="1 Mot 1 Srvo" ),
+
+                                 HexpansionType(0x2000, "HexSense",    vid=0xCBCB, eeprom_total_size=65536, eeprom_page_size=128,                                                                                                              sub_type="Line Follow" ),
+                                 HexpansionType(0x4000, "HexDiag",     vid=0xCBCB, eeprom_total_size=65536, eeprom_page_size=128,                                                                                                              sub_type="Scope Pins" ),
+                                 HexpansionType(0x5000, "HexAudio",    vid=0xCBCB, eeprom_total_size=8192,  eeprom_page_size= 32,                                                                                                              sub_type="Output Only" )]
 
         self.HEXDRIVE_HEXPANSION_INDEX = 0      # Index in the HEXPANSION_TYPES list which corresponds to the basic HexDrive type
-        self.HEXDRIVE_V2_HEXPANSION_INDEX = 5   # Index in the HEXPANSION_TYPES list which corresponds to the basic HexDrive V2 type
-        self.HEXSENSE_HEXPANSION_INDEX = 4      # Index in the HEXPANSION_TYPES list which corresponds to the HexSense type
-        self.HEXTEST_HEXPANSION_INDEX = 8       # Index in the HEXPANSION_TYPES list which corresponds to the HexTest type
-        self.HEXDIAG_HEXPANSION_INDEX = 9       # Index in the HEXPANSION_TYPES list which corresponds to the HexDiag type
-        #self.HEXGPS_HEXPANSION_INDEX = 10      # Index in the HEXPANSION_TYPES list which corresponds to the HexGPS type
+        self.HEXDRIVE_V2_HEXPANSION_INDEX = 4   # Index in the HEXPANSION_TYPES list which corresponds to the basic HexDrive2 type
+        self.HEXSENSE_HEXPANSION_INDEX = 10     # Index in the HEXPANSION_TYPES list which corresponds to the HexSense type
+        self.HEXDIAG_HEXPANSION_INDEX = 11      # Index in the HEXPANSION_TYPES list which corresponds to the HexDiag type
+        self.HEXAUDIO_HEXPANSION_INDEX = 12     # Index in the HEXPANSION_TYPES list which corresponds to the HexAudio type
 
-        self.UNRECOGNISED_HEXPANSION_INDEX = len(self.HEXPANSION_TYPES) - 2 # Index in the HEXPANSION_TYPES list which corresponds to unrecognised hexpansion types MUST BE LAST NON-BLANK ENTRY IN THE LIST
-        self.BLANK_HEXPANSION_INDEX = len(self.HEXPANSION_TYPES) - 1        # Index in the HEXPANSION_TYPES list which corresponds to blank EEPROMs
         self.hexpansion_update_required: bool = False # flag from async to main loop
 
-        self.hexdrive_hexpansion_types = [0,1,2,3,5,6,7] # indices in the HEXPANSION_TYPES list which correspond to HexDrive variants - used to check if a detected hexpansion is a HexDrive and to set up the motor and servo counts accordingly
+        self.hexdrive_hexpansion_types = [0,1,2,3,4,5,6,7,8,9] # indices in the HEXPANSION_TYPES list which correspond to HexDrive variants - used to check if a detected hexpansion is a HexDrive and to set up the motor and servo counts accordingly
 
         # HexDrive hexpansion - has an app which we use to control the motors and servos
         self.hexdrive_ports = []
         self.hexdrive_apps = []
 
-        # HexSense hexpansion - only a prototype at present
-        self.hexsense_port  = None            # Store the HexpansionConfig of the HexSense that is providing the line sensors
+        # HexAudio hexpansion
+        self.hexaudio_port  = None            # Store the HexpansionConfig of the HexAudio that is providing the audio output
 
-        # HexTest hexpansion - a prototype hexpansion with phototransistors and IR LEDs that we use for testing and diagnostics
-        # including timing measurements for the rotation rate measurement feature in the Sensor Test
-        self.hextest_port = None
-
-        # GPS hexpansion
-        #self.hexgps_port = None
+        # HexSense hexpansion - prototype line sensor expansion
+        self.hexsense_port = None
 
         # Diagnostics hexpansion
-        self.hexdiag_port = _DIAG_PORT
+        self.hexdiag_port = None
         self._diag_config = None
         self.hexdiag_setup()
 
@@ -325,16 +325,14 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         # Motor Driver Hardware
         self.num_motors: int = 0        # initialised to 0 until we detect a HexDrive Hexpansion and can set this based on the actual number of motors it has
 
+        # Sensor Hardware
+        self.num_sensors: int = 0       # initialised to 0 until we detect some Sensors
+
         # Line Sensors Hardware
         self.num_line_sensors: int = 0  # initialised to 0 until we detect a HexSense Hexpansion and can set this based on the actual number of sensors it has
 
         # Servo Hardware
         self.num_servos: int = 0        # initialised to 0 until we detect a HexDrive Hexpansion and can set this based on the actual number of servos it has
-
-        # Overall app state (controls what is displayed and what user inputs are accepted)
-        self.current_state = STATE_HEXPANSION
-        self.previous_state = self.current_state
-        self.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD   # mS
 
         # Countdown timer value
         self.countdown_value: int = 0
@@ -351,8 +349,78 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         # This version is compatible with the simulator
         asyncio.get_event_loop().create_task(self._gain_focus(RequestForegroundPushEvent(self)))
 
+        # BluetoothLE setup
+        if self._bluetooth_enabled:
+            self._ble = bluetooth.BLE()
+            self._ble_controller = RobotBLE(self._ble, name="BadgeBot")
+            # Register the command processor
+            self._ble_controller.on_write(ble_process_command)
+
+            # Apply BLE logging setting now that _ble_controller exists
+            if self.ble_logging:
+                enable_ble_logging(self._ble_controller)
+
+        # Check what version of the Badge s/w we are running on
+        ver: list[int | str] | None = None
+        try:
+            ver = parse_version(ota.get_version())
+            if ver is not None:
+                if self.logging:
+                    print(f"B:BadgeSW V{ver}")
+                version_triplet = tuple(part if isinstance(part, int) else 0 for part in (ver[:3] if ver is not None else []))
+                if len(version_triplet) == 3 and version_triplet >= _MIN_BADGEOS_VERSION:
+                    # Potential to do things differently based on badge s/w version
+                    pass
+                else:
+                    print(f"B:BadgeSW V{ver} is too old (requires V{_MIN_BADGEOS_VERSION})")
+                    self.show_message(["BadgeBot:", "Please", "Upgrade", "BadgeOS"], [(0.5,1.0,0.5),(1,1,1),(1,1,1),(1,1,1)], "reboop")
+        except Exception as e: # pylint: disable=broad-exception-caught
+            print(f"B:Ver check failed {e}!")
+
+        # make use of special characters if running on compatible badge s/w version
+        #version_triplet = tuple(part if isinstance(part, int) else 0 for part in (ver[:3] if ver is not None else []))
+        #if len(version_triplet) == 3 and version_triplet >= (2, 0, 0):   # font has not yet been updated...
+            #if self.logging:
+            #    print(f"Using special characters for arrows (font updated in BadgeSW V{version_triplet})")
+            #self.special_chars = { 'up': "\u25B2",        # up arrow
+            #                    # 'down': "\u25BC",     # down arrow - has always existed
+            #                      'left': "\u25C0",     # left arrow
+            #                      'right': "\u25B6" }   # right arrow
+        #else:
+        #    self.special_chars = {'up': "^", 'left': "<", 'right': ">"}
+
+# TESTING I2S START
+        if False:
+            from machine import I2S
+            SR = 44100; F_L = 882; F_R = 441
+            n_l = SR // F_L
+            n_r = SR // F_R
+            # need to generate a buffer that is a multiple of both n_l and n_r to avoid stuttering in the output, so we take the least common multiple which for two integers is (a*b)//gcd(a,b)
+            n = (n_l * n_r) // 1  # gcd is 1 for these frequencies, so this is just n_l * n_r
+            Amplitude = 16000
+            buf = bytearray(n * 4)  # 16-bit stereo
+            for i in range(n):
+                l = int(cos(2 * pi * i / n_l) * Amplitude)
+                r = int(cos(2 * pi * i / n_r) * Amplitude)
+                buf[i*4:i*4+2] = l.to_bytes(2, 'little', True)
+                buf[i*4+2:i*4+4] = r.to_bytes(2, 'little', True)
+
+            i2s = I2S(0, sck=Pin(37), ws=Pin(38), sd=Pin(35),
+                    mode=I2S.TX, bits=16, format=I2S.STEREO,
+                    rate=SR, ibuf=20000)
+            print("Testing I2S output")
+            for _ in range(1000):
+                for _ in range(200):
+                    try:
+                        i2s.write(buf)
+                    except Exception as e:
+                        print(f"I2S write error: {e}")
+            i2s.deinit()
+
+#TESTING I2S END
+
         if self.logging:
-            print(f"BadgeBot App V{self.app_version} Initialised")
+            print(f"B:BadgeBot App V{self.app_version} Initialised")
 
 
     def _register_state_functions(self, state: int, manager: object | None):
@@ -379,6 +447,14 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
 
     @property
+    def ble_logging(self):
+        """Convenience property to access ble_logging setting."""
+        if 'ble_logging' in self.settings:
+            return self.settings['ble_logging'].v
+        return False
+
+
+    @property
     def front_face(self):
         """Convenience property to access front_face setting representing the forward direction for movement."""
         if 'front_face' in self.settings:
@@ -397,7 +473,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     async def _gain_focus(self, event: RequestForegroundPushEvent):
         if event.app is self:
             if self.logging:
-                print(f"BadgeBot gained focus in state {self.current_state}")
+                print(f"B:BadgeBot gained focus in state {self.current_state}")
             if self.current_state in _LED_CONTROL_STATES:
                 eventbus.emit(PatternDisable())
             if self.scroll_mode_enabled:
@@ -407,7 +483,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     async def _lose_focus(self, event: RequestForegroundPopEvent):
         if event.app is self:
             if self.logging:
-                print(f"BadgeBot lost focus from state {self.current_state}")
+                print(f"B:BadgeBot lost focus from state {self.current_state}")
             eventbus.emit(PatternEnable())
             self.pattern_status = True
             if self.scroll_mode_enabled:
@@ -431,9 +507,9 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         while True:
             cur_time = time.ticks_ms()
             delta_ticks = time.ticks_diff(cur_time, last_time)
-            self.diagnostics_output(0, 1)
+            diagnostics_output(0, 1)
             self.background_update(delta_ticks)
-            self.diagnostics_output(0, 0)
+            diagnostics_output(0, 0)
             await asyncio.sleep_ms(max (1, self.update_period - (time.ticks_ms() - cur_time)))  # sleep for the remainder of the update period, accounting for time taken by background_update
             last_time = cur_time
 
@@ -444,10 +520,19 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         """Background update function that is called at a regular interval from the background task loop.
            It dispatches to the appropriate manager based on the current state, and if motor outputs are returned, it sends them to the HexDrive app."""
         bg_fn = self._state_background_dispatch.get(self.current_state)
-        if bg_fn is not None:
-            output = bg_fn(delta)
-            if output is not None and len(self.hexdrive_apps) > 0:
-                self.hexdrive_apps[0].set_motors(self.apply_motor_directions(output))
+        output = bg_fn(delta) if bg_fn is not None else None
+
+        if len(self.hexdrive_apps) > 0:
+            # BLE direction buttons override the state's motor output while held,
+            # regardless of whether the current state produced any output.
+            max_pwr = self.settings['max_power'].v * MOTOR_POWER_SCALE_FACTOR if 'max_power' in self.settings else 49152
+            ble_override = get_ble_motor_override(max_pwr)
+            if ble_override is not None:
+                output = ble_override
+            if output is not None:
+                if not self.hexdrive_apps[0].set_motors(self.apply_motor_directions(output)):
+                    if self.logging:
+                        print("Failed to set motor outputs to HexDrive app")
 
 
     @property
@@ -472,7 +557,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     def enable_sensor_test(self):
         """Whether the Sensor Test feature is enabled, based on whether we have detected sensor hardware and have the manager available."""
         #print(f"Checking if Sensor Test is enabled: sensor_test_mgr={'present' if self._sensor_test_mgr is not None else 'absent'}")
-        return self._sensor_test_mgr is not None
+        return self.num_sensors > 0 and self._sensor_test_mgr is not None
 
 
     @property
@@ -509,17 +594,25 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     def update_settings(self):
         """Update settings from EEPROM."""
         if self.logging:
-            print("Updating settings from EEPROM")
+            print("B:Updating settings from EEPROM")
         for s in self.settings:
-            self.settings[s].v = settings.get(f"{_SETTINGS_NAME_PREFIX}{s}", self.settings[s].d)
+            self.settings[s].v = settings.get(f"{SETTINGS_NAME_PREFIX}.{s}", self.settings[s].d)
             if self.logging:
-                print(f"Setting {s} = {self.settings[s].v}")
+                print(f"B:Setting {s} = {self.settings[s].v}")
 
 
     def fast_settings_update(self):
         """Update fast access settings from the main settings dictionary."""
+        if self.logging:
+            print("B:Updating fast access settings")
         self._motor1_reversed: bool = self.settings['motor1_dir'].v != 0
         self._motor2_reversed: bool = self.settings['motor2_dir'].v != 0
+        ble_ctrl = getattr(self, '_ble_controller', None)
+        if ble_ctrl is not None:
+            if self.ble_logging:
+                enable_ble_logging(ble_ctrl)
+            else:
+                disable_ble_logging()
 
 
     def hexdiag_setup(self):
@@ -529,6 +622,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 self._diag_config.pin[i].init(mode=Pin.IN)
             self._diag_config = None
         if self.hexdiag_port is not None and self._diag_config is None:
+            print(f"B:HexDiag on port {self.hexdiag_port}")
             self._diag_config = HexpansionConfig(self.hexdiag_port)
             for i in range(4):
                 self._diag_config.pin[i].init(mode=Pin.OUT)
@@ -556,7 +650,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
     def update(self, delta: int):
         """Main update function called from the main loop. Handles state transitions, user input, and delegates to functional area managers."""
-        self.diagnostics_output(1, 1)
+        diagnostics_output(1, 1)
 
         if self.notification:
             self.notification.update(delta)
@@ -575,8 +669,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         # didn't trigger, so we need to perform extra display refresh cycles in case.
         # As the draw function is VERY slow, and hence it stalls background updates
         # we only do extra refresh cycles if the update period is long.
-        if self.update_period >= DEFAULT_BACKGROUND_UPDATE_PERIOD:
-            self.refresh = True
+        #if self.update_period >= DEFAULT_BACKGROUND_UPDATE_PERIOD:
+        #    self.refresh = True
 
         # manage LED PatternEnable/Disable for all states
         #self._pattern_management()
@@ -621,7 +715,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 except OSError as e:
                     if self.logging:
                         print(f"Error writing to LEDs: {e}")
-        self.diagnostics_output(1, 0)
+        diagnostics_output(1, 0)
 
 
 
@@ -678,6 +772,10 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 self.button_states.clear()
                 # Reboot has been acknowledged by the user - unfortunately we can't actually reboot the badge from Python.
                 return # leave the message on screen.
+            elif self.message_return_state is not None:
+                self.button_states.clear()
+                self.current_state = self.message_return_state
+            #TODO rework to use the new message_return_state
             elif self.message_type == "error" or self.message_type == "warning" or self.message_type == "hexpansion":
                 # Message has been acknowledged by the user
                 self.button_states.clear()
@@ -693,6 +791,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             self.message = []
             self.message_colours = []
             self.message_type = None
+            self.message_return_state = None
         else:
             # "CANCEL" button is handled in common for all MINIMISE_VALID_STATES so no custom code here
             # Show the warning screen for 10 seconds
@@ -704,6 +803,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 self.message = []
                 self.message_colours = []
                 self.message_type = None
+                self.message_return_state = None
                 self.refresh = True
             elif self.current_state == STATE_LOGO:
                 # LED management - to match rotating logo:
@@ -775,7 +875,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
     def draw(self, ctx):
         """Main draw function called from the main loop. Handles drawing the current state, including any notifications."""
-        self.diagnostics_output(2, 1)
+        diagnostics_output(2, 1)
 
         if self.current_state == STATE_MENU and self.menu is not None:
             # These need to be drawn every frame as they contain animations
@@ -828,7 +928,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if self.notification:
             self.notification.draw(ctx)
 
-        self.diagnostics_output(2, 0)
+        diagnostics_output(2, 0)
 
 
 
@@ -843,8 +943,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         """Negate individual motor outputs as per settings."""
         output1, output2 = output
         output = (-output1 if self._motor1_reversed else output1, -output2 if self._motor2_reversed else output2)
-        if self.logging:
-            print(f"M:{output}")
+        #if self.logging:
+        #    print(f"M:{output}")
         return output
 
 
@@ -891,7 +991,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             # Font is not central in the height allocated to it due to space for descenders etc...
             # this is most obvious when there is only one line of text
             # # position fine tuned to fit around button labels when showing 5 lines of text
-            y_position = int(0.35 * ctx.font_size) if num_lines == 1 else int((i_num-((num_lines-2)/2)) * ctx.font_size - 2)
+            y_position = int(0.35 * ctx.font_size) if num_lines == 1 else int((i_num-((num_lines-2)/2)) * ctx.font_size - 12)
             ctx.rgb(*colour).move_to(-width//2, y_position).text(text_line)
 
 
@@ -906,7 +1006,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.refresh = True
 
 
-    def show_message(self, msg_content, msg_colours, msg_type = None):
+    def show_message(self, msg_content, msg_colours, msg_type = None, return_state: int | None = None):
         """Utility function to set the current state to the message display, and populate the message content and colours. The message_type can be used to indicate whether this is an 'error' (red) or 'warning' (green) message, which can affect both the display and the behaviour when the user acknowledges the message."""
         if self.logging:
             print(f"Showing message: '{msg_content}' with type {msg_type}")
@@ -914,6 +1014,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.message = msg_content
         self.message_colours = msg_colours
         self.message_type = msg_type
+        self.message_return_state = return_state
         self.current_state = STATE_MESSAGE
         self.refresh = True
 
@@ -994,6 +1095,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                     menu_items,
                     select_handler=self._main_menu_select_handler,
                     back_handler=self._menu_back_handler,
+                    position=self._main_menu_position,
                 )
         elif menu_name == MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS] and self._settings_mgr is not None: # "Settings"
             # construct the settings menu
@@ -1005,13 +1107,15 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 _settings_menu_items,
                 select_handler=self._settings_menu_select_handler,
                 back_handler=self._menu_back_handler,
+                position=self._settings_menu_position,
                 )
 
 
     # this appears to be able to be called at any time
     def _main_menu_select_handler(self, item: str, idx: int):
         if self.logging:
-            print(f"H:Main Menu {item} at index {idx}")
+            print(f"H:Main Menu {item} at index {idx} position {self.menu.position if self.menu else 'N/A'}")
+        self._main_menu_position = self.menu.position if self.menu else 0
         if   item == MAIN_MENU_ITEMS[MENU_ITEM_LINE_FOLLOWER]: # Line Follower
             # Check for required hardware and show message if not present, otherwise start the line follower manager and switch to follower state
             if self.num_motors == 0:
@@ -1108,9 +1212,27 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
     def _menu_back_handler(self):
         if self.current_menu == "main":
+            self._main_menu_position = self.menu.position if self.menu else 0
             self.minimise()
         # for submenus, just return to the main menu
+        if self.current_menu == MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS]:
+            self._settings_menu_position = self.menu.position if self.menu else 0
         self.set_menu()
+
+
+#### DIAGNOSTICS OUTPUT ###
+# For monitoring with a scope
+def diagnostics_output(index: int, value: int):
+    """Output diagnostic values to the HS pins on the diagnostics hexpansion, for measurement with an oscilloscope"""
+    #print(f"B: Expected Diagnostics Output: index={index}, value={value}, emit_diagnostics_output={emit_diagnostics_output}")
+    if emit_diagnostics_output is not None:
+        emit_diagnostics_output(index, value)
+
+# This doesn't seem to be working as expected so there is now an explicit call to register the diagnostics output function.
+def __app_init__(app_instance):
+    """Register the active app instance as the shared diagnostics sink."""
+    if set_diagnostics_output is not None:
+        set_diagnostics_output(app_instance.diagnostics_output)
 
 
 __app_export__ = BadgeBotApp

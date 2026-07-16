@@ -13,6 +13,7 @@ import settings as platform_settings
 from events.input import BUTTON_TYPES
 from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
+from .app import SETTINGS_NAME_PREFIX
 
 MENU_ENTRY_NAME = "Settings"
 
@@ -34,7 +35,7 @@ class MySetting:
                 return k
         return None
 
-    def label(self, index: int = None):
+    def label(self, index: int | None = None):
         if index is not None:
             if self._labels is not None and index < len(self._labels):
                 return self._labels[int(index)]
@@ -101,13 +102,14 @@ class MySetting:
 
     def persist(self):
         """Persist the setting value to platform storage.  If the value is equal to the default, the setting will be removed from storage to save space."""
+        index = self._index()
+        if index is None:
+            return
+        key = f"{SETTINGS_NAME_PREFIX}.{index}"
         try:
-            if self.v != self.d:
-                platform_settings.set(f"badgebot.{self._index()}", self.v)
-            else:
-                platform_settings.set(f"badgebot.{self._index()}", None)
+            platform_settings.set(key, self.v if self.v != self.d else None)
         except Exception as e:          # pylint: disable=broad-except
-            print(f"H:Failed to persist setting {self._index()}: {e}")
+            print(f"H:Failed to persist setting {key}: {e}")
 
 
 class SettingsMgr:
@@ -122,7 +124,7 @@ class SettingsMgr:
     def __init__(self, app, logging: bool = False):
         self._app = app
         self._logging: bool = logging
-        self.edit_setting: int  = None
+        self.edit_setting: str | None = None
         self.edit_setting_value = None
         if self._logging:
             print("SettingsMgr initialised")
@@ -133,15 +135,16 @@ class SettingsMgr:
     def logging(self) -> bool:
         """Whether to print debug logs to the console."""
         return self._logging
-    
+
     @logging.setter
     def logging(self, value: bool):
         self._logging = value
 
 
     def  start(self, item: str) -> bool:
-        """Enter Settings editing mode from the main menu."""
+        """Enter Setting editing mode from the main menu."""
         app = self._app
+        app._settings_menu_position = app.menu.position if app.menu else 0
         app.set_menu(None)
         app.button_states.clear()
         app.refresh = True

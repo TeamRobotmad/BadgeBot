@@ -16,12 +16,14 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 
-DEFAULT_APP_DIR_ON_DEVICE = ":apps/TeamRobotMad_BadgeBot"
+DEFAULT_APP_DIR_ON_DEVICE = ":apps/TeamRobotmad_BadgeBot"
 STATE_DIR = Path(".deploy_state")
 STATE_PATH = STATE_DIR / "test_device_download_state.json"
 MPREMOTE_COMMAND_TIMEOUT = 20
@@ -33,17 +35,21 @@ MPREMOTE_PROBE_MARKER = "__badgebot_mpremote_ok__"
 class ModuleSpec:
     source: Path
     artifact: Path
+    minify: bool = False
 
 
 # Add new runtime modules here as the project grows.
 MODULES: tuple[ModuleSpec, ...] = (
-    ModuleSpec(Path("EEPROM/hexdrive.py"), Path("EEPROM/hexdrive.mpy")),
+    ModuleSpec(Path("vendor/HexDrive/hexdrive.py"), Path("EEPROM/hexdrive.mpy"), minify=False),
+    ModuleSpec(Path("vendor/HexDrive2/hexdrive2.py"), Path("EEPROM/hexdrive2.mpy"), minify=False),
     ModuleSpec(Path("app.py"), Path("app.mpy")),
     ModuleSpec(Path("autotune.py"), Path("autotune.mpy")),
     ModuleSpec(Path("autotune_mgr.py"), Path("autotune_mgr.mpy")),
     ModuleSpec(Path("utils.py"), Path("utils.mpy")),
+    ModuleSpec(Path("diagnostics.py"), Path("diagnostics.mpy")),
     ModuleSpec(Path("settings_mgr.py"), Path("settings_mgr.mpy")),
     ModuleSpec(Path("hexpansion_mgr.py"), Path("hexpansion_mgr.mpy")),
+    ModuleSpec(Path("bluetooth_mgr.py"), Path("bluetooth_mgr.mpy")),
     ModuleSpec(Path("line_follow.py"), Path("line_follow.mpy")),
     ModuleSpec(Path("motor_moves.py"), Path("motor_moves.mpy")),
     ModuleSpec(Path("servo_test.py"), Path("servo_test.mpy")),
@@ -51,14 +57,14 @@ MODULES: tuple[ModuleSpec, ...] = (
     ModuleSpec(Path("sensor_manager.py"), Path("sensor_manager.mpy")),
     ModuleSpec(Path("sensor_test.py"), Path("sensor_test.mpy")),
     ModuleSpec(Path("autodrive.py"), Path("autodrive.mpy")),
-    ModuleSpec(Path("sensors/__init__.py"), Path("sensors/__init__.mpy")),
-    ModuleSpec(Path("sensors/sensor_base.py"), Path("sensors/sensor_base.mpy")),
-    ModuleSpec(Path("sensors/tcs3430.py"), Path("sensors/tcs3430.mpy")),
-    ModuleSpec(Path("sensors/tcs3472.py"), Path("sensors/tcs3472.mpy")),
-    ModuleSpec(Path("sensors/vl53l0x.py"), Path("sensors/vl53l0x.mpy")),
-    ModuleSpec(Path("sensors/vl6180x.py"), Path("sensors/vl6180x.mpy")),
-    ModuleSpec(Path("sensors/opt4048.py"), Path("sensors/opt4048.mpy")),
-    ModuleSpec(Path("sensors/ina226.py"), Path("sensors/ina226.mpy")),
+    #ModuleSpec(Path("sensors/__init__.py"), Path("sensors/__init__.mpy")),
+    #ModuleSpec(Path("sensors/sensor_base.py"), Path("sensors/sensor_base.mpy")),
+    #ModuleSpec(Path("sensors/tcs3430.py"), Path("sensors/tcs3430.mpy")),
+    #ModuleSpec(Path("sensors/tcs3472.py"), Path("sensors/tcs3472.mpy")),
+    #ModuleSpec(Path("sensors/vl53l0x.py"), Path("sensors/vl53l0x.mpy")),
+    #ModuleSpec(Path("sensors/vl6180x.py"), Path("sensors/vl6180x.mpy")),
+    #ModuleSpec(Path("sensors/opt4060.py"), Path("sensors/opt4060.mpy")),
+    #ModuleSpec(Path("sensors/ina226.py"), Path("sensors/ina226.mpy")),
 )
 
 # Files copied to the device as-is (no compilation).
@@ -77,6 +83,7 @@ _ALWAYS_SHOWN = frozenset({"ERR", "WARN", "SUMMARY"})
 
 # Set to True by main() when --verbose is passed.
 _verbose: bool = False
+_tool_commands: dict[str, str] = {}
 
 
 def _log(level: str, message: str) -> None:
@@ -129,6 +136,64 @@ def _save_state(path: Path, state: dict[str, dict[str, str]]) -> None:
         file.write("\n")
 
 
+def _resolve_tool_command(tool_name: str, *, repo_root: Path) -> str:
+    resolved = _tool_commands.get(tool_name)
+    if resolved is not None:
+        return resolved
+
+    executable_dir = Path(sys.executable).resolve().parent
+    venv_dir_name = "Scripts" if os.name == "nt" else "bin"
+    alt_venv_dir_name = "bin" if os.name == "nt" else "Scripts"
+    candidate_dirs = [
+        executable_dir,
+        repo_root / ".venv" / venv_dir_name,
+        repo_root / ".venv" / alt_venv_dir_name,
+    ]
+    candidate_names = [tool_name]
+    if os.name == "nt":
+        candidate_names = [f"{tool_name}.exe", f"{tool_name}.cmd", f"{tool_name}.bat", tool_name]
+
+    searched_dirs: list[str] = []
+    seen_dirs: set[str] = set()
+    for directory in candidate_dirs:
+        directory_key = str(directory).lower() if os.name == "nt" else str(directory)
+        if directory_key in seen_dirs:
+            continue
+        seen_dirs.add(directory_key)
+        searched_dirs.append(str(directory))
+
+        for candidate_name in candidate_names:
+            candidate_path = directory / candidate_name
+            if candidate_path.exists():
+                resolved = str(candidate_path)
+                _tool_commands[tool_name] = resolved
+                return resolved
+
+    for candidate_name in candidate_names:
+        resolved = shutil.which(candidate_name)
+        if resolved is not None:
+            _tool_commands[tool_name] = resolved
+            return resolved
+
+    raise RuntimeError(
+        f"Could not find required tool '{tool_name}'. Checked {', '.join(searched_dirs)} and PATH. "
+        "Create the project .venv or install the tool globally."
+    )
+
+
+def _tool(tool_name: str) -> str:
+    resolved = _tool_commands.get(tool_name)
+    if resolved is None:
+        raise RuntimeError(f"Tool '{tool_name}' has not been initialised")
+    return resolved
+
+
+def _initialise_tool_commands(repo_root: Path) -> None:
+    for tool_name in ("mpy-cross", "mpremote"):
+        resolved = _resolve_tool_command(tool_name, repo_root=repo_root)
+        _log("INFO", f"using {tool_name}: {resolved}")
+
+
 def _format_command(command: list[str]) -> str:
     return " ".join(f'"{part}"' if " " in part else part for part in command)
 
@@ -153,6 +218,16 @@ def _run_command(
             check=False,
             timeout=timeout,
         )
+    except FileNotFoundError as exc:
+        raise CommandFailed(
+            "\n".join(
+                [
+                    "Command could not be started because the executable was not found",
+                    f"Command: {quoted}",
+                    f"Missing executable: {exc.filename or command[0]}",
+                ]
+            )
+        ) from exc
     except subprocess.TimeoutExpired as exc:
         stdout = (exc.stdout or "").rstrip() or "<empty>"
         stderr = (exc.stderr or "").rstrip() or "<empty>"
@@ -195,7 +270,7 @@ def _find_connect_arg(mpremote_args: list[str]) -> int | None:
 
 def _list_mpremote_devices() -> list[str]:
     completed = _run_command(
-        ["mpremote", "devs"],
+        [_tool("mpremote"), "devs"],
         dry_run=False,
         timeout=MPREMOTE_PROBE_TIMEOUT,
     )
@@ -215,7 +290,7 @@ def _list_mpremote_devices() -> list[str]:
 
 def _probe_mpremote_device(port: str) -> bool:
     command = [
-        "mpremote",
+        _tool("mpremote"),
         "connect",
         port,
         "exec",
@@ -305,7 +380,7 @@ def _ensure_device_dir(dir_path: str, *, mpremote_args: list[str], dry_run: bool
         "        os.mkdir(cur)"
     )
     _run_command(
-        ["mpremote", *mpremote_args, "exec", exec_code],
+        [_tool("mpremote"), *mpremote_args, "exec", exec_code],
         dry_run=dry_run,
         timeout=MPREMOTE_COMMAND_TIMEOUT,
     )
@@ -357,11 +432,20 @@ def _compile_changed_modules(
             _log("SKP", f"compile {spec.source} (source unchanged)")
             continue
 
-        _log("INFO", f"compile {spec.source} -> {spec.artifact}")
-        _run_command(
-            ["mpy-cross", "-v", str(spec.source), "-o", str(spec.artifact)],
-            dry_run=dry_run,
-        )
+        if spec.minify:
+            _log("INFO", f"minify+compile {spec.source} -> {spec.artifact}")
+            _run_command(
+                [sys.executable, "dev/minify.py",
+                 "--source", str(spec.source),
+                 "--artifact", str(spec.artifact)],
+                dry_run=dry_run,
+            )
+        else:
+            _log("INFO", f"compile {spec.source} -> {spec.artifact}")
+            _run_command(
+                [_tool("mpy-cross"), "-march=xtensawin", "-v", str(spec.source), "-o", str(spec.artifact)],
+                dry_run=dry_run,
+            )
 
         if not dry_run and not spec.artifact.exists():
             raise RuntimeError(f"mpy-cross did not produce {spec.artifact}")
@@ -411,7 +495,7 @@ def _get_device_files(
         f"print(json.dumps(_ls('{safe_path}')))"
     )
 
-    command = ["mpremote", *mpremote_args, "exec", exec_code]
+    command = [_tool("mpremote"), *mpremote_args, "exec", exec_code]
     quoted = " ".join(f'"{p}"' if " " in p else p for p in command)
     _log("CMD", quoted)
 
@@ -490,7 +574,7 @@ def _upload_changed_artifacts(
             _log("INFO", f"upload {spec.artifact} -> {app_dir}/{spec.artifact.as_posix()}")
 
         destination = f"{app_dir}/{spec.artifact.as_posix()}"
-        command = ["mpremote", *mpremote_args, "cp", str(spec.artifact), destination]
+        command = [_tool("mpremote"), *mpremote_args, "cp", str(spec.artifact), destination]
         _run_command(command, dry_run=dry_run, timeout=MPREMOTE_COMMAND_TIMEOUT)
 
         state["uploaded"][artifact_key] = artifact_hash
@@ -537,7 +621,7 @@ def _upload_changed_static_files(
             _log("INFO", f"upload {path} -> {app_dir}/{path.as_posix()}")
 
         destination = f"{app_dir}/{path.as_posix()}"
-        command = ["mpremote", *mpremote_args, "cp", str(path), destination]
+        command = [_tool("mpremote"), *mpremote_args, "cp", str(path), destination]
         _run_command(command, dry_run=dry_run, timeout=MPREMOTE_COMMAND_TIMEOUT)
 
         state["uploaded"][file_key] = file_hash
@@ -615,6 +699,7 @@ def main() -> int:
 
     try:
         _validate_sources()
+        _initialise_tool_commands(repo_root)
 
         if options.clear_state and STATE_PATH.exists():
             _log("INF", f"clearing state file {STATE_PATH}")

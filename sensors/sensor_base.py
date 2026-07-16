@@ -14,16 +14,18 @@ bus, then calls read() periodically while the sensor is selected in the UI.
 
 
 class SensorBase:
+    """Abstract base class for BadgeBot I2C sensor drivers."""
     # Sub-classes must override these
     I2C_ADDR = 0x00
     NAME = "Unknown"
     READ_INTERVAL_MS = 250
     TYPE = "Generic"
 
-    def __init__(self, i2c_addr: int | None = None):
+    def __init__(self, i2c_addr: int | None = None, logging: bool = False):
         self._i2c = None
         self._ready = False
         self._i2c_addr = self.I2C_ADDR if i2c_addr is None else i2c_addr
+        self._logging = logging
 
     # ------------------------------------------------------------------
     # Public API (called by SensorManager / app.py)
@@ -44,7 +46,7 @@ class SensorBase:
             self._ready = False
         return self._ready
 
-    def read(self) -> dict:
+    def read(self, timeout: int | None = None) -> dict:
         """Return the latest measurement as {label: value_string}.
 
         Returns an empty dict or {'Error': 'msg'} on failure.
@@ -52,10 +54,14 @@ class SensorBase:
         if not self._ready:
             return {"Error": "not ready"}
         try:
-            return self._measure()
+            return self._measure(timeout=timeout) if timeout is not None else self._measure()
         except Exception as e:          # pylint: disable=broad-exception-caught
             print(f"S:{self.NAME} read error: {e}")
             return {"Error": str(e)}
+
+    def read_sample_if_ready(self) -> dict | None:
+        """Optional non-blocking sample hook for sensors that support it."""
+        return None
 
     def reset(self):
         """Put the sensor into a low-power / safe state."""
@@ -76,10 +82,12 @@ class SensorBase:
 
     @property
     def is_ready(self) -> bool:
+        """True if the sensor is initialised and ready for measurements."""
         return self._ready
 
     @property
     def i2c_addr(self) -> int:
+        """Return the I2C address of the sensor."""
         return self._i2c_addr
 
     # ------------------------------------------------------------------
@@ -90,7 +98,7 @@ class SensorBase:
         """Hardware initialisation. Return True on success."""
         raise NotImplementedError
 
-    def _measure(self) -> dict:
+    def _measure(self, timeout: int = 0) -> dict:
         """Perform measurement. Return dict of {label: value_str}."""
         raise NotImplementedError
 
@@ -108,9 +116,13 @@ class SensorBase:
     # ------------------------------------------------------------------
 
     def _write_reg(self, reg: int, data: bytes):
+        if self._i2c is None:
+            raise RuntimeError("I2C not initialized")
         self._i2c.writeto_mem(self._i2c_addr, reg, data)
 
     def _read_reg(self, reg: int, n: int = 1) -> bytes:
+        if self._i2c is None:
+            raise RuntimeError("I2C not initialized")
         return self._i2c.readfrom_mem(self._i2c_addr, reg, n)
 
     def _read_u8(self, reg: int) -> int:

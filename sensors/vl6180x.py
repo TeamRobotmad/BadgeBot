@@ -142,12 +142,12 @@ class VL6180X(SensorBase):
             status = self._read_u8_16(_RESULT_RANGE_STATUS) >> 4  # upper nibble = error code
             if status == 0:
                 dist_mm = self._read_u8_16(_RESULT_RANGE_VAL)
-                result["dist_mm"] = f"{dist_mm}mm"
+                result["dist"] = f"{dist_mm}mm"
             else:
                 # Non-zero = measurement error (e.g. 0x0B = no target detected)
-                result["dist_mm"] = "error"
+                result["dist"] = "error"
         else:
-            result["dist_mm"] = "timeout"
+            result["dist"] = "timeout"
 
         self._write_u8_16(_SYSTEM_INTERRUPT_CLEAR, 0x07)
 

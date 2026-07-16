@@ -9,26 +9,7 @@ Measurements:
 """
 
 import time
-
 from .sensor_base import SensorBase
-
-try:
-    _ticks_ms = time.ticks_ms
-    _ticks_add = time.ticks_add
-    _ticks_diff = time.ticks_diff
-    _sleep_ms = time.sleep_ms
-except AttributeError:
-    def _ticks_ms() -> int:
-        return int(time.time() * 1000)
-
-    def _ticks_add(base: int, delta: int) -> int:
-        return base + delta
-
-    def _ticks_diff(a: int, b: int) -> int:
-        return a - b
-
-    def _sleep_ms(delay_ms: int) -> None:
-        time.sleep(delay_ms / 1000)
 
 
 # Register map
@@ -46,12 +27,12 @@ _REG_DIE_ID = 0xFF             # Die ID register
 
 # Configuration register bits (0x00)
 _CFG_RESET_BIT = 0x8000        # Software reset bit
-_CFG_AVG_SHIFT = 12            # Averaging field shift (bits 14:12)
-_CFG_VBUSCT_SHIFT = 9          # Bus voltage conversion time field shift (bits 11:9)
-_CFG_VSHCT_SHIFT = 6           # Shunt voltage conversion time field shift (bits 8:6)
+_CFG_AVG_SHIFT = 9             # Averaging field shift (bits 11:9)
+_CFG_VBUSCT_SHIFT = 6          # Bus voltage conversion time field shift (bits 8:6)
+_CFG_VSHCT_SHIFT = 3           # Shunt voltage conversion time field shift (bits 5:3)
 _CFG_MODE_SHIFT = 0            # Operating mode field shift (bits 2:0)
 
-# AVG field values (bits 14:12)
+# AVG field values (bits 11:9)
 _CFG_AVG_1 = 0b000             # 1 sample average
 _CFG_AVG_4 = 0b001             # 4 sample average
 _CFG_AVG_16 = 0b010            # 16 sample average
@@ -61,7 +42,7 @@ _CFG_AVG_256 = 0b101           # 256 sample average
 _CFG_AVG_512 = 0b110           # 512 sample average
 _CFG_AVG_1024 = 0b111          # 1024 sample average
 
-# Conversion time field values for VBUSCT/VSHCT (bits 11:9 and 8:6)
+# Conversion time field values for VBUSCT/VSHCT (bits 8:6 and 5:3)
 _CFG_CT_140US = 0b000          # 140 us conversion time
 _CFG_CT_204US = 0b001          # 204 us conversion time
 _CFG_CT_332US = 0b010          # 332 us conversion time
@@ -105,14 +86,14 @@ _SHUNT_RESISTOR_MILLIOHM = 100
 _CALIBRATION_VALUE = 0x0200    # 512 => 0.1 mA current register LSB with 100 mΩ shunt
 _CURRENT_LSB_UA = 100          # 0.1 mA current LSB in microamps
 _POWER_LSB_UW = 2500           # 2.5 mW power LSB in microwatts
-_READ_TIMEOUT_MS = 10
+_READ_TIMEOUT_MS = 50
 
 # Default operating configuration:
 #  - shunt conversion: 8.244 ms
 #  - bus conversion:   1.1 ms
-#  - averaging:        16 samples
+#  - averaging:        16 sample
 _DEFAULT_CONFIGURATION = (
-    (_CFG_AVG_16 << _CFG_AVG_SHIFT)
+      (_CFG_AVG_16 << _CFG_AVG_SHIFT)
     | (_CFG_CT_1100US << _CFG_VBUSCT_SHIFT)
     | (_CFG_CT_8244US << _CFG_VSHCT_SHIFT)
     | (_CFG_MODE_SHUNT_BUS_CONT << _CFG_MODE_SHIFT)
@@ -131,19 +112,16 @@ class INA226(SensorBase):
     def _measure_from_registers(self) -> dict[str, int]:
         bus_raw = self._read_u16_be(_REG_BUS_VOLTAGE)
         current_raw = self._read_s16_be(_REG_CURRENT)
-        power_raw = self._read_u16_be(_REG_POWER)
 
         # Bus LSB = 1.25 mV
         bus_mv = (bus_raw * 125) // 100
         # Current LSB from calibration = 100 uA (0.1 mA)
         current_ma = (current_raw * _CURRENT_LSB_UA) // 1000
-        # Power LSB from calibration = 2500 uW (2.5 mW)
-        power_mw = (power_raw * _POWER_LSB_UW) // 1000
 
+        #print(f"S:{self.NAME} {bus_mv}mV, {current_ma}mA")
         return {
-            "bus_mV": bus_mv,
-            "current_mA": current_ma,
-            "power_mW": power_mw,
+            "mV": bus_mv,
+            "mA": current_ma,
         }
 
     def read_sample_if_ready(self) -> dict[str, int] | None:
@@ -157,9 +135,13 @@ class INA226(SensorBase):
             return None
         status = self._read_u16_be(_REG_MASK_ENABLE)
         if (status & _MASK_CVRF) == 0:
-            print(f"S:{self.NAME} sample not ready (status=0x{status:04X})")
+            #print(f"S:{self.NAME} sample not ready (status=0x{status:04X})")
+            return None
+        if (status & _MASK_OVF) != 0:
+            print(f"S:{self.NAME} math overflow (status=0x{status:04X})")
             return None
         return self._measure_from_registers()
+
 
     def _init(self) -> bool:
         manufacturer = self._read_u16_be(_REG_MANUFACTURER_ID)
@@ -172,19 +154,18 @@ class INA226(SensorBase):
         return True
 
 
-    def _measure(self) -> dict:
-        deadline = _ticks_add(_ticks_ms(), _READ_TIMEOUT_MS)
+    def _measure(self, timeout: int=_READ_TIMEOUT_MS) -> dict:
+        deadline = time.ticks_add(time.ticks_ms(), timeout)
         while True:
             sample = self.read_sample_if_ready()
             if sample is not None:
                 return {
-                    "bus_mV": str(sample["bus_mV"]),
-                    "current_mA": str(sample["current_mA"]),
-                    "power_mW": str(sample["power_mW"]),
+                    "mV": str(sample["mV"]),
+                    "mA": str(sample["mA"]),
                 }
-            if _ticks_diff(deadline, _ticks_ms()) <= 0:
+            if time.ticks_diff(deadline, time.ticks_ms()) <= 0:
                 return {"Error": "timeout"}
-            _sleep_ms(1)
+            time.sleep_ms(1)
 
     def _shutdown(self) -> None:
         self._write_u16_be(_REG_CONFIGURATION, _CFG_MODE_POWER_DOWN)

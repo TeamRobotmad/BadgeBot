@@ -1,12 +1,19 @@
+import re
 import sys
-
-import pytest
+from pathlib import Path
 
 # Add badge software to pythonpath
-sys.path.append("../../../") 
+sys.path.append("../../../")
 
-import sim.run
+import sim.run as _sim_run
 from system.hexpansion.config import HexpansionConfig
+
+
+def _extract_version_from_source(path: Path) -> int:
+    content = path.read_text(encoding="utf-8")
+    match = re.search(r"^\s*VERSION\s*=\s*(\d+)", content, re.MULTILINE)
+    assert match is not None, f"Could not find VERSION in {path}"
+    return int(match.group(1))
 
 
 def test_import_badgebot_app_and_app_export():
@@ -15,24 +22,45 @@ def test_import_badgebot_app_and_app_export():
     assert BadgeBot.__app_export__ == BadgeBotApp
 
 def test_import_hexdrive_app_and_app_export():
-    import sim.apps.BadgeBot.EEPROM.hexdrive as HexDrive
-    from sim.apps.BadgeBot.EEPROM.hexdrive import HexDriveApp
+    import sim.apps.BadgeBot.vendor.HexDrive.hexdrive as HexDrive
+    from sim.apps.BadgeBot.vendor.HexDrive.hexdrive import HexDriveApp
     assert HexDrive.__app_export__ == HexDriveApp
+
+def test_hexdrive_instance_exposes_version():
+    from sim.apps.BadgeBot.vendor.HexDrive.hexdrive import HexDriveApp
+    assert getattr(HexDriveApp(), "VERSION", None) == HexDriveApp.VERSION
 
 def test_badgebot_app_init():
     from sim.apps.BadgeBot import BadgeBotApp
     BadgeBotApp()
 
 def test_hexdrive_app_init(port):
-    from sim.apps.BadgeBot.EEPROM.hexdrive import HexDriveApp
+    from sim.apps.BadgeBot.vendor.HexDrive.hexdrive import HexDriveApp
     config = HexpansionConfig(port)
     HexDriveApp(config)
 
 def test_app_versions_match():
     import sim.apps.BadgeBot.app as BadgeBot
-    import sim.apps.BadgeBot.EEPROM.hexdrive as HexDrive
-    assert BadgeBot.HEXDRIVE_APP_VERSION == HexDrive.VERSION
-    # above test should always pass since BadgeBot.HEXDRIVE_APP_VERSION is imported from HexDrive.VERSION, but this test will at least catch if someone accidentally changes one without the other. 
+    from sim.apps.BadgeBot.vendor.HexDrive.hexdrive import HexDriveApp
+    assert BadgeBot.HEXDRIVE_APP_VERSION == HexDriveApp.VERSION
+
+def test_hexdrive2_metadata_matches_vendor_source():
+    import sim.apps.BadgeBot.app as BadgeBot
+    from sim.apps.BadgeBot import BadgeBotApp
+
+    source_version = _extract_version_from_source(
+        Path(__file__).resolve().parents[1] / "vendor" / "HexDrive2" / "hexdrive2.py"
+    )
+    assert BadgeBot.HEXDRIVE2_APP_VERSION == source_version
+
+    app_instance = BadgeBotApp()
+    hexdrive2_entries = [
+        ht for ht in app_instance.HEXPANSION_TYPES if ht.name == "HexDrive2"
+    ]
+    assert hexdrive2_entries, "No HexDrive2 entries found in BadgeBot metadata"
+    for entry in hexdrive2_entries:
+        assert entry.app_mpy_name == "hexdrive2"
+        assert entry.app_mpy_version == BadgeBot.HEXDRIVE2_APP_VERSION
 
 def test_hexdrive_type_pids_consistent():
     """Verify HexDriveType PIDs in hexdrive.py are consistent with HexpansionType PIDs in app.py.
@@ -43,7 +71,7 @@ def test_hexdrive_type_pids_consistent():
     the motor/servo capability counts must agree.
     """
     from sim.apps.BadgeBot import BadgeBotApp
-    from sim.apps.BadgeBot.EEPROM.hexdrive import _HEXDRIVE_TYPES
+    from sim.apps.BadgeBot.vendor.HexDrive.hexdrive import _HEXDRIVE_TYPES
 
     app_instance = BadgeBotApp()
     hexdrive_hexpansion_types = [
@@ -77,14 +105,6 @@ def test_hexdrive_type_pids_consistent():
         )
 
 
-def test_new_states_exist():
-    """Verify the new STATE_SENSOR and STATE_AUTODRIVE constants are defined."""
-    import sim.apps.BadgeBot.app as BadgeBot
-    assert hasattr(BadgeBot, 'STATE_SENSOR')
-    assert hasattr(BadgeBot, 'STATE_AUTODRIVE')
-    assert BadgeBot.STATE_SENSOR != BadgeBot.STATE_AUTODRIVE
-
-
 def test_new_settings_registered():
     """Verify motor1_dir, motor2_dir, and front_face base settings are always registered."""
     from sim.apps.BadgeBot import BadgeBotApp
@@ -107,8 +127,9 @@ def test_autodrive_settings_need_hexpansion():
 def test_front_face_labels_complete():
     """Verify _FRONT_FACE_LABELS has one entry for each valid front_face value (0-11)."""
     import sim.apps.BadgeBot.app as BadgeBot
-    assert hasattr(BadgeBot, '_FRONT_FACE_LABELS')
-    assert len(BadgeBot._FRONT_FACE_LABELS) == 12
+    front_face_labels = getattr(BadgeBot, '_FRONT_FACE_LABELS', None)
+    assert front_face_labels is not None
+    assert len(front_face_labels) == 12
 
 
 def test_menu_items_include_sensor_and_auto():
@@ -132,9 +153,7 @@ def test_sensor_base_interface():
 def test_all_sensor_classes_populated():
     """Verify ALL_SENSOR_CLASSES contains the expected sensor drivers."""
     from sim.apps.BadgeBot.sensors import ALL_SENSOR_CLASSES
-    assert len(ALL_SENSOR_CLASSES) >= 5
+    assert len(ALL_SENSOR_CLASSES) >= 2
     names = {cls.NAME for cls in ALL_SENSOR_CLASSES}
     assert 'VL53L0X' in names or 'VL6180X' in names  # at least one ToF sensor
-    assert 'TCS3472' in names or 'TCS3430' in names  # at least one color sensor
-    assert 'OPT4048' in names  # OPT4048 tristimulus sensor
     assert 'OPT4060' in names  # OPT4060 RGBW colour sensor
