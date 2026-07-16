@@ -1,0 +1,27 @@
+name: Release BadgeBot via GitHub Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g. 1.2.3), must match an existing release-vX.Y.Z branch"
+        required: true
+        type: string
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${{ inputs.version }}"
+          gh release create "v${version}" \
+            --target "release-v${version}" \
+            --title "v${version}" \
+            --generate-notes
