@@ -569,7 +569,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     @property
     def enable_hexpansion_mgr(self):
         """Whether the Hexpansion Manager is enabled, based on whether the manager is available.  Note that this does not necessarily mean that you have hexpansion hardware, as the manager can be enabled and used for managing settings related to hexpansions even if no hexpansion hardware is detected."""
-        return self._hexpansion_mgr is not None
+        return False
 
 
     def initialise_settings(self):
