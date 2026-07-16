@@ -1,5 +1,6 @@
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -51,7 +52,6 @@ EXTERNAL_MODULES = (
 )
 
 files_to_keep = {
-    Path("app.py"),
     Path("tildagon.toml"),
     Path("metadata.json"),
 }
@@ -150,3 +150,12 @@ if __name__ == "__main__":
     for file in files_to_remove:
         print(f"Removing file: {file}")
         os.remove(file)
+
+    for ignored_dir in IGNORED_SOURCE_DIRS:
+        if ignored_dir.exists():
+            print(f"Removing directory: {ignored_dir}")
+            shutil.rmtree(ignored_dir)
+        parent = ignored_dir.parent
+        if parent != Path(".") and parent.is_dir() and not any(parent.iterdir()):
+            print(f"Removing directory: {parent}")
+            parent.rmdir()
