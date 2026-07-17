@@ -13,6 +13,7 @@ from events.input import BUTTON_TYPES, Button, Buttons, ButtonUpEvent
 from frontboards.twentyfour import BUTTONS
 from system.eventbus import eventbus
 from system.hexpansion.config import HexpansionConfig
+from system.hexpansion.util import get_slots_by_vid_pid, get_app_by_slot
 from system.patterndisplay.events import PatternDisable, PatternEnable
 from system.scheduler.events import (RequestForegroundPopEvent,
                                      RequestForegroundPushEvent,
@@ -180,6 +181,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     def __init__(self):
         super().__init__()
 
+        print("B:BadgeBotApp: Initialising...")
         self._bluetooth_enabled: bool = True
 
         # UI Button Controls
@@ -283,6 +285,14 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.hexdrive_ports = []
         self.hexdrive_apps = []
 
+        slots = get_slots_by_vid_pid(0xCBCB, 0x10C8)    # shortcut to initialise HexDrive2 as provided at EMF Camp 2026 BadgeBot Workshop
+        if len(slots) > 0:
+            self.hexdrive_ports = slots
+            app = get_app_by_slot(slots[0])
+            if app is not None:
+                print(f"B:HexDrive2 (with App) found in slot {slots[0]}")
+                self.hexdrive_apps.append(app)
+
         # HexAudio hexpansion
         self.hexaudio_port  = None            # Store the HexpansionConfig of the HexAudio that is providing the audio output
 
@@ -315,11 +325,11 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self._register_state_functions(STATE_HEXPANSION, self._hexpansion_mgr)
         self._register_state_functions(STATE_MOTOR_MOVES, self._motor_moves_mgr)
         self._register_state_functions(STATE_FOLLOWER, self._line_follow_mgr)
-        self._register_state_functions(STATE_AUTOTUNE, self._autotune_mgr)
+        #self._register_state_functions(STATE_AUTOTUNE, self._autotune_mgr)
         self._register_state_functions(STATE_SERVO, self._servo_test_mgr)
         self._register_state_functions(STATE_SETTINGS, self._settings_mgr)
         self._register_state_functions(STATE_SENSOR, self._sensor_test_mgr)
-        self._register_state_functions(STATE_AUTODRIVE, self._autodrive_mgr)
+        #self._register_state_functions(STATE_AUTODRIVE, self._autodrive_mgr)
 
 
         # Motor Driver Hardware
@@ -350,9 +360,17 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         asyncio.get_event_loop().create_task(self._gain_focus(RequestForegroundPushEvent(self)))
 
         # BluetoothLE setup
-        if self._bluetooth_enabled:
+        if self._bluetooth_enabled and self._hexpansion_mgr is not None:
+            print("B: Initialising Bluetooth LE...")
             self._ble = bluetooth.BLE()
-            self._ble_controller = RobotBLE(self._ble, name="BadgeBot")
+            # Make unique Bluetooth Name from HexDrive Unique ID, so that multiple BadgeBots can be used in the same area without confusion:
+            # Name is limited to 8 characters, so we use "BdgBot" & a two digit decimal number from the unique ID, which is a 32-bit number, so we take the last two digits of the unique ID modulo 100
+            name = "BdgBotXX"
+            uniqueid = self._hexpansion_mgr.get_active_hexdrive_unique_id()
+            if uniqueid is not None:
+                name = "BdgBot" + "{:02d}".format(uniqueid % 100)
+                print("B: BluetoothLE Name:", name)
+            self._ble_controller = RobotBLE(self._ble, name=name)
             # Register the command processor
             self._ble_controller.on_write(ble_process_command)
 
