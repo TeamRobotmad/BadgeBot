@@ -502,7 +502,7 @@ class MotorMovesMgr:
         # Initialise a simple power_plan for use in testing - 10 steps forward then 10 steps reverse, all repated 10 times:
         for _ in range(1):
             for _ in range(10):
-                self._handle_instruction_press(BUTTON_TYPES["UP"])``
+                self._handle_instruction_press(BUTTON_TYPES["UP"])
             for _ in range(10):
                 self._handle_instruction_press(BUTTON_TYPES["DOWN"])
 
