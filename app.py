@@ -209,6 +209,9 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.menu: Menu | None = None
         self._main_menu_position: int = 0
         self._settings_menu_position: int = 0
+
+        # Member data related to scrolling
+        self._last_scroll : int = 0 # The last scroll posoition during non-scroll mode
         self.scroll_mode_enabled: bool = False  # Whether pressing the "C" button can toggle scroll mode on/off, which allows the user to scroll through lines on the display.
         self.scroll_ignore_next_c_button: bool = False # Used to ignore the "C" button event that triggers scroll mode on, otherwise it would immediately toggle scroll mode off again
         self.is_scroll: bool = False        # Whether we are in scroll mode - this is displayed by a green border around the screen
@@ -866,12 +869,14 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     def scroll(self, enable: bool):
         """Enable or disable scroll mode, which allows the user to scroll the display up and downto see hidden content. This is indicated by a green border around the screen."""
         self.is_scroll = enable
-        self.scroll_offset = 0
         if self.scroll_mode_enabled:
+            if enable:
+                self._last_scroll = self.scroll_offset
+            else:
+                self.scroll_offset = self._last_scroll
             # only show notification about scroll mode if the feature is enabled, otherwise it would be confusing to show a notification about a feature that can't be used
             state = "enabled" if enable else "disabled"
             self.notification = Notification(f"    Scroll    {state}")
-
 
     def draw(self, ctx):
         """Main draw function called from the main loop. Handles drawing the current state, including any notifications."""
