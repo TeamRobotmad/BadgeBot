@@ -345,6 +345,7 @@ class MotorMovesMgr:
             app.scroll(False)
             app.scroll_mode_enable(True)
             self._sub_state = _SUB_RECEIVE_INSTR
+            app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["DOWN"]):
             # reset the instructions list on DOWN press in the help screen, for convenience
             app.button_states.clear()
@@ -438,12 +439,14 @@ class MotorMovesMgr:
             app.scroll_mode_enable(False)
             app.animation_counter = 0
             self._sub_state = _SUB_HELP
+            app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["CONFIRM"]):
             app.button_states.clear()
             app.run_countdown_elapsed_ms = 1
             self.current_power_duration = ((0, 0), 0)
             app.countdown_next_state = STATE_MOTOR_MOVES
             app.current_state = STATE_COUNTDOWN
+            app.refresh = True
             # at end of countdown begin_moves will be called, which will start the sequence running again
 
 
