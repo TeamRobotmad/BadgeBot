@@ -243,7 +243,7 @@ class MotorMovesMgr:
         When a MotorController is available, uses it for IMU-aided execution."""
         app = self._app
 
-        if app.motor_controller is not None and self.drive_mode == DRIVE_MODE_DISTANCE:
+        if False:
             # Use the MotorController for gyro-aided execution
             self._mc_task = asyncio.get_event_loop().create_task(
                 self._run_instructions_async()
@@ -500,9 +500,9 @@ class MotorMovesMgr:
         if self.logging:
             print("Instructions reset")
         # Initialise a simple power_plan for use in testing - 10 steps forward then 10 steps reverse, all repated 10 times:
-        for _ in range(10):
+        for _ in range(1):
             for _ in range(10):
-                self._handle_instruction_press(BUTTON_TYPES["UP"])
+                self._handle_instruction_press(BUTTON_TYPES["UP"])``
             for _ in range(10):
                 self._handle_instruction_press(BUTTON_TYPES["DOWN"])
 
