@@ -456,6 +456,7 @@ class MotorMovesMgr:
 
     def _handle_instruction_press(self, press_type):
         app = self._app
+        app.scroll_offset = min(0, -(len(self.instructions) - 4))
         if app.last_press == press_type and self.current_instruction is not None:
             self.current_instruction.inc()
         else:
@@ -470,8 +471,6 @@ class MotorMovesMgr:
         if self.current_instruction is not None:
             self.current_instruction.make_power_plan(app.settings)
             self.instructions.append(self.current_instruction)
-            if len(self.instructions) >= 5:
-                app.scroll_offset -= 1
             self.current_instruction = None
 
 
