@@ -485,6 +485,7 @@ class MotorMovesMgr:
         app.long_press_delta = 0
         app.run_countdown_elapsed_ms = 0
         self.current_power_duration = ((0, 0), 0)
+        app.refresh = True
         if self.logging:
             print("Robot reset")
         if len(app.hexdrive_apps) > 0:
