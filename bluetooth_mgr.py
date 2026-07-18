@@ -73,8 +73,8 @@ class RobotBLE:
         return len(self._connections) > 0
 
     def _advertising_payload(self, name=None, services=None):
-    # name is limited to 8 characters as the total packet is only 31 bytes.
-    # services is a list of UUID objects.
+        # name is limited to 8 characters as the total packet is only 31 bytes.
+        # services is a list of UUID objects.
         payload = bytearray()
 
         def _append(adv_type, value):
