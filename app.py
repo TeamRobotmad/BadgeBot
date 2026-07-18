@@ -13,6 +13,7 @@ from events.input import BUTTON_TYPES, Button, Buttons, ButtonUpEvent
 from frontboards.twentyfour import BUTTONS
 from system.eventbus import eventbus
 from system.hexpansion.config import HexpansionConfig
+from system.hexpansion.util import get_slots_by_vid_pid, get_app_by_slot
 from system.patterndisplay.events import PatternDisable, PatternEnable
 from system.scheduler.events import (RequestForegroundPopEvent,
                                      RequestForegroundPushEvent,
@@ -42,7 +43,7 @@ HEXDRIVE_APP_VERSION = 6
 HEXDRIVE2_APP_VERSION = 2
 
 SETTINGS_NAME_PREFIX = "badgebot"  # Prefix for settings keys in EEPROM
-APP_VERSION = "2.5" # BadgeBot App Version Number
+APP_VERSION = "2.6" # BadgeBot App Version Number
 
 # If you change the URL then you will need to regenerate the QR code
 # using the generate_qr_code.py script, and update the _QR_CODE constant below with the new code generated for your URL
@@ -288,6 +289,30 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.hexdrive_ports = []
         self.hexdrive_apps = []
 
+        # Motor Driver Hardware
+        self.num_motors: int = 0        # initialised to 0 until we detect a HexDrive Hexpansion and can set this based on the actual number of motors it has
+
+        # Sensor Hardware
+        self.num_sensors: int = 0       # initialised to 0 until we detect some Sensors
+
+        # Line Sensors Hardware
+        self.num_line_sensors: int = 0  # initialised to 0 until we detect a HexSense Hexpansion and can set this based on the actual number of sensors it has
+
+        # Servo Hardware
+        self.num_servos: int = 0        # initialised to 0 until we detect a HexDrive Hexpansion and can set this based on the actual number of servos it has
+
+
+        slots = get_slots_by_vid_pid(0xCBCB, 0x10C8)    # shortcut to initialise HexDrive2 as provided at EMF Camp 2026 BadgeBot Workshop
+        if len(slots) > 0:
+            self.hexdrive_ports = slots
+            app = get_app_by_slot(slots[0])
+            if app is not None:
+                print(f"B:HexDrive2 (with App) found in slot {slots[0]}")
+                self.hexdrive_apps.append(app)
+            self.calc_num_motors_servos_sensors()
+            if self.logging:
+                print(f"B:Num motors={self.num_motors}, servos={self.num_servos}, sensors={self.num_sensors}")
+
         # HexAudio hexpansion
         self.hexaudio_port  = None            # Store the HexpansionConfig of the HexAudio that is providing the audio output
 
@@ -320,24 +345,11 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self._register_state_functions(STATE_HEXPANSION, self._hexpansion_mgr)
         self._register_state_functions(STATE_MOTOR_MOVES, self._motor_moves_mgr)
         self._register_state_functions(STATE_FOLLOWER, self._line_follow_mgr)
-        self._register_state_functions(STATE_AUTOTUNE, self._autotune_mgr)
+        #self._register_state_functions(STATE_AUTOTUNE, self._autotune_mgr)
         self._register_state_functions(STATE_SERVO, self._servo_test_mgr)
         self._register_state_functions(STATE_SETTINGS, self._settings_mgr)
         self._register_state_functions(STATE_SENSOR, self._sensor_test_mgr)
-        self._register_state_functions(STATE_AUTODRIVE, self._autodrive_mgr)
-
-
-        # Motor Driver Hardware
-        self.num_motors: int = 0        # initialised to 0 until we detect a HexDrive Hexpansion and can set this based on the actual number of motors it has
-
-        # Sensor Hardware
-        self.num_sensors: int = 0       # initialised to 0 until we detect some Sensors
-
-        # Line Sensors Hardware
-        self.num_line_sensors: int = 0  # initialised to 0 until we detect a HexSense Hexpansion and can set this based on the actual number of sensors it has
-
-        # Servo Hardware
-        self.num_servos: int = 0        # initialised to 0 until we detect a HexDrive Hexpansion and can set this based on the actual number of servos it has
+        #self._register_state_functions(STATE_AUTODRIVE, self._autodrive_mgr)
 
         # Countdown timer value
         self.countdown_value: int = 0
@@ -355,9 +367,17 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         asyncio.get_event_loop().create_task(self._gain_focus(RequestForegroundPushEvent(self)))
 
         # BluetoothLE setup
-        if self._bluetooth_enabled:
+        if self._bluetooth_enabled and self._hexpansion_mgr is not None:
+            print("B: Initialising Bluetooth LE...")
             self._ble = bluetooth.BLE()
-            self._ble_controller = RobotBLE(self._ble, name="BadgeBot")
+            # Make unique Bluetooth Name from HexDrive Unique ID, so that multiple BadgeBots can be used in the same area without confusion:
+            # Name is limited to 8 characters, so we use "BdgBot" & a two digit decimal number from the unique ID, which is a 32-bit number, so we take the last two digits of the unique ID modulo 100
+            name = "BdgBotXX"
+            uniqueid = self._hexpansion_mgr.get_active_hexdrive_unique_id()
+            if uniqueid is not None:
+                name = "BdgBot" + "{:02d}".format(uniqueid % 100)
+                print("B: BluetoothLE Name:", name)
+            self._ble_controller = RobotBLE(self._ble, name=name)
             # Register the command processor
             self._ble_controller.on_write(ble_process_command)
 
@@ -427,6 +447,16 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if self.logging:
             print(f"B:BadgeBot App V{self.app_version} Initialised")
 
+    def calc_num_motors_servos_sensors(self):
+        self.num_motors = 0
+        self.num_servos = 0
+        self.num_sensors = 0
+        for port in self.hexdrive_ports:
+            hexdrive_type_idx = self.HEXDRIVE_V2_HEXPANSION_INDEX # TODO don't force this type
+            if hexdrive_type_idx is not None and 0 <= hexdrive_type_idx < len(self.HEXPANSION_TYPES):
+                self.num_motors   += self.HEXPANSION_TYPES[hexdrive_type_idx].motors
+                self.num_servos   += self.HEXPANSION_TYPES[hexdrive_type_idx].servos
+                self.num_sensors  += self.HEXPANSION_TYPES[hexdrive_type_idx].sensors
 
     def _register_state_functions(self, state: int, manager: object | None):
         """Register the update, draw, and background update functions for each state in the dispatch tables."""
@@ -549,7 +579,11 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     @property
     def enable_motor_moves(self):
         """Whether the Motor Moves feature is enabled, based on whether we have detected motor hardware and have the manager available."""
-        return self.num_motors > 1 and self._motor_moves_mgr is not None
+        if self.num_motors > 1 and self._motor_moves_mgr is not None:
+            return True
+        else:
+            if self.logging:
+                print(f"Motor Moves not enabled: num_motors={self.num_motors}")
 
 
     @property
