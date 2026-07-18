@@ -345,6 +345,7 @@ class MotorMovesMgr:
             app.scroll(False)
             app.scroll_mode_enable(True)
             self._sub_state = _SUB_RECEIVE_INSTR
+            app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["DOWN"]):
             # reset the instructions list on DOWN press in the help screen, for convenience
             app.button_states.clear()
@@ -438,12 +439,14 @@ class MotorMovesMgr:
             app.scroll_mode_enable(False)
             app.animation_counter = 0
             self._sub_state = _SUB_HELP
+            app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["CONFIRM"]):
             app.button_states.clear()
             app.run_countdown_elapsed_ms = 1
             self.current_power_duration = ((0, 0), 0)
             app.countdown_next_state = STATE_MOTOR_MOVES
             app.current_state = STATE_COUNTDOWN
+            app.refresh = True
             # at end of countdown begin_moves will be called, which will start the sequence running again
 
 
@@ -453,6 +456,7 @@ class MotorMovesMgr:
 
     def _handle_instruction_press(self, press_type):
         app = self._app
+        app.scroll_offset = min(0, -(len(self.instructions) - 4))
         if app.last_press == press_type and self.current_instruction is not None:
             self.current_instruction.inc()
         else:
@@ -467,8 +471,6 @@ class MotorMovesMgr:
         if self.current_instruction is not None:
             self.current_instruction.make_power_plan(app.settings)
             self.instructions.append(self.current_instruction)
-            if len(self.instructions) >= 5:
-                app.scroll_offset -= 1
             self.current_instruction = None
 
 
@@ -485,6 +487,7 @@ class MotorMovesMgr:
         app.long_press_delta = 0
         app.run_countdown_elapsed_ms = 0
         self.current_power_duration = ((0, 0), 0)
+        app.refresh = True
         if self.logging:
             print("Robot reset")
         if len(app.hexdrive_apps) > 0:
@@ -565,6 +568,7 @@ class MotorMovesMgr:
 
     def _draw_receive_instr(self, ctx):
         app = self._app
+        # button_labels(ctx, confirm_label="Scroll", cancel_label="Exit", up_label="Up", down_label="Down", left_label="Left", right_label="Right")
         for i_num, instr in enumerate(["START"] + self.instructions + [self.current_instruction, "END"]):
             colour = (1, 1, 1)
             if instr is not None:

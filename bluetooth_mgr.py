@@ -40,12 +40,12 @@ class RobotBLE:
         if event == 1:  # _IRQ_CENTRAL_CONNECT
             conn_handle, _, _ = data
             self._connections.add(conn_handle)
-            print("BLE:Connected")
+            print("B:BLE:Connected")
         elif event == 2:  # _IRQ_CENTRAL_DISCONNECT
             conn_handle, _, _ = data
             self._connections.remove(conn_handle)
             self._advertise()
-            print("BLE:Disconnected")
+            print("B:BLE:Disconnected")
         elif event == 3:  # _IRQ_GATTS_WRITE
             conn_handle, value_handle = data
             value = self._ble.gatts_read(value_handle)
@@ -73,7 +73,8 @@ class RobotBLE:
         return len(self._connections) > 0
 
     def _advertising_payload(self, name=None, services=None):
-
+    # name is limited to 8 characters as the total packet is only 31 bytes.
+    # services is a list of UUID objects.
         payload = bytearray()
 
         def _append(adv_type, value):
