@@ -181,6 +181,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         super().__init__()
 
         self._bluetooth_enabled: bool = True
+        self._ble_override_active: bool = False
 
         # UI Button Controls
         self.button_states = Buttons(self)
@@ -528,7 +529,13 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             max_pwr = self.settings['max_power'].v * MOTOR_POWER_SCALE_FACTOR if 'max_power' in self.settings else 49152
             ble_override = get_ble_motor_override(max_pwr)
             if ble_override is not None:
+                self._ble_override_active = True
                 output = ble_override
+            elif self._ble_override_active and output is None:
+                output = (0, 0)
+                self._ble_override_active = False
+            else:
+                self._ble_override_active = False
             if output is not None:
                 if not self.hexdrive_apps[0].set_motors(self.apply_motor_directions(output)):
                     if self.logging:
