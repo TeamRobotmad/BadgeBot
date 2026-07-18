@@ -73,10 +73,12 @@ _SUB_DONE          = 3
 class Instruction:
     """Represents a single movement instruction, consisting of a direction (button press) and duration (number of ticks).
     Also contains the power plan for this instruction, which is a list of (power_tuple)"""
-    def __init__(self, press_type: Button) -> None:
+    def __init__(self, press_type: Button, motor1_sign: int, motor2_sign: int) -> None:
         self._press_type = press_type
         self._duration = 1
         self.power_plan: list[tuple[tuple[int, int], int]] = []
+        self.motor1_sign = motor1_sign
+        self.motor2_sign = motor2_sign
 
     @property
     def press_type(self) -> Button:
@@ -110,14 +112,16 @@ class Instruction:
     def directional_power_tuple(self, power) -> tuple[int, int]:
         """Return the power tuple for this instruction based on its direction."""
         if self._press_type == BUTTON_TYPES["UP"]:
-            return (power, power)
+            base_power_tuple = (power, power)
         elif self._press_type == BUTTON_TYPES["DOWN"]:
-            return (-power, -power)
+            base_power_tuple = (-power, -power)
         elif self._press_type == BUTTON_TYPES["LEFT"]:
-            return (-power, power)
+            base_power_tuple = (-power, power)
         elif self._press_type == BUTTON_TYPES["RIGHT"]:
-            return (power, -power)
-        return (0, 0)
+            base_power_tuple = (power, -power)
+        else:
+            return(0, 0)
+        return (base_power_tuple[0] * self.motor1_sign, base_power_tuple[1] * self.motor2_sign)
 
     def directional_duration(self, mysettings) -> int:
         """Return the base duration for this instruction based on its direction and the user-configured settings."""
@@ -182,6 +186,8 @@ class MotorMovesMgr:
 
     def __init__(self, app, logging: bool = False):
         self._app = app
+        self._motor1_sign = 1
+        self._motor2_sign = 1
         self._logging: bool = logging
         self._sub_state: int = _SUB_HELP
         self._prev_state: int = _SUB_HELP
@@ -192,11 +198,24 @@ class MotorMovesMgr:
         self.power_plan_iter = None
         self.long_press_delta: int = 0
         self._mc_task = None  # asyncio task for MotorController-based execution
+
+        self._set_motor_signs(app.settings)
+
         if self.logging:
             print("MotorMovesMgr initialised")
 
-
     # ------------------------------------------------------------------
+
+    def _set_motor_signs(self, settings: dict):
+        if 'motor1_dir' in settings:
+            self._motor1_sign = settings['motor1_dir'].v
+        if 'motor2_dir' in settings:
+            self._motor2_sign = settings['motor2_dir'].v
+
+        if self._motor1_sign == 0:
+            self._motor1_sign = -1
+        if self._motor2_sign == 0:
+            self._motor2_sign = -1
 
     @property
     def logging(self) -> bool:
@@ -461,7 +480,7 @@ class MotorMovesMgr:
             self.current_instruction.inc()
         else:
             self.finalize_instruction()
-            self.current_instruction = Instruction(press_type)
+            self.current_instruction = Instruction(press_type, self._motor1_sign, self._motor2_sign)
         app.last_press = press_type
 
 
