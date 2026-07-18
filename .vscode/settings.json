@@ -1,7 +1,0 @@
-{
-    // Force pylint to use the shared sim/apps config.
-    // This keeps CLI runs and VS Code diagnostics aligned.
-    "pylint.args": [
-        "--rcfile=${workspaceFolder}/../pyproject.toml"
-    ]
-}
