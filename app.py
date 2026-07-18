@@ -42,7 +42,7 @@ HEXDRIVE_APP_VERSION = 6
 HEXDRIVE2_APP_VERSION = 2
 
 SETTINGS_NAME_PREFIX = "badgebot"  # Prefix for settings keys in EEPROM
-APP_VERSION = "2.1" # BadgeBot App Version Number
+APP_VERSION = "2.4" # BadgeBot App Version Number
 
 # If you change the URL then you will need to regenerate the QR code
 # using the generate_qr_code.py script, and update the _QR_CODE constant below with the new code generated for your URL
