@@ -13,6 +13,7 @@ from events.input import BUTTON_TYPES, Button, Buttons, ButtonUpEvent
 from frontboards.twentyfour import BUTTONS
 from system.eventbus import eventbus
 from system.hexpansion.config import HexpansionConfig
+from system.hexpansion.util import get_slots_by_vid_pid, get_app_by_slot
 from system.patterndisplay.events import PatternDisable, PatternEnable
 from system.scheduler.events import (RequestForegroundPopEvent,
                                      RequestForegroundPushEvent,
@@ -140,7 +141,7 @@ _MOTOR_DIRECTION_LABELS = ("Normal", "Reverse")
 
 _FILE_DEST_LABELS = ("Badge FS", "Hex FS")
 
-_MIN_BADGEOS_VERSION = (2, 1, 0)     # v2.0.0 is required to be able to use the new hexpansion utilite
+_MIN_BADGEOS_VERSION = (2, 0, 0)     # v2.0.0 is required to be able to use the new hexpansion utilite
 
 
 # Import sub-modules after constants are defined so they can safely
@@ -180,6 +181,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     def __init__(self):
         super().__init__()
 
+        print("B:BadgeBotApp: Initialising...")
         self._bluetooth_enabled: bool = True
         self._ble_override_active: bool = False
 
@@ -210,6 +212,9 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.menu: Menu | None = None
         self._main_menu_position: int = 0
         self._settings_menu_position: int = 0
+
+        # Member data related to scrolling
+        self._last_scroll : int = 0 # The last scroll posoition during non-scroll mode
         self.scroll_mode_enabled: bool = False  # Whether pressing the "C" button can toggle scroll mode on/off, which allows the user to scroll through lines on the display.
         self.scroll_ignore_next_c_button: bool = False # Used to ignore the "C" button event that triggers scroll mode on, otherwise it would immediately toggle scroll mode off again
         self.is_scroll: bool = False        # Whether we are in scroll mode - this is displayed by a green border around the screen
@@ -284,6 +289,14 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.hexdrive_ports = []
         self.hexdrive_apps = []
 
+        slots = get_slots_by_vid_pid(0xCBCB, 0x10C8)    # shortcut to initialise HexDrive2 as provided at EMF Camp 2026 BadgeBot Workshop
+        if len(slots) > 0:
+            self.hexdrive_ports = slots
+            app = get_app_by_slot(slots[0])
+            if app is not None:
+                print(f"B:HexDrive2 (with App) found in slot {slots[0]}")
+                self.hexdrive_apps.append(app)
+
         # HexAudio hexpansion
         self.hexaudio_port  = None            # Store the HexpansionConfig of the HexAudio that is providing the audio output
 
@@ -316,11 +329,11 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self._register_state_functions(STATE_HEXPANSION, self._hexpansion_mgr)
         self._register_state_functions(STATE_MOTOR_MOVES, self._motor_moves_mgr)
         self._register_state_functions(STATE_FOLLOWER, self._line_follow_mgr)
-        self._register_state_functions(STATE_AUTOTUNE, self._autotune_mgr)
+        #self._register_state_functions(STATE_AUTOTUNE, self._autotune_mgr)
         self._register_state_functions(STATE_SERVO, self._servo_test_mgr)
         self._register_state_functions(STATE_SETTINGS, self._settings_mgr)
         self._register_state_functions(STATE_SENSOR, self._sensor_test_mgr)
-        self._register_state_functions(STATE_AUTODRIVE, self._autodrive_mgr)
+        #self._register_state_functions(STATE_AUTODRIVE, self._autodrive_mgr)
 
 
         # Motor Driver Hardware
@@ -351,9 +364,17 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         asyncio.get_event_loop().create_task(self._gain_focus(RequestForegroundPushEvent(self)))
 
         # BluetoothLE setup
-        if self._bluetooth_enabled:
+        if self._bluetooth_enabled and self._hexpansion_mgr is not None:
+            print("B: Initialising Bluetooth LE...")
             self._ble = bluetooth.BLE()
-            self._ble_controller = RobotBLE(self._ble, name="BadgeBot")
+            # Make unique Bluetooth Name from HexDrive Unique ID, so that multiple BadgeBots can be used in the same area without confusion:
+            # Name is limited to 8 characters, so we use "BdgBot" & a two digit decimal number from the unique ID, which is a 32-bit number, so we take the last two digits of the unique ID modulo 100
+            name = "BdgBotXX"
+            uniqueid = self._hexpansion_mgr.get_active_hexdrive_unique_id()
+            if uniqueid is not None:
+                name = "BdgBot" + "{:02d}".format(uniqueid % 100)
+                print("B: BluetoothLE Name:", name)
+            self._ble_controller = RobotBLE(self._ble, name=name)
             # Register the command processor
             self._ble_controller.on_write(ble_process_command)
 
@@ -873,12 +894,14 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     def scroll(self, enable: bool):
         """Enable or disable scroll mode, which allows the user to scroll the display up and downto see hidden content. This is indicated by a green border around the screen."""
         self.is_scroll = enable
-        self.scroll_offset = 0
         if self.scroll_mode_enabled:
+            if enable:
+                self._last_scroll = self.scroll_offset
+            else:
+                self.scroll_offset = self._last_scroll
             # only show notification about scroll mode if the feature is enabled, otherwise it would be confusing to show a notification about a feature that can't be used
             state = "enabled" if enable else "disabled"
             self.notification = Notification(f"    Scroll    {state}")
-
 
     def draw(self, ctx):
         """Main draw function called from the main loop. Handles drawing the current state, including any notifications."""
