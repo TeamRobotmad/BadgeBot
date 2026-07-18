@@ -568,7 +568,7 @@ class MotorMovesMgr:
 
     def _draw_receive_instr(self, ctx):
         app = self._app
-        # button_labels(ctx, confirm_label="Scroll", cancel_label="Exit", up_label="Up", down_label="Down", left_label="Left", right_label="Right")
+        button_labels(ctx, confirm_label="Scroll", cancel_label="Exit", up_label="Up", down_label="Down", left_label="Left", right_label="Right")
         for i_num, instr in enumerate(["START"] + self.instructions + [self.current_instruction, "END"]):
             colour = (1, 1, 1)
             if instr is not None:
