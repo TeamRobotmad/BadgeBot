@@ -43,7 +43,7 @@ HEXDRIVE_APP_VERSION = 6
 HEXDRIVE2_APP_VERSION = 2
 
 SETTINGS_NAME_PREFIX = "badgebot"  # Prefix for settings keys in EEPROM
-APP_VERSION = "2.2" # BadgeBot App Version Number
+APP_VERSION = "2.3" # BadgeBot App Version Number
 
 # If you change the URL then you will need to regenerate the QR code
 # using the generate_qr_code.py script, and update the _QR_CODE constant below with the new code generated for your URL
@@ -183,6 +183,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
         print("B:BadgeBotApp: Initialising...")
         self._bluetooth_enabled: bool = True
+        self._ble_override_active: bool = False
 
         # UI Button Controls
         self.button_states = Buttons(self)
@@ -549,7 +550,13 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             max_pwr = self.settings['max_power'].v * MOTOR_POWER_SCALE_FACTOR if 'max_power' in self.settings else 49152
             ble_override = get_ble_motor_override(max_pwr)
             if ble_override is not None:
+                self._ble_override_active = True
                 output = ble_override
+            elif self._ble_override_active and output is None:
+                output = (0, 0)
+                self._ble_override_active = False
+            else:
+                self._ble_override_active = False
             if output is not None:
                 if not self.hexdrive_apps[0].set_motors(self.apply_motor_directions(output)):
                     if self.logging:
