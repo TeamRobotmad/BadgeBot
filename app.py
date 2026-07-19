@@ -43,7 +43,7 @@ HEXDRIVE_APP_VERSION = 6
 HEXDRIVE2_APP_VERSION = 2
 
 SETTINGS_NAME_PREFIX = "badgebot"  # Prefix for settings keys in EEPROM
-APP_VERSION = "2.6" # BadgeBot App Version Number
+APP_VERSION = "2.7" # BadgeBot App Version Number
 
 # If you change the URL then you will need to regenerate the QR code
 # using the generate_qr_code.py script, and update the _QR_CODE constant below with the new code generated for your URL
@@ -1052,6 +1052,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.current_state = STATE_MENU
         self.refresh = True
 
+        self.update_settings()
+        self.fast_settings_update()
 
     def show_message(self, msg_content, msg_colours, msg_type = None, return_state: int | None = None):
         """Utility function to set the current state to the message display, and populate the message content and colours. The message_type can be used to indicate whether this is an 'error' (red) or 'warning' (green) message, which can affect both the display and the behaviour when the user acknowledges the message."""

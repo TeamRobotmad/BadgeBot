@@ -107,7 +107,7 @@ class MySetting:
             return
         key = f"{SETTINGS_NAME_PREFIX}.{index}"
         try:
-            platform_settings.set(key, self.v if self.v != self.d else None)
+            platform_settings.set(key, self.v)
         except Exception as e:          # pylint: disable=broad-except
             print(f"H:Failed to persist setting {key}: {e}")
 
