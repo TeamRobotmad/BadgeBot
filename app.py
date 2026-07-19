@@ -1052,6 +1052,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.current_state = STATE_MENU
         self.refresh = True
 
+        self.update_settings()
+        self.fast_settings_update()
 
     def show_message(self, msg_content, msg_colours, msg_type = None, return_state: int | None = None):
         """Utility function to set the current state to the message display, and populate the message content and colours. The message_type can be used to indicate whether this is an 'error' (red) or 'warning' (green) message, which can affect both the display and the behaviour when the user acknowledges the message."""
