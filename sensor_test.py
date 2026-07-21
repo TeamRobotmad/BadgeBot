@@ -109,7 +109,7 @@ class SensorEntry:
         self.sensor_type = sensor_type
         self.stats = stats
 
-_WHITE_CAL_GAIN_PREFIX = "stc"
+_COLOUR_CALIBRATION_PREFIX = "stc"
 
 # Colour Test Cards
 _COLOUR_TEST_CARDS = [_COLOUR_BLACK, _COLOUR_WHITE, _COLOUR_RED, _COLOUR_GREEN, _COLOUR_BLUE, _COLOUR_YELLOW, _COLOUR_CYAN, _COLOUR_MAGENTA, _COLOUR_ORANGE, _COLOUR_GRAY]
@@ -350,11 +350,18 @@ class SensorTestMgr:
                         if self.logging:
                             print("B:Colour sensor does not have a 'calibrated' attribute.")
                     elif not calibrated:
-                        settings_white_gains = self._load_white_gains("ref")
+                        settings_white_gains = self._load_colour_calibration("gain")
                         if settings_white_gains is not None:
                             colour_sensor.white_gains = settings_white_gains
                             if self.logging:
                                 print(f"B:Loaded white gains from settings: {settings_white_gains}")
+                            settings_black_reference = self._load_colour_calibration("black")
+                            if settings_black_reference is not None:
+                                colour_sensor.black_reference = settings_black_reference
+                                if self.logging:
+                                    print(f"B:Loaded black reference from settings: {settings_black_reference}")
+                            elif self.logging:
+                                print("B:Black reference not found in settings.")
                         else:
                             if self.logging:
                                 print("B:White gains not found in settings.")
@@ -439,18 +446,18 @@ class SensorTestMgr:
 
 
     @staticmethod
-    def _white_gain_setting_keys(key: str) -> tuple[str, str, str, str]:
-        base = f"{_WHITE_CAL_GAIN_PREFIX}_{key}_"
+    def _colour_setting_keys(key: str) -> tuple[str, str, str, str]:
+        base = f"{_COLOUR_CALIBRATION_PREFIX}_{key}_"
         return (f"{base}r", f"{base}g", f"{base}b", f"{base}w")
 
 
-    def _load_white_gains(self, key: str) -> tuple[int, int, int, int] | None:
-        setting_keys = self._white_gain_setting_keys(key)
+    def _load_colour_calibration(self, key: str) -> tuple[int, int, int, int] | None:
+        setting_keys = self._colour_setting_keys(key)
         values = []
         for setting_key in setting_keys:
             value = platform_settings.get(f"{SETTINGS_NAME_PREFIX}.{setting_key}", None)
             if value is None:
-                print(f"B:White gain setting '{setting_key}' not found in platform settings.")
+                print(f"B:Colour calibration setting '{setting_key}' not found in platform settings.")
                 return None
             values.append(int(value))
         gains = (values[0], values[1], values[2], values[3])
@@ -492,7 +499,7 @@ class SensorTestMgr:
             return False
 
         # Save white gains to platform settings for persistence across sessions and availability in other modules
-        setting_keys = self._white_gain_setting_keys("ref")
+        setting_keys = self._colour_setting_keys("gain")
         for setting_key, gain in zip(setting_keys, gains):
             platform_settings.set(f"{SETTINGS_NAME_PREFIX}.{setting_key}", gain)
             print(f"B:Wrote white gain {gain} to platform settings under key '{SETTINGS_NAME_PREFIX}.{setting_key}'")
@@ -500,6 +507,30 @@ class SensorTestMgr:
         if self._logging:
             print(f"B:Saved white gains: {gains}")
         self._app.notification = Notification("Calibration Saved", port=self._port_selected)
+        return True
+
+
+    def _capture_black_reference(self) -> bool:
+        if self._hexdrive_app is None or self._last_colour is None:
+            return False
+        sensor = getattr(self._hexdrive_app, "colour_sensor", None)
+        if sensor is None:
+            return False
+
+        # Capture and persist black reference so white-gain calibration remains valid across restarts.
+        try:
+            sensor.black_reference = self._last_colour
+        except (AttributeError, TypeError, ValueError) as e:
+            print(f"Error capturing black reference: {e}")
+            return False
+
+        setting_keys = self._colour_setting_keys("black")
+        for setting_key, value in zip(setting_keys, self._last_colour):
+            platform_settings.set(f"{SETTINGS_NAME_PREFIX}.{setting_key}", value)
+            print(f"B:Wrote black reference {value} to platform settings under key '{SETTINGS_NAME_PREFIX}.{setting_key}'")
+        platform_settings.save()
+        if self._logging:
+            print(f"B:Saved black reference: {self._last_colour}")
         return True
 
 
@@ -623,10 +654,7 @@ class SensorTestMgr:
                     if self._test_card in (_COLOUR_BLACK, _COLOUR_WHITE) and not calibrated:
                         if self._test_card is _COLOUR_BLACK and self._last_colour is not None:
                             # Capture the black reference for the colour sensor
-                            try:
-                                colour_sensor.black_reference = self._last_colour
-                            except Exception as e:
-                                print(f"Error capturing black reference: {e}")
+                            if self._capture_black_reference():
                             self._test_card = _COLOUR_WHITE  # advance to the next test card (white) for the next capture
                         elif self._test_card is _COLOUR_WHITE and self._last_colour is not None:
                             # Capture the white reference for the colour sensor
