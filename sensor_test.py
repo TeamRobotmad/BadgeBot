@@ -289,20 +289,9 @@ class SensorTestMgr:
                             self._new_sample = True
                             self._range_sensor_stats.new_sample(s)
                 elif self._sensor_type == _SENSOR_COLOUR:
-                    colour_sensor = getattr(self._hexdrive_app, "colour_sensor", None)
-                    if colour_sensor is not None:
-                        s = colour_sensor.sequence
-                        if s != self._last_colour_sequence:
-                            # If so, update the display values and stats.
-                            self._last_colour_sequence = s
-                            self._last_colour = colour_sensor.colour
-                            colour_name = colour_sensor.colour_name
-                            self._last_colour_hue = colour_sensor.colour_hue
-                            if colour_name != self._last_colour_name:
-                                self._last_colour_name = colour_name
-                                self._app.set_ring_colour(_COLOUR_CARD_RGB.get(self._last_colour_name, (0.5, 0.5, 0.5)))
-                            self._new_sample = True
-                            self._colour_sensor_stats.new_sample(s)
+                    # Poll the colour sensor via the shared reader (also updates the ring colour).
+                    if self.read_colour(self._hexdrive_app)[0]:
+                        self._new_sample = True
         return None
 
 
@@ -347,40 +336,12 @@ class SensorTestMgr:
         elif self._sensor_type is _SENSOR_COLOUR:
             self._test_card: str = _COLOUR_TEST_CARDS[0] # default to black test card
             colour_sensor = getattr(self._hexdrive_app, "colour_sensor", None)
-            if colour_sensor is not None:
-                sensor_white_gains = getattr(colour_sensor, "white_gains", None)
-                if sensor_white_gains is not None:
-                    calibrated = getattr(colour_sensor, "calibrated", None)
-                    if calibrated is None:
-                        if self.logging:
-                            print("B:Colour sensor does not have a 'calibrated' attribute.")
-                    elif not calibrated:
-                        settings_white_gains = self._load_colour_calibration("gain")
-                        if settings_white_gains is not None:
-                            colour_sensor.white_gains = settings_white_gains
-                            if self.logging:
-                                print(f"B:Loaded white gains from settings: {settings_white_gains}")
-                            settings_black_reference = self._load_colour_calibration("black")
-                            if settings_black_reference is not None:
-                                colour_sensor.black_reference = settings_black_reference
-                                if self.logging:
-                                    print(f"B:Loaded black reference from settings: {settings_black_reference}")
-                            elif self.logging:
-                                print("B:Black reference not found in settings.")
-                        else:
-                            if self.logging:
-                                print("B:White gains not found in settings.")
-                                # Check if sensor now shows as calibrated
-                        calibrated = getattr(colour_sensor, "calibrated", True)
-                        if not calibrated:
-                            # Colour sensor needs calibration, so prompt the user to perform calibration
-                            self._page_selected = _PAGE_CAL
-                    else:
-                        if self.logging:
-                            print("B:Colour sensor already calibrated.")
-            else:
+            if colour_sensor is None:
                 if self.logging:
                     print("B:Colour sensor not available on this HexDrive.")
+            elif not self.apply_colour_calibration(self._hexdrive_app):
+                # Colour sensor needs calibration, so prompt the user to perform calibration
+                self._page_selected = _PAGE_CAL
         selected_sensor.stats.reset()  # reset stats for the selected sensor
 
 
@@ -467,6 +428,139 @@ class SensorTestMgr:
             values.append(int(value))
         gains = (values[0], values[1], values[2], values[3])
         return gains
+
+
+    # ------------------------------------------------------------------
+    # Public colour-sensor interface (shared with the Line Follower)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def colour_card_rgb(name: str) -> tuple:
+        """Return the display (r, g, b) tuple (0.0-1.0) for a named colour, defaulting to grey."""
+        return _COLOUR_CARD_RGB.get(name, (0.5, 0.5, 0.5))
+
+
+    @staticmethod
+    def has_colour_sensor(hexdrive_app) -> bool:
+        """Return True if hexdrive_app reports a colour-sensor capability."""
+        if hexdrive_app is None:
+            return False
+        capabilities = getattr(hexdrive_app, "capabilities", 0)
+        capability_colour = getattr(hexdrive_app, "CAPABILITY_COLOUR", 0)
+        return bool(capability_colour) and bool(capabilities & capability_colour)
+
+
+    def active_colour_hexdrive(self):
+        """Return the first connected HexDrive app that provides a colour sensor, or None."""
+        for hexdrive_app in self._app.hexdrive_apps:
+            if self.has_colour_sensor(hexdrive_app):
+                return hexdrive_app
+        return None
+
+
+    def colour_sensor_present(self) -> bool:
+        """Return True if any connected HexDrive provides a colour sensor."""
+        return self.active_colour_hexdrive() is not None
+
+
+    def apply_colour_calibration(self, hexdrive_app) -> bool:
+        """Load persisted colour calibration into the sensor when required.
+        Returns True if the sensor is calibrated (or calibration is not applicable),
+        or False if the sensor still needs the user to perform calibration."""
+        colour_sensor = getattr(hexdrive_app, "colour_sensor", None) if hexdrive_app is not None else None
+        if colour_sensor is None:
+            if self.logging:
+                print("B:Colour sensor not available on this HexDrive.")
+            return False
+        sensor_white_gains = getattr(colour_sensor, "white_gains", None)
+        if sensor_white_gains is None:
+            return True  # sensor does not expose gains; nothing to calibrate
+        calibrated = getattr(colour_sensor, "calibrated", None)
+        if calibrated is None:
+            if self.logging:
+                print("B:Colour sensor does not have a 'calibrated' attribute.")
+            return True
+        if calibrated:
+            if self.logging:
+                print("B:Colour sensor already calibrated.")
+            return True
+        settings_white_gains = self._load_colour_calibration("gain")
+        if settings_white_gains is not None:
+            colour_sensor.white_gains = settings_white_gains
+            if self.logging:
+                print(f"B:Loaded white gains from settings: {settings_white_gains}")
+            settings_black_reference = self._load_colour_calibration("black")
+            if settings_black_reference is not None:
+                colour_sensor.black_reference = settings_black_reference
+                if self.logging:
+                    print(f"B:Loaded black reference from settings: {settings_black_reference}")
+            elif self.logging:
+                print("B:Black reference not found in settings.")
+        elif self.logging:
+            print("B:White gains not found in settings.")
+        return bool(getattr(colour_sensor, "calibrated", True))
+
+
+    def enable_colour_sensor(self, hexdrive_app, events: bool = False, interrupts: bool = False) -> bool:
+        """Enable the colour sensor on hexdrive_app for polling.
+        events selects event-based reporting.  The colour sensor has no interrupt mode, so
+        interrupts is accepted for API symmetry but is not used.  Returns True on success."""
+        _ = interrupts
+        if not self.has_colour_sensor(hexdrive_app):
+            return False
+        colour_enable = getattr(hexdrive_app, "colour_enable", None)
+        if colour_enable is None:
+            return False
+        # Flood LED (and interrupt pull-up) is required for the colour sensor to work properly
+        set_flood_led = getattr(hexdrive_app, "set_flood_led", None)
+        if set_flood_led is not None:
+            set_flood_led(True)
+        try:
+            colour_enable(True, events=events)
+        except (TypeError, RuntimeError) as e:
+            print(f"B:Error enabling colour sensor: {e}")
+            return False
+        print("B:Colour Enabled")
+        return True
+
+
+    def disable_colour_sensor(self, hexdrive_app) -> None:
+        """Disable the colour sensor (and its flood LED) on hexdrive_app."""
+        if hexdrive_app is None:
+            return
+        set_flood_led = getattr(hexdrive_app, "set_flood_led", None)
+        if set_flood_led is not None:
+            set_flood_led(False)
+        colour_enable = getattr(hexdrive_app, "colour_enable", None)
+        if colour_enable is not None:
+            try:
+                colour_enable(False)
+            except (TypeError, RuntimeError) as e:
+                print(f"B:Error disabling colour sensor: {e}")
+            print("B:Colour Disabled")
+        self._colour_sensor_stats.reset()
+
+
+    def read_colour(self, hexdrive_app, update_ring: bool = True):
+        """Poll the colour sensor once.  Returns (new_sample, hue, name, raw).
+        When a new reading is available the internal last-colour state and sample stats are
+        updated, and (when update_ring) the app ring colour is set to match the detected colour."""
+        colour_sensor = getattr(hexdrive_app, "colour_sensor", None) if hexdrive_app is not None else None
+        if colour_sensor is None:
+            return (False, self._last_colour_hue, self._last_colour_name, self._last_colour)
+        s = colour_sensor.sequence
+        if s == self._last_colour_sequence:
+            return (False, self._last_colour_hue, self._last_colour_name, self._last_colour)
+        self._last_colour_sequence = s
+        self._last_colour = colour_sensor.colour
+        self._last_colour_hue = colour_sensor.colour_hue
+        colour_name = colour_sensor.colour_name
+        if colour_name != self._last_colour_name:
+            self._last_colour_name = colour_name
+            if update_ring:
+                self._app.set_ring_colour(self.colour_card_rgb(colour_name))
+        self._colour_sensor_stats.new_sample(s)
+        return (True, self._last_colour_hue, self._last_colour_name, self._last_colour)
 
 
     def _update_page_count(self) -> None:
@@ -594,12 +688,12 @@ class SensorTestMgr:
         if self._page_selected == _PAGE_STATS:
             # get the rate from the stats object for the current sensor and display it
             rate = self._sensor_list[self._sensor_selected].stats.rate
-            missed = self._sensor_list[self._sensor_selected].stats.missed
+            #missed = self._sensor_list[self._sensor_selected].stats.missed
             self._display_data["sample"] = f"{rate//10}.{rate % 10}Hz"
-            self._display_data["missed"] = f"{missed}"
-            self._display_data["queue"] = f"{eventbus.event_queue.qsize()}"
-            draw_rate = self._draw_stats.rate
-            self._display_data["draw"] = f"{draw_rate // 10}.{draw_rate % 10}Hz"
+            #self._display_data["missed"] = f"{missed}"
+            #self._display_data["queue"] = f"{eventbus.event_queue.qsize()}"
+            #draw_rate = self._draw_stats.rate
+            #self._display_data["draw"] = f"{draw_rate // 10}.{draw_rate % 10}Hz"
 
 
     def _update_reading(self, delta: int):      # pylint: disable=unused-argument
@@ -819,20 +913,7 @@ class SensorTestMgr:
         if (sensor is not None and self._sensor_list[sensor].sensor_type is not _SENSOR_COLOUR) or 0 == (capabilities & capability_colour):
             pass  # Don't enable the colour sensor if the selected sensor is not a colour sensor or if the hexdrive_app does not support colour sensors
         else:
-            colour_enable = getattr(hexdrive_app, "colour_enable", None)
-            if colour_enable is not None:
-                set_flood_led = getattr(hexdrive_app, "set_flood_led", None)
-                if set_flood_led is not None:
-                    set_flood_led(True)  # Enable the flood LED for the colour sensor (and interrupt pull up) - this is required for the colour sensor to work properly
-                try:
-                    colour_enable(True, events = self._use_events)
-                except (TypeError, RuntimeError) as e:
-                    print(f"B:Error enabling colour sensor: {e}")
-                #set_colour_period = getattr(hexdrive_app, "set_colour_period", None)
-                #if set_colour_period is not None:
-                #    set_colour_period(100)  # Set the colour sensor period to 100ms (example value)
-
-                print("B:Colour Enabled")
+            if self.enable_colour_sensor(hexdrive_app, events=self._use_events):
                 num_sensors_enabled += 1
                 if self._use_events:
                     colour_event = getattr(hexdrive_app, "ColourEvent", None)
@@ -873,22 +954,7 @@ class SensorTestMgr:
             pass  # Don't disable the colour sensor if the selected sensor is not a colour sensor
         else:
             # Colour Sensor
-            set_flood_led = getattr(hexdrive_app, "set_flood_led", None)
-            if set_flood_led is not None:
-                set_flood_led(False)
-            colour_enable = getattr(hexdrive_app, "colour_enable", None)
-            if colour_enable is not None:
-                try:
-                    colour_enable(False)
-                except (TypeError, RuntimeError) as e:
-                    print(f"B:Error disabling colour sensor: {e}")
-                print("B:Colour Disabled")
-                #if self._use_events:
-                #    colour_event = getattr(hexdrive_app, "ColourEvent", None)
-                #    if colour_event is not None:
-                #        eventbus.remove(colour_event, self._handle_colour_event, self)
-                #        print("B:Colour Event disabled")
-            self._colour_sensor_stats.reset()
+            self.disable_colour_sensor(hexdrive_app)
 
 
     # ------------------------------------------------------------------
