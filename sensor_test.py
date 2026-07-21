@@ -295,7 +295,11 @@ class SensorTestMgr:
                             # If so, update the display values and stats.
                             self._last_colour_sequence = s
                             self._last_colour = colour_sensor.colour
-                            self._last_colour_name = colour_sensor.colour_name
+                            colour_name = colour_sensor.colour_name
+                            self._last_colour_hue = colour_sensor.colour_hue
+                            if colour_name != self._last_colour_name:
+                                self._last_colour_name = colour_name
+                                self._app.set_ring_colour(_COLOUR_CARD_RGB.get(self._last_colour_name, (0.5, 0.5, 0.5)))
                             self._new_sample = True
                             self._colour_sensor_stats.new_sample(s)
         return None
@@ -721,10 +725,6 @@ class SensorTestMgr:
         lines = []
         colours = []
         if self._sensor_type is _SENSOR_COLOUR:
-            # Draw an 8-pixel colour ring around the edge of the display for the current test card
-            ctx.line_width = 8
-            ctx.rgb(*self.colour).arc(0, 0, 116, 0, pi * 2, 0).stroke()
-
             colour_sensor = getattr(self._hexdrive_app, "colour_sensor", None)
             if self._page_selected == _PAGE_CAL and colour_sensor is not None:
                 calibrated = getattr(colour_sensor, "calibrated", None)

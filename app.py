@@ -178,6 +178,66 @@ emit_diagnostics_output, set_diagnostics_output           = _try_import('diagnos
 
 class BadgeBotApp(app.App):         # pylint: disable=no-member
     """Main application class for BadgeBot.  Manages overall state, user input, and delegates to functional area managers for specific features."""
+    __slots__ = (
+        "_bluetooth_enabled", "_ble_override_active", "button_states", "last_press", "_auto_repeat_intervals",
+        "_auto_repeat", "_auto_repeat_count", "auto_repeat_level", "refresh", "_ring_refresh", "_ring_colour", "rpm",
+        "animation_counter", "pattern_status", "qr_code", "app_version", "b_msg", "t_msg", "notification",
+        "message",
+        "message_colours",
+        "message_type",
+        "message_return_state",
+        "current_menu",
+        "menu",
+        "_main_menu_position",
+        "_settings_menu_position",
+        "_last_scroll",
+        "scroll_mode_enabled",
+        "scroll_ignore_next_c_button",
+        "is_scroll",
+        "scroll_offset",
+        "run_countdown_elapsed_ms",
+        "countdown_next_state",
+        "_motor1_reversed",
+        "_motor2_reversed",
+        "current_state",
+        "previous_state",
+        "update_period",
+        "settings",
+        "HEXPANSION_TYPES",
+        "HEXDRIVE_HEXPANSION_INDEX",
+        "HEXDRIVE_V2_HEXPANSION_INDEX",
+        "HEXSENSE_HEXPANSION_INDEX",
+        "HEXDIAG_HEXPANSION_INDEX",
+        "HEXAUDIO_HEXPANSION_INDEX",
+        "hexpansion_update_required",
+        "hexdrive_hexpansion_types",
+        "hexdrive_ports",
+        "hexdrive_apps",
+        "num_motors",
+        "num_sensors",
+        "num_line_sensors",
+        "num_servos",
+        "hexaudio_port",
+        "hexsense_port",
+        "hexdiag_port",
+        "_diag_config",
+        "motor_controller",
+        "_hexpansion_mgr",
+        "_motor_moves_mgr",
+        "_servo_test_mgr",
+        "_settings_mgr",
+        "_line_follow_mgr",
+        "_autotune_mgr",
+        "_sensor_test_mgr",
+        "_autodrive_mgr",
+        "_state_update_dispatch",
+        "_state_draw_dispatch",
+        "_state_background_dispatch",
+        "countdown_value",
+        "_ble",
+        "_ble_controller",
+    )
+
     def __init__(self):
         super().__init__()
 
@@ -195,6 +255,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
         # UI Feature Controls
         self.refresh: bool = True            # True so that we draw initial screen on first loop, then set to True whenever we want to trigger a screen update
+        self._ring_refresh: bool = False      # True when we want to force a refresh on the next loop, even if nothing has changed
+        self._ring_colour: tuple[float, float, float] | None = None  # (r, g, b) each 0.0-1.0 while a ring is shown, or None for no ring
         self.rpm: int = 5                    # logo rotation speed in RPM
         self.animation_counter: int = 0
         self.pattern_status: bool = True     # True = Pattern Enabled, False = Pattern Disabled
@@ -924,6 +986,18 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             state = "enabled" if enable else "disabled"
             self.notification = Notification(f"    Scroll    {state}")
 
+    def set_ring_colour(self, colour: tuple[float, float, float] | None = None):
+        """Set the colour of the ring drawn around the edge of the display.
+           Pass an (r, g, b) tuple (each 0.0-1.0) to show a coloured ring, or None to stop showing the ring (the default).
+           Setting a colour flags a ring refresh so the ring is rendered on the next draw regardless of whether a full display refresh is required."""
+        self._ring_colour = colour
+        if colour is None:
+            # Full refresh needed to erase the previously drawn ring
+            self.refresh = True
+        else:
+            self._ring_refresh = True
+
+
     def draw(self, ctx):
         """Main draw function called from the main loop. Handles drawing the current state, including any notifications."""
         diagnostics_output(2, 1)
@@ -932,46 +1006,56 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             # These need to be drawn every frame as they contain animations
             clear_background(ctx)
             self.menu.draw(ctx)
-        elif self.refresh or self.notification:
-            #if self.logging:
-            #    print(f"Refreshing display {'for Notification' if self.notification else 'for state change'}")
-            self.refresh = False
-            clear_background(ctx)
-            #ctx.save()
-            #if in a mode where rotated display is desirable:
-            #    ctx.rotate(self.front_face * 2.0 * pi / _FRONT_FACE_NUM_ORIENTATIONS)  # Rotate the entire display based on the front_face setting, so that "forward" is always at the top of the display regardless of how the badge is oriented
-            ctx.font_size = label_font_size
-            if ctx.text_align != ctx.LEFT:
-                # See https://github.com/emfcamp/badge-2024-software/issues/181
-                ctx.text_align = ctx.LEFT
-            ctx.text_baseline = ctx.BOTTOM
+        else:
+            if self.refresh or self.notification:
+                clear_background(ctx)
 
-            if self.current_state == STATE_LOGO:
-                draw_logo_animated(ctx, self.rpm, self.animation_counter, [self.b_msg, self.t_msg], self.qr_code)
-            elif self.scroll_mode_enabled and self.is_scroll:
-                # Scroll mode indicator border
-                ctx.rgb(0,0.2,0).rectangle(     -120,-120, 115+H_START,240).fill()
-                ctx.rgb(0,0  ,0).rectangle(H_START-5,-120,10-2*H_START,240).fill()
-                ctx.rgb(0,0.2,0).rectangle(5-H_START,-120, 115+H_START,240).fill()
-            #else:
-            #    ctx.rgb(0,0,0).rectangle(-120,-120,240,240).fill()
+            if self._ring_refresh:
+                self._ring_refresh = False
+                if self._ring_colour is not None:
+                    # The ring can be updated without redrawing the entire display
+                    # Draw an 8-pixel colour ring around the edge of the display
+                    ctx.line_width = 8
+                    ctx.rgb(*self._ring_colour).arc(0, 0, 116, 0, pi * 2, 0).stroke()
 
-            # Common states for messages and errors, which can be triggered by any functional area manager and are displayed in a consistent way
-            if self.current_state == STATE_MESSAGE:
-                if self.message_colours == []:
-                    self.message_colours = [(1,0,0)]*len(self.message)
-                self.draw_message(ctx, self.message, self.message_colours, label_font_size)
-                if self.message_type is None or self.message_type == "warning" or self.message_type == "hexpansion":
-                    button_labels(ctx, confirm_label="OK", cancel_label="Exit")
-            elif self.current_state == STATE_COUNTDOWN:
-                self.draw_message(ctx, [str(self.countdown_value)], [(1,1,0)], twentyfour_pt)
-            else:
-                # Delegate to functional area managers via dispatch table
-                if self.current_state in self._state_draw_dispatch:
-                    draw_fn = self._state_draw_dispatch.get(self.current_state)
-                    if draw_fn is not None:
-                        draw_fn(ctx)
-            #ctx.restore()
+            if self.refresh or self.notification:
+                self.refresh = False
+
+                #ctx.save()
+                #if in a mode where rotated display is desirable:
+                #    ctx.rotate(self.front_face * 2.0 * pi / _FRONT_FACE_NUM_ORIENTATIONS)  # Rotate the entire display based on the front_face setting, so that "forward" is always at the top of the display regardless of how the badge is oriented
+                ctx.font_size = label_font_size
+                if ctx.text_align != ctx.LEFT:
+                    # See https://github.com/emfcamp/badge-2024-software/issues/181
+                    ctx.text_align = ctx.LEFT
+                ctx.text_baseline = ctx.BOTTOM
+
+                if self.current_state == STATE_LOGO:
+                    draw_logo_animated(ctx, self.rpm, self.animation_counter, [self.b_msg, self.t_msg], self.qr_code)
+                elif self.scroll_mode_enabled and self.is_scroll:
+                    # Scroll mode indicator border
+                    ctx.rgb(0,0.2,0).rectangle(     -120,-120, 115+H_START,240).fill()
+                    ctx.rgb(0,0  ,0).rectangle(H_START-5,-120,10-2*H_START,240).fill()
+                    ctx.rgb(0,0.2,0).rectangle(5-H_START,-120, 115+H_START,240).fill()
+                #else:
+                #    ctx.rgb(0,0,0).rectangle(-120,-120,240,240).fill()
+
+                # Common states for messages and errors, which can be triggered by any functional area manager and are displayed in a consistent way
+                if self.current_state == STATE_MESSAGE:
+                    if self.message_colours == []:
+                        self.message_colours = [(1,0,0)]*len(self.message)
+                    self.draw_message(ctx, self.message, self.message_colours, label_font_size)
+                    if self.message_type is None or self.message_type == "warning" or self.message_type == "hexpansion":
+                        button_labels(ctx, confirm_label="OK", cancel_label="Exit")
+                elif self.current_state == STATE_COUNTDOWN:
+                    self.draw_message(ctx, [str(self.countdown_value)], [(1,1,0)], twentyfour_pt)
+                else:
+                    # Delegate to functional area managers via dispatch table
+                    if self.current_state in self._state_draw_dispatch:
+                        draw_fn = self._state_draw_dispatch.get(self.current_state)
+                        if draw_fn is not None:
+                            draw_fn(ctx)
+                #ctx.restore()
 
         # Notifications are drawn on top of everything else, so that they are visible regardless of the current state.
         # They also contain animations, so need to be drawn every frame when active.
