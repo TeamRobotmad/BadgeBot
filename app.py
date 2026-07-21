@@ -704,6 +704,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 # to prevent crashes - this means that in this case we won't be able to automatically clear
                 # notifications when they are closed, but at least the app won't crash.
                 if self.notification._is_closed():  # pylint: disable=protected-access
+                    if self.logging:
+                        print("B:Notification closed, clearing notification reference")
                     self.notification = None
             except Exception as e:  # pylint: disable=broad-exception-caught
                 if self.logging:
@@ -714,8 +716,10 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         # didn't trigger, so we need to perform extra display refresh cycles in case.
         # As the draw function is VERY slow, and hence it stalls background updates
         # we only do extra refresh cycles if the update period is long.
-        #if self.update_period >= DEFAULT_BACKGROUND_UPDATE_PERIOD:
-        #    self.refresh = True
+        if self.update_period >= DEFAULT_BACKGROUND_UPDATE_PERIOD:
+            #if self.logging:
+            #    print("Extra refresh cycle due to long update period")
+            self.refresh = True
 
         # manage LED PatternEnable/Disable for all states
         #self._pattern_management()
