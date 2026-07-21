@@ -2,7 +2,7 @@
 import asyncio
 import sys
 import time
-from math import sin, cos, pi
+from math import cos, pi
 
 import ota
 import settings
@@ -473,7 +473,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.num_servos = 0
         self.num_sensors = 0
         for _ in self.hexdrive_ports:
-            hexdrive_type_idx = self.HEXDRIVE_V2_HEXPANSION_INDEX # TODO don't force this type
+            hexdrive_type_idx = self.HEXDRIVE_V2_HEXPANSION_INDEX # don't force this type
             # when BLE is made a sub-app we won't need to pre-empt hexpansion_mgr and can wait for it to detect the hexpansion types...
             if hexdrive_type_idx is not None and 0 <= hexdrive_type_idx < len(self.HEXPANSION_TYPES):
                 self.num_motors   += self.HEXPANSION_TYPES[hexdrive_type_idx].motors
@@ -617,8 +617,12 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
     @property
     def enable_line_follow(self):
-        """Whether the Line Follow feature is enabled, based on whether we have detected line sensors and have the manager available."""
-        return self.num_motors > 1 and self.num_line_sensors > 0 and self._line_follow_mgr is not None
+        """Whether the Line Follow feature is enabled.  Requires two motors, the line-follow
+        manager, and a colour sensor (detected and driven via the sensor test manager)."""
+        return (self.num_motors > 1
+                and self._line_follow_mgr is not None
+                and self._sensor_test_mgr is not None
+                and self._sensor_test_mgr.colour_sensor_present())
 
 
     @property
@@ -971,9 +975,9 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             if self.refresh or self.notification:
                 clear_background(ctx)
 
-            if self._ring_refresh:
-                self._ring_refresh = False
+            if self._ring_refresh or self.refresh:
                 if self._ring_colour is not None:
+                    self._ring_refresh = False
                     # The ring can be updated without redrawing the entire display
                     # Draw an 8-pixel colour ring around the edge of the display
                     ctx.line_width = 8
