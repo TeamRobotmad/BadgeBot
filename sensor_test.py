@@ -149,7 +149,7 @@ class SensorTestMgr:
     __slots__ = ("_app", "_sub_state", "_last_sub_state", "_port_selected", "_new_sample", "_use_events", "_update_timer",
                  "_min_update_period_ms", "_hexdrive_app", "_sensor_selected", "_sensor_type", "_sensor_name",
                  "_display_data", "_page_selected", "_page_count", "_test_card", "_logging", "_draw_stats",
-                 "_last_range", "_last_colour", "_last_colour_name", "_display_colour", "_range_sensor_stats",
+                 "_last_range", "_last_colour", "_last_colour_name", "_last_colour_hue", "_display_colour", "_range_sensor_stats",
                  "_colour_sensor_stats", "_range_sensor", "_colour_sensor", "_sensor_list",
                  "_last_colour_sequence", "_last_range_sequence")
 
@@ -179,6 +179,7 @@ class SensorTestMgr:
         # Colour sensor specifics
         self._last_colour: tuple[int, int, int, int] | None = None
         self._last_colour_name: str = "unknown"
+        self._last_colour_hue: int = 0
         self._display_colour: tuple[float, float, float] = (1.0, 1.0, 0.0)  # default to yellow for non-colour sensors
         self._range_sensor_stats = SensorStats(_SENSOR_RANGE)
         self._colour_sensor_stats = SensorStats(_SENSOR_COLOUR)
@@ -244,6 +245,7 @@ class SensorTestMgr:
         self._display_data = {}
         self._last_colour = None
         self._last_colour_name = "unknown"
+        self._last_colour_hue = 0
         self._last_range = None
         self.colour = (1.0, 1.0, 0.0)  # reset to yellow when starting sensor test
         self._new_sample = False
