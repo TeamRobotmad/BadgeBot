@@ -11,7 +11,6 @@
 #   init_settings(settings)  – register sensor-test specific settings (none currently)
 
 import time
-from math import pi
 from system.eventbus import eventbus
 from events.input import BUTTON_TYPES
 from app_components.tokens import label_font_size, button_labels
@@ -495,7 +494,7 @@ class SensorTestMgr:
         try:
             # This will automatically update the white_gains property based on the captured reading
             sensor.white_reference = self._last_colour
-        except Exception as e:
+        except Exception as e:          #pylint: disable=broad-except
             print(f"Error setting white reference: {e}")
             return False
 
@@ -620,7 +619,7 @@ class SensorTestMgr:
                     if colour_sensor is not None:
                         try:
                             self._last_colour_name = colour_sensor.colour_name
-                        except Exception as e:
+                        except Exception as e:          # pylint: disable=broad-except
                             print(f"Error updating colour sensor name and display colour: {e}")
                 self._new_sample = False
                 self._update_timer = 0
@@ -661,7 +660,7 @@ class SensorTestMgr:
                         if self._test_card is _COLOUR_BLACK and self._last_colour is not None:
                             # Capture the black reference for the colour sensor
                             if self._capture_black_reference():
-                            self._test_card = _COLOUR_WHITE  # advance to the next test card (white) for the next capture
+                                self._test_card = _COLOUR_WHITE  # advance to the next test card (white) for the next capture
                         elif self._test_card is _COLOUR_WHITE and self._last_colour is not None:
                             # Capture the white reference for the colour sensor
                             self._capture_white_reference()
@@ -669,7 +668,7 @@ class SensorTestMgr:
                         # Clear Colour sensor white gains calibration
                         try:
                             colour_sensor.calibrated = False
-                        except Exception as e:
+                        except Exception as e:              # pylint: disable=broad-except
                             print(f"Error clearing calibration: {e}")
                         self._test_card = _COLOUR_BLACK  # reset to black test card after clearing calibration
                         print("B:Colour sensor calibration cleared.")
