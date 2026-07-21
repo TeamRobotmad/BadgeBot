@@ -367,10 +367,10 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         slots = get_slots_by_vid_pid(0xCBCB, 0x10C8)    # shortcut to initialise HexDrive2 as provided at EMF Camp 2026 BadgeBot Workshop
         if len(slots) > 0:
             self.hexdrive_ports = slots
-            app = get_app_by_slot(slots[0])
-            if app is not None:
+            _app = get_app_by_slot(slots[0])
+            if _app is not None:
                 print(f"B:HexDrive2 (with App) found in slot {slots[0]}")
-                self.hexdrive_apps.append(app)
+                self.hexdrive_apps.append(_app)
             self.calc_num_motors_servos_sensors()
             if self.logging:
                 print(f"B:Num motors={self.num_motors}, servos={self.num_servos}, sensors={self.num_sensors}")
@@ -464,50 +464,9 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         except Exception as e: # pylint: disable=broad-exception-caught
             print(f"B:Ver check failed {e}!")
 
-        # make use of special characters if running on compatible badge s/w version
-        #version_triplet = tuple(part if isinstance(part, int) else 0 for part in (ver[:3] if ver is not None else []))
-        #if len(version_triplet) == 3 and version_triplet >= (2, 0, 0):   # font has not yet been updated...
-            #if self.logging:
-            #    print(f"Using special characters for arrows (font updated in BadgeSW V{version_triplet})")
-            #self.special_chars = { 'up': "\u25B2",        # up arrow
-            #                    # 'down': "\u25BC",     # down arrow - has always existed
-            #                      'left': "\u25C0",     # left arrow
-            #                      'right': "\u25B6" }   # right arrow
-        #else:
-        #    self.special_chars = {'up': "^", 'left': "<", 'right': ">"}
-
-# TESTING I2S START
-        if False:
-            from machine import I2S
-            SR = 44100; F_L = 882; F_R = 441
-            n_l = SR // F_L
-            n_r = SR // F_R
-            # need to generate a buffer that is a multiple of both n_l and n_r to avoid stuttering in the output, so we take the least common multiple which for two integers is (a*b)//gcd(a,b)
-            n = (n_l * n_r) // 1  # gcd is 1 for these frequencies, so this is just n_l * n_r
-            Amplitude = 16000
-            buf = bytearray(n * 4)  # 16-bit stereo
-            for i in range(n):
-                l = int(cos(2 * pi * i / n_l) * Amplitude)
-                r = int(cos(2 * pi * i / n_r) * Amplitude)
-                buf[i*4:i*4+2] = l.to_bytes(2, 'little', True)
-                buf[i*4+2:i*4+4] = r.to_bytes(2, 'little', True)
-
-            i2s = I2S(0, sck=Pin(37), ws=Pin(38), sd=Pin(35),
-                    mode=I2S.TX, bits=16, format=I2S.STEREO,
-                    rate=SR, ibuf=20000)
-            print("Testing I2S output")
-            for _ in range(1000):
-                for _ in range(200):
-                    try:
-                        i2s.write(buf)
-                    except Exception as e:
-                        print(f"I2S write error: {e}")
-            i2s.deinit()
-
-#TESTING I2S END
-
         if self.logging:
             print(f"B:BadgeBot App V{self.app_version} Initialised")
+
 
     def calc_num_motors_servos_sensors(self):
         self.num_motors = 0
@@ -515,10 +474,12 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.num_sensors = 0
         for port in self.hexdrive_ports:
             hexdrive_type_idx = self.HEXDRIVE_V2_HEXPANSION_INDEX # TODO don't force this type
+            # when BLE is made a sub-app we won't need to pre-empt hexpansion_mgr and can wait for it to detect the hexpansion types...
             if hexdrive_type_idx is not None and 0 <= hexdrive_type_idx < len(self.HEXPANSION_TYPES):
                 self.num_motors   += self.HEXPANSION_TYPES[hexdrive_type_idx].motors
                 self.num_servos   += self.HEXPANSION_TYPES[hexdrive_type_idx].servos
                 self.num_sensors  += self.HEXPANSION_TYPES[hexdrive_type_idx].sensors
+
 
     def _register_state_functions(self, state: int, manager: object | None):
         """Register the update, draw, and background update functions for each state in the dispatch tables."""
