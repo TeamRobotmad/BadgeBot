@@ -472,7 +472,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.num_motors = 0
         self.num_servos = 0
         self.num_sensors = 0
-        for port in self.hexdrive_ports:
+        for _ in self.hexdrive_ports:
             hexdrive_type_idx = self.HEXDRIVE_V2_HEXPANSION_INDEX # TODO don't force this type
             # when BLE is made a sub-app we won't need to pre-empt hexpansion_mgr and can wait for it to detect the hexpansion types...
             if hexdrive_type_idx is not None and 0 <= hexdrive_type_idx < len(self.HEXPANSION_TYPES):
