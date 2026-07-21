@@ -769,8 +769,8 @@ class SensorTestMgr:
             range_enable = getattr(hexdrive_app, "range_enable", None)
             if range_enable is not None:
                 try:
-                    range_enable(True, events = self._use_events)
-                except RuntimeError as e:
+                    range_enable(True, events = self._use_events, interrupts = True)
+                except (TypeError, RuntimeError) as e:
                     print(f"B:Error enabling range sensor: {e}")
                 set_range_period = getattr(hexdrive_app, "set_range_period", None)
                 if set_range_period is not None:
@@ -797,7 +797,7 @@ class SensorTestMgr:
                     set_flood_led(True)  # Enable the flood LED for the colour sensor (and interrupt pull up) - this is required for the colour sensor to work properly
                 try:
                     colour_enable(True, events = self._use_events)
-                except RuntimeError as e:
+                except (TypeError, RuntimeError) as e:
                     print(f"B:Error enabling colour sensor: {e}")
                 #set_colour_period = getattr(hexdrive_app, "set_colour_period", None)
                 #if set_colour_period is not None:
@@ -830,7 +830,7 @@ class SensorTestMgr:
             if range_enable is not None:
                 try:
                     range_enable(False)
-                except RuntimeError as e:
+                except (TypeError, RuntimeError) as e:
                     print(f"B:Error disabling range sensor: {e}")
                 print("B:Range Disabled")
                 #if self._use_events:
@@ -851,7 +851,7 @@ class SensorTestMgr:
             if colour_enable is not None:
                 try:
                     colour_enable(False)
-                except RuntimeError as e:
+                except (TypeError, RuntimeError) as e:
                     print(f"B:Error disabling colour sensor: {e}")
                 print("B:Colour Disabled")
                 #if self._use_events:
