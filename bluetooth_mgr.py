@@ -33,6 +33,8 @@ class RobotBLE:
         self._connections = set()
         self._write_callback = None
         self._payload = self._advertising_payload(name=name, services=[_UART_UUID])
+        # Override the internal firmware name string - This stops the phone app from falling back to "MPY ESP32" upon connection
+        self._ble.config(gap_name=name)
         self._advertise()
 
     def _irq(self, event, data):
@@ -214,13 +216,13 @@ def enable_ble_logging(ble_controller):
     if _ble_log_stream is None:
         _orig_stdout = sys.stdout
         _ble_log_stream = BleLogStream(ble_controller, _orig_stdout)
-        sys.stdout = _ble_log_stream
+        #sys.stdout = _ble_log_stream
 
 
 def disable_ble_logging():
     """Restore sys.stdout to serial-only output."""
     global _ble_log_stream, _orig_stdout
     if _ble_log_stream is not None:
-        sys.stdout = _orig_stdout
+        #sys.stdout = _orig_stdout
         _ble_log_stream = None
         _orig_stdout = None

@@ -1038,10 +1038,10 @@ class HexpansionMgr:
             self._ports_to_initialise.add(port)
             return True
         except Exception as e:      # pylint: disable=broad-except
-            print(f"H:Error reading header on port {port}: {e}")
+            print(f"H:Unable to read header on port {port}: {e}")
             return False
         if hexpansion_header is None:
-            print(f"H:Error reading header on port {port}")
+            print(f"H:No hexpansion header read on port {port}")
             self._hexpansion_type_by_slot[port - 1] = None
             self._hexpansion_state_by_slot[port - 1] = _HEXPANSION_STATE_EMPTY
             return False
