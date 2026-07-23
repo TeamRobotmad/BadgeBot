@@ -1041,7 +1041,7 @@ class HexpansionMgr:
             print(f"B:Error reading header on port {port}: {e}")
             return False
         if hexpansion_header is None:
-            print(f"B:Error reading header on port {port}")
+            #print(f"B:Error reading header on port {port}")
             self._hexpansion_type_by_slot[port - 1] = None
             self._hexpansion_state_by_slot[port - 1] = _HEXPANSION_STATE_EMPTY
             return False
@@ -1127,8 +1127,8 @@ class HexpansionMgr:
             print(f"B:Error reading header on port {port}: {e}")
             return _APP_EEPROM_RESULT_FAILURE
         if hexpansion_header is None:
-            if self._logging:
-                print(f"B:Error reading header on port {port}")
+            #if self._logging:
+            #    print(f"B:Error reading header on port {port}")
             return _APP_EEPROM_RESULT_FAILURE
         try:
             if self._logging:

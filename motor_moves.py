@@ -39,16 +39,16 @@ _LONG_PRESS_MS = 750
 _ACCELERATION_SCALE_FACTOR = 512
 POWER_SCALE_FACTOR        = 512
 _DEFAULT_ACCELERATION  = 24576 // _ACCELERATION_SCALE_FACTOR  # user-friendly acceleration value
-DEFAULT_MAX_POWER      = 49152 // POWER_SCALE_FACTOR        # exposed for use in other modules
+DEFAULT_MAX_POWER      = 50000 // POWER_SCALE_FACTOR          # exposed for use in other modules
 _DEFAULT_USER_DRIVE_MS =  50
 _DEFAULT_USER_TURN_MS  =  20
 
 _MIN_ACCELERATION      = 1     # 1024 // _ACCELERATION_SCALE_FACTOR
-_MIN_MAX_POWER         = 10240 // POWER_SCALE_FACTOR
+MIN_MAX_POWER          = 10240 // POWER_SCALE_FACTOR
 _MIN_USER_DRIVE_MS     = 10
 _MIN_USER_TURN_MS      = 10
 
-_MAX_MAX_POWER         = 65535 // POWER_SCALE_FACTOR
+MAX_MAX_POWER          = 65535 // POWER_SCALE_FACTOR
 _MAX_ACCELERATION      = 65535 // _ACCELERATION_SCALE_FACTOR
 _MAX_USER_DRIVE_MS     = 10000
 _MAX_USER_TURN_MS      = 10000
@@ -163,7 +163,7 @@ class Instruction:
 def init_settings(s, MySetting: type):  #pylint: disable=invalid-name
     """Register motor-moves-specific settings in the shared settings dict."""
     s['acceleration']  = MySetting(s, _DEFAULT_ACCELERATION,  _MIN_ACCELERATION,  _MAX_ACCELERATION)
-    s['max_power']     = MySetting(s, DEFAULT_MAX_POWER,     _MIN_MAX_POWER,     _MAX_MAX_POWER)
+    s['max_power']     = MySetting(s, DEFAULT_MAX_POWER,     MIN_MAX_POWER,     MAX_MAX_POWER)
     s['drive_step_ms'] = MySetting(s, _DEFAULT_USER_DRIVE_MS, _MIN_USER_DRIVE_MS, _MAX_USER_DRIVE_MS)
     s['turn_step_ms']  = MySetting(s, _DEFAULT_USER_TURN_MS,  _MIN_USER_TURN_MS,  _MAX_USER_TURN_MS)
     s['drive_mode']    = MySetting(s, _DEFAULT_DRIVE_MODE, DRIVE_MODE_TIME, DRIVE_MODE_DISTANCE, labels=_DRIVE_MODE_LABELS)

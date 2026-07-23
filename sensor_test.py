@@ -474,6 +474,8 @@ class SensorTestMgr:
             return False
         sensor_white_gains = getattr(colour_sensor, "white_gains", None)
         if sensor_white_gains is None:
+            if self.logging:
+                print("B:Colour sensor does not have a 'white_gains' attribute.")
             return True  # sensor does not expose gains; nothing to calibrate
         calibrated = getattr(colour_sensor, "calibrated", None)
         if calibrated is None:
@@ -498,6 +500,7 @@ class SensorTestMgr:
                 print("B:Black reference not found in settings.")
         elif self.logging:
             print("B:White gains not found in settings.")
+            return False  # sensor needs calibration
         return bool(getattr(colour_sensor, "calibrated", True))
 
 
@@ -505,7 +508,6 @@ class SensorTestMgr:
         """Enable the colour sensor on hexdrive_app for polling.
         events selects event-based reporting.  The colour sensor has no interrupt mode, so
         interrupts is accepted for API symmetry but is not used.  Returns True on success."""
-        _ = interrupts
         if not self.has_colour_sensor(hexdrive_app):
             return False
         colour_enable = getattr(hexdrive_app, "colour_enable", None)
@@ -516,7 +518,7 @@ class SensorTestMgr:
         if set_flood_led is not None:
             set_flood_led(True)
         try:
-            colour_enable(True, events=events)
+            colour_enable(True, events=events, interrupts=interrupts)
         except (TypeError, RuntimeError) as e:
             print(f"B:Error enabling colour sensor: {e}")
             return False
@@ -541,7 +543,7 @@ class SensorTestMgr:
         self._colour_sensor_stats.reset()
 
 
-    def read_colour(self, hexdrive_app, update_ring: bool = True):
+    def read_colour(self, hexdrive_app, update_ring: bool = True) -> tuple[bool, int, str, tuple[int, int, int, int] | None]:
         """Poll the colour sensor once.  Returns (new_sample, hue, name, raw).
         When a new reading is available the internal last-colour state and sample stats are
         updated, and (when update_ring) the app ring colour is set to match the detected colour."""

@@ -1,300 +1,95 @@
 """ Line Follower Module for BadgeBot """
 #
 # Handles the line-following functionality.
-# Contains the LineSensors and LineSensor hardware driver classes
-# for QTRX reflectance sensors.
+# Uses the colour sensor (shared with the Sensor Test module, which provides its calibration)
+# to follow a coloured line by steering on the detected hue.
 #
 # Public interface (called by the main app):
 #   __init__(app)           – wire up to BadgeBotApp
-#   start()                 – enter line follower from menu
+#   start()                 – enter line follower from menu (False if no colour sensor)
 #   update(delta)           – per-tick state machine update
 #   draw(ctx)               – render line follower UI
 #   background_update(delta)– called from the fast background loop;
 #                             returns motor output tuple or None
 #   init_settings(settings) – register line-follower specific settings
-#   create_line_sensors()   – create LineSensors from hexpansion config
 
 
-import time
-import gc
-from math import pi
 from events.input import BUTTON_TYPES
 from app_components.notification import Notification
 from app_components.tokens import label_font_size, button_labels
-from machine import Pin, disable_irq, enable_irq
-from system.hexpansion.config import HexpansionConfig
+import micropython
+
 from .app import MOTOR_PWM_FREQ
-from .motor_moves import DEFAULT_MAX_POWER
+from .motor_moves import DEFAULT_MAX_POWER, POWER_SCALE_FACTOR, MIN_MAX_POWER, MAX_MAX_POWER
+
+try:
+    from micropython import const
+except ImportError:
+    # CPython / simulator fallback – const() is just an identity function
+    # on MicroPython; replicate that so module-level const() calls work.
+    const = lambda x: x         #pylint: disable=unnecessary-lambda-assignment
+
 
 # Line Follower constants
-_NUM_LINE_SENSORS = 2
-_LINE_SENSOR_DEFAULT_THRESHOLD = 500
-_LINE_SENSOR_READ_TIMEOUT_US = 5000            # Maximum expected discharge time for the line sensors; readings above this are ignored as timeouts
-_LINE_SENSOR_TRIGGER_DURATION_US = 10
-_LINE_SENSOR_UPDATE_PERIOD_MS = 10
-_LINE_SENSOR_SAMPLE_RATE_UPDATE_PERIOD_MS = 1000
+_LINE_SENSOR_UPDATE_PERIOD_MS = const(10)
+# For integer Hue values we use 0.1-degree units, so 360 degrees = 3600 units.
+_DEFAULT_HUE_NEUTRAL = const(3000)  # Default 'neutral hue' for colour sensor, midway between red and blue (3000 = 300.0 degrees)
+_DEFAULT_HUE_MAX = const(900)       # Clamp steering input to this hue-distance from neutral (0.1-degree units)
 
-# PID Gains
-_FOLLOWER_PID_KP_DEFAULT = 20000
-_FOLLOWER_PID_KI_DEFAULT = 0
-_FOLLOWER_PID_KD_DEFAULT = 0
+_HUE_CIRCLE = const(3600)
+_HUE_HALF_CIRCLE = const(_HUE_CIRCLE // 2)
 
-_FOLLOWER_FORWARD_POWER = 20000
+# PID Gains for Steering Control (scaled up by 1000 for integer maths)
+_FOLLOWER_PID_KP_DEFAULT = const(10000)
+_FOLLOWER_PID_KI_DEFAULT = const(0)
+_FOLLOWER_PID_KD_DEFAULT = const(10000)
+_FOLLOWER_PID_SCALE_FACTOR = const(1000)
+
+# Do not set this too high otherwise there is no scope for one wheel to be given more power than the other to steer. (max is 65536)
+_DEFAULT_FOLLOWER_POWER = 30000 // POWER_SCALE_FACTOR
+_DEFAULT_STEERING_GAIN = 10 # while this could be taken up by the PID gains, this fixed scale factor allows the PID gains to be smaller values.
 
 # Line Follower Modes
-_FOLLOWER_MODE_DIFFERENTIAL = 0
-_FOLLOWER_MODE_BINARY = 1
-
-# Dedicated Pins
-SENSOR_1_CTRL   = 3
-SENSOR_1_SIGNAL = 2
-SENSOR_2_CTRL   = 1
-SENSOR_2_SIGNAL = 0
-SENSOR_CTRL_PINS   = [SENSOR_1_CTRL,   SENSOR_2_CTRL]
-SENSOR_SIGNAL_PINS = [SENSOR_1_SIGNAL, SENSOR_2_SIGNAL]
-SENSOR_NAMES       = ["Left", "Right"]
+_FOLLOWER_MODE_DIFFERENTIAL = const(0)
+_FOLLOWER_MODE_BINARY = const(1)
 
 
-# ---- LineSensors (plural) class -------------------------------------------
 
-class LineSensors:
-    """Manages multiple QTRX line sensors efficiently.
+@micropython.viper
+def _signed_hue_delta(hue: int, neutral_hue: int) -> int:
+    """Return shortest signed distance hue-neutral in 0.1-degree units.
 
-    All ctrl/sig pins are pulsed simultaneously (single 10µs charge for all)
-    and timing starts at the same moment, so all sensor responses are measured
-    in parallel rather than sequentially.
+    Positive means hue is clockwise from neutral, negative anti-clockwise.
+    Result is always in [-1800, 1800].
     """
-
-    def __init__(self, sensor_configs):
-        self._sensors = [
-            LineSensor(cfg["pins"], name=cfg["name"])
-            for cfg in sensor_configs
-        ]
-        self._threshold = 0
-
-
-    # ------------------------------------------------------------------
-
-    @property
-    def logging(self) -> bool:
-        """Whether to print debug logs from the LineSensors class."""
-        return self._logging
-
-    @logging.setter
-    def logging(self, value: bool):
-        """Set the logging state for the LineSensors class."""
-        self._logging = value
-
-    @property
-    def num_sensors(self):
-        """Get the number of sensors managed by this LineSensors instance."""
-        return len(self._sensors)
-
-    @property
-    def threshold(self):
-        """Get the threshold value for the line sensors."""
-        return self._threshold
-
-    @threshold.setter
-    def threshold(self, value):
-        """Set the threshold value for the line sensors."""
-        self._threshold = value
-
-    def enable(self):
-        """Enable all sensors."""
-        for sensor in self._sensors:
-            sensor.enable()
-
-    def disable(self):
-        """Disable all sensors."""
-        for sensor in self._sensors:
-            sensor.disable()
-
-    def raw_value(self, index):
-        """Get the raw discharge time value for the sensor at the specified index."""
-        return self._sensors[index].value
-
-    def raw_values(self):
-        """Get the raw discharge time values for all sensors."""
-        return [sensor.value for sensor in self._sensors]
-
-    def sample_count(self):
-        """Get the total sample count across all sensors."""
-        return sum(sensor.sample_count for sensor in self._sensors)
-
-    def sample_count_and_reset(self):
-        """Atomically get the total sample count across all sensors and reset to zero."""
-        count = self.sample_count()
-        for sensor in self._sensors:
-            sensor.sample_count = 0
-        return count
-
-    def read(self):
-        """Charge, release, and poll for all sensors using interrupts."""
-        for sensor in self._sensors:
-            if sensor.start_time != 0:
-                if time.ticks_diff(time.ticks_us(), sensor.start_time) <= _LINE_SENSOR_READ_TIMEOUT_US:
-                    print(f"Sensor {sensor.name} already in progress")
-                    return False
-
-        for sensor in self._sensors:
-            sensor.pins["ctrl"].on()
-            sensor.pins["sig"].init(mode=Pin.OUT)
-            sensor.pins["sig"].on()
-
-        time.sleep_us(_LINE_SENSOR_TRIGGER_DURATION_US)
-
-        irq_state = disable_irq()
-        start_time = time.ticks_us()
-        for sensor in self._sensors:
-            sensor.start_time = start_time
-            sensor.pins["sig"].init(mode=Pin.IN, pull=None)
-        enable_irq(irq_state)
-
-        return True
-
-    #@micropython.native
-    def read_blocking(self):
-        """Charge, release, and poll for all sensors — no IRQ needed."""
-
-        gc.disable()
-        irq_state = disable_irq()
-
-        # Charge phase
-        for sensor in self._sensors:
-            sensor.pins["ctrl"].on()
-            sensor.pins["sig"].init(mode=Pin.OUT)
-            sensor.pins["sig"].on()
-
-        time.sleep_us(_LINE_SENSOR_TRIGGER_DURATION_US)
-
-        # Release all sig pins simultaneously
-        start = time.ticks_us()
-        for sensor in self._sensors:
-            sensor.pins["sig"].init(mode=Pin.IN, pull=None)
-
-        # Poll until both sensors have fallen or timeout
-        done = [False] * len(self._sensors)
-        while not all(done):
-            now = time.ticks_us()
-            elapsed = time.ticks_diff(now, start)
-            if elapsed > _LINE_SENSOR_READ_TIMEOUT_US:
-                break
-            for i, sensor in enumerate(self._sensors):
-                if not done[i] and sensor.pins["sig"].value() == 0:
-                    sensor.value = elapsed
-                    sensor.pins["ctrl"].off()
-                    sensor.sample_count += 1
-                    done[i] = True
-
-        enable_irq(irq_state)
-        gc.enable()
-
-        # Mark timed-out sensors
-        for i, sensor in enumerate(self._sensors):
-            if not done[i]:
-                sensor.pins["ctrl"].off()
-
-# ---- LineSensor class ------------------------------------------------------
-
-class LineSensor:
-    """Driver for a single QTRX reflectance sensor."""
-    def __init__(self, pins, name="LineSensor"):
-        try:
-            self._name = name
-            self.start_time = 0
-            self.value = 0
-            self._irq_state = None
-            self.sample_count = 0
-            self.pins = pins
-            self.pins["ctrl"].init(mode=Pin.OUT)
-            self.pins["ctrl"].off()
-            self.pins["sig"].init(mode=Pin.IN)
-        except Exception as e:          # pylint: disable=broad-exception-caught
-            print(f"{self._name} Init failed:{e}")
-
-    @property
-    def name(self) -> str:
-        """Get the name of this sensor (for logging/debugging)."""
-        return self._name
-
-    def disable(self):
-        """Disable the sensor by turning off control pin and disabling interrupts on signal pin."""
-        print(f"Line Sensor {self._name} disabled")
-        self.pins["sig"].irq(handler=None)
-        self.pins["ctrl"].off()
-        self.pins["sig"].off()
+    delta = hue - neutral_hue
+    if delta > (_HUE_HALF_CIRCLE):
+        delta -= (_HUE_CIRCLE)
+    elif delta < -(_HUE_HALF_CIRCLE):
+        delta += (_HUE_CIRCLE)
+    return delta
 
 
-    def enable(self):
-        """Enable the sensor by enabling interrupts on signal pin."""
-        print(f"Line Sensor {self._name} enabled")
-        self.pins["sig"].irq(trigger=Pin.IRQ_FALLING, handler=self.handler) # unfortunately hard and priority are not recognised keywords)
-        self.start_time = 0
-
-
-    def handler(self, _):
-        """Interrupt handler for the sensor signal pin.
-        Measures the time since the sensor was triggered and updates the state."""
-        # Currently as the "irq" is not a hardware interrupt we are not guaranteed that the handler will be called immediately
-        #  when the signal pin goes low, so instead of relying on the handler to capture the timing
-        #  it is recommended to do a blocking read in the background update loop.
-        # However the code here is the leanest way to capture the timing if the IRQ handler is called immediately when the signal
-        # pin goes low, so leaving it here for now in case that becomes possible in the future.
-
-        #if self.start_time == 0:
-        #    # spurious interrupt or handler called before read() set up the start_time; ignore
-        #    return
-        #self._irq_state = disable_irq()
-        value = time.ticks_diff(time.ticks_us(), self.start_time)
-        # Handle the hardware
-        #self.pins["sig"].irq(handler=None)
-        #enable_irq(self._irq_state)
-        #self.pins["sig"].off()
-        #self.pins["sig"].init(mode=Pin.OUT)
-        self.pins["ctrl"].off()
-        self.start_time = 0
-
-        if value > _LINE_SENSOR_READ_TIMEOUT_US:
-            # timeout expired; ignore this reading
-            #print(f"{self._name} reading timed out (value={value}µs)")
-            return
-        self.value = value
-        self.sample_count += 1
+@micropython.viper
+def _clamp(value: int, lo: int, hi: int) -> int:
+    if value < lo:
+        return lo
+    if value > hi:
+        return hi
+    return value
 
 
 # ---- Settings initialisation -----------------------------------------------
 
 def init_settings(s, MySetting: type):      #pylint: disable=invalid-name
     """Register line-follower-specific settings in the shared settings dict."""
-    s['line_threshold'] = MySetting(s, _LINE_SENSOR_DEFAULT_THRESHOLD, 0, 65535)
+    s['line_power']     = MySetting(s, _DEFAULT_FOLLOWER_POWER, MIN_MAX_POWER, MAX_MAX_POWER)  # Follow power setting
+    s['hue_neutral']    = MySetting(s, _DEFAULT_HUE_NEUTRAL, 0, 3600)
+    s['hue_max']        = MySetting(s, _DEFAULT_HUE_MAX, 0, 1800)
+    s['steering_gain']  = MySetting(s, _DEFAULT_STEERING_GAIN, -100, 100)
     s['pid_kp']         = MySetting(s, _FOLLOWER_PID_KP_DEFAULT, 0, 65536)
     s['pid_ki']         = MySetting(s, _FOLLOWER_PID_KI_DEFAULT, 0, 65535)
     s['pid_kd']         = MySetting(s, _FOLLOWER_PID_KD_DEFAULT, 0, 65535)
-
-
-# ---- Shared helper: create LineSensors from hexpansion config --------------
-
-def create_line_sensors(config: HexpansionConfig, number_of_sensors: int = _NUM_LINE_SENSORS):
-    """Create a LineSensors instance from the app's hexpansion config.
-
-    Returns a new LineSensors or None if no config is available.
-    Used by both LineFollowMgr and AutotuneMgr to avoid duplicating
-    sensor initialisation code.
-    """
-    if config is None:
-        return None
-    sensor_configs = [
-        {
-            "pins": {
-                "ctrl": config.pin[SENSOR_CTRL_PINS[i]],
-                "sig":  config.pin[SENSOR_SIGNAL_PINS[i]]
-            },
-            "name": SENSOR_NAMES[i],
-        }
-        for i in range(number_of_sensors)
-    ]
-    return LineSensors(sensor_configs)
 
 
 # ---- Line Follower Manager -------------------------------------------------
@@ -307,25 +102,36 @@ class LineFollowMgr:
     app : BadgeBotApp
         Reference to the main application instance.
     """
+    __slots__ = ("_app", "_logging", "sensor_rate", "follower_mode",
+                 "line_power", "pid_integral", "pid_previous_error",
+                 "kp", "ki", "kd", "max_pwr", "integral_limit", "motor_output",
+                 "_last_colour", "_last_colour_hue", "_last_colour_name", "_colour_hexdrive",
+                 "_hue_neutral", "_hue_max", "_new_sample", "_refresh_time", "_refresh_interval", "_signed_steering_gain")
 
     def __init__(self, app, logging: bool = False):
         self._app = app
         self._logging: bool = logging
-        self._sensor_state = [False, False]
-        self.line_sensors: LineSensors | None = None                               # Will be a LineSensors instance when active
-        self.sample_time: int   = 0
         self.sensor_rate: int = 0     # sample rate
         self.follower_mode: int = _FOLLOWER_MODE_DIFFERENTIAL   # Default follower mode
-        self.forward_power: int = -_FOLLOWER_FORWARD_POWER      # Default forward power for line follower (sign sets direction)
-        self.pid_integral: int = 0                             # Accumulated integral term for PID controller
-        self.pid_previous_error: int = 0                       # Previous error for derivative term of PID controller
+        self.line_power: int = _DEFAULT_FOLLOWER_POWER                # Default line follower power
+        self.pid_integral: int = 0                              # Accumulated integral term for PID controller
+        self.pid_previous_error: int = 0                        # Previous error for derivative term of PID controller
         self.kp: int = _FOLLOWER_PID_KP_DEFAULT
         self.ki: int = _FOLLOWER_PID_KI_DEFAULT
         self.kd: int = _FOLLOWER_PID_KD_DEFAULT
-        self.max_pwr: int = DEFAULT_MAX_POWER
-        self.line_threshold: int = _LINE_SENSOR_DEFAULT_THRESHOLD
+        self.max_pwr: int = DEFAULT_MAX_POWER * POWER_SCALE_FACTOR
         self.integral_limit: int = 0
         self.motor_output = (0,0)
+        self._last_colour_hue: int = 0
+        self._last_colour: tuple[int, int, int] = (0, 0, 0)
+        self._last_colour_name: str = "unknown"
+        self._colour_hexdrive = None
+        self._hue_neutral: int = _DEFAULT_HUE_NEUTRAL
+        self._hue_max: int = _DEFAULT_HUE_MAX
+        self._new_sample: bool = False
+        self._refresh_time: int = 0
+        self._refresh_interval: int = 200
+        self._signed_steering_gain: int = -_DEFAULT_STEERING_GAIN       # sign reversed for line-following on the opposite side of the line
         if self._logging:
             print("LineFollowMgr initialised")
 
@@ -335,46 +141,76 @@ class LineFollowMgr:
     # ------------------------------------------------------------------
 
     def start(self) -> bool:
-        """Enter line follower from the main menu."""
+        """Enter line follower from the main menu.
+        Requires a colour sensor (calibrated beforehand via Sensor Test) and a HexDrive for the
+        motors.  Returns False (with a notification) if either is unavailable."""
         app = self._app
 
-        if self.line_sensors is None and app.hexsense_port is not None:
-            config = HexpansionConfig(app.hexsense_port)
-            self.line_sensors = create_line_sensors(config, app.num_line_sensors)
-
-        if self.line_sensors is None:
-            # Line sensors are not available; inform the user and abort line follower.
-            app.notification = Notification("Line sensors not available")
+        # A colour sensor is required to follow a coloured line.
+        sensor_mgr = app.sensor_test_mgr
+        colour_hexdrive = sensor_mgr.active_colour_hexdrive() if sensor_mgr is not None else None
+        if colour_hexdrive is None:
+            app.notification = Notification("Colour Sensor not available")
             return False
-        else:
-            if len(app.hexdrive_apps) > 0:
-                app.hexdrive_apps[0].set_logging(False)
-                if app.hexdrive_apps[0].initialise() and app.hexdrive_apps[0].set_power(True) and app.hexdrive_apps[0].set_freq(MOTOR_PWM_FREQ):
-                    #self.line_sensors.enable()
-                    #self.line_sensors.read()    # initiate first sensor reading
-                    self.line_sensors.read_blocking()    # initiate first sensor reading
-                    app.update_period = _LINE_SENSOR_UPDATE_PERIOD_MS
-                    app.set_menu(None)
-                    app.button_states.clear()
-                    app.refresh = True
-                    app.auto_repeat_clear()
-                    self.motor_output = (0,0)
-                    self.kp = app.settings['pid_kp'].v
-                    self.ki = app.settings['pid_ki'].v
-                    self.kd = app.settings['pid_kd'].v
-                    self.max_pwr = app.settings['max_power'].v if 'max_power' in app.settings else DEFAULT_MAX_POWER
-                    self.line_threshold = app.settings['line_threshold'].v
-                    if self.ki > 0:
-                        self.integral_limit = self.max_pwr // self.ki
-                    else:
-                        self.integral_limit = 0
-                    if self._logging:
-                        print("Entered Line Follower mode")
-                    return True
+
+        # A HexDrive is required to drive the motors.
+        if len(app.hexdrive_apps) == 0:
             if self._logging:
                 print("HexDrive not available; Line Follower requires HexDrive to run")
             app.notification = Notification("HexDrive Init Failed")
             return False
+
+        motor_hexdrive = app.hexdrive_apps[0]
+        motor_hexdrive.set_logging(False)
+        if not (motor_hexdrive.initialise() and motor_hexdrive.set_power(True) and motor_hexdrive.set_freq(MOTOR_PWM_FREQ)):
+            if self._logging:
+                print("HexDrive initialisation failed for Line Follower")
+            app.notification = Notification("HexDrive Init Failed")
+            return False
+
+        # Load any persisted colour calibration, then enable the colour sensor for polling
+        # (no events, no interrupts).
+        if not sensor_mgr.enable_colour_sensor(colour_hexdrive, events=False, interrupts=False):
+            app.notification = Notification("Colour Sensor not available")
+            return False
+        # Load any persisted colour calibration
+        if not sensor_mgr.apply_colour_calibration(colour_hexdrive):
+            app.notification = Notification("Please Calibrate Colour Sensor")
+            return False
+        self._colour_hexdrive = colour_hexdrive
+
+        app.update_period = _LINE_SENSOR_UPDATE_PERIOD_MS
+        app.set_menu(None)
+        app.button_states.clear()
+        app.refresh = True
+        app.auto_repeat_clear()
+
+        # Reset controller and reading state
+        self.motor_output = (0, 0)
+        self.pid_integral = 0
+        self.pid_previous_error = 0
+        self._last_colour_hue = 0
+        self._last_colour = (0, 0, 0)
+        self._last_colour_name = "unknown"
+        self._new_sample = False
+        self._refresh_time = 0
+
+        # Load PID / tuning parameters from settings
+        self.kp = app.settings['pid_kp'].v
+        self.ki = app.settings['pid_ki'].v
+        self.kd = app.settings['pid_kd'].v
+        self._hue_neutral = app.settings['hue_neutral'].v
+        self._signed_steering_gain = app.settings['steering_gain'].v
+        self._hue_max = app.settings['hue_max'].v
+        self.max_pwr = POWER_SCALE_FACTOR * (app.settings['max_power'].v if 'max_power' in app.settings else DEFAULT_MAX_POWER)
+        self.line_power = POWER_SCALE_FACTOR * (app.settings['line_power'].v if 'line_power' in app.settings else _DEFAULT_FOLLOWER_POWER)
+        if self.ki > 0:
+            self.integral_limit = self.max_pwr // self.ki
+        else:
+            self.integral_limit = 0
+        if self._logging:
+            print("Entered Line Follower mode")
+        return True
 
 
     # ------------------------------------------------------------------
@@ -385,36 +221,55 @@ class LineFollowMgr:
         """Handle Line Follower UI.  Returns True if handled."""
         app = self._app
 
-        self.sample_time += delta
+        # We don't want to update display every sample, so we use a refresh timer to limit the update rate.
+        self._refresh_time += delta
+        if self._refresh_time >= self._refresh_interval:
+            if self._new_sample:
+                self._new_sample = False
+                self._refresh_time = 0
+                app.refresh = True
+
         if app.button_states.get(BUTTON_TYPES["CANCEL"]):
             app.button_states.clear()
             if len(app.hexdrive_apps) > 0:
                 app.hexdrive_apps[0].set_power(False)
-            if self.line_sensors is not None:
-                self.line_sensors.disable()
-            app.pid_integral = 0
-            app.pid_previous_error = 0
+            sensor_mgr = app.sensor_test_mgr
+            if sensor_mgr is not None and self._colour_hexdrive is not None:
+                sensor_mgr.disable_colour_sensor(self._colour_hexdrive)
+            self._colour_hexdrive = None
+            app.set_ring_colour(None)
+            self.pid_integral = 0
+            self.pid_previous_error = 0
+            # persist any changes to the line follower settings before returning to the menu
+            app.settings['hue_neutral'].persist()
+            app.settings['steering_gain'].persist()
             app.return_to_menu()
             return True
+        elif app.button_states.get(BUTTON_TYPES["RIGHT"]): # Left/Right provide a shortcut to adjust the neutral hue for line following, without having to go into the settings menu.
+            app.button_states.clear()
+            app.settings['hue_neutral'].v = app.settings['hue_neutral'].inc(app.settings['hue_neutral'].v, l=1)
+            self._hue_neutral = app.settings['hue_neutral'].v
+            app.refresh = True
+        elif app.button_states.get(BUTTON_TYPES["LEFT"]):
+            app.button_states.clear()
+            app.settings['hue_neutral'].v = app.settings['hue_neutral'].dec(app.settings['hue_neutral'].v, l=1)
+            self._hue_neutral = app.settings['hue_neutral'].v
+            app.refresh = True
+        elif app.button_states.get(BUTTON_TYPES["DOWN"]): # Up/Down provide a shortcut to adjust the steering gain for line following, without having to go into the settings menu.
+            app.button_states.clear()
+            app.settings['steering_gain'].v = app.settings['steering_gain'].dec(app.settings['steering_gain'].v)
+            # we need to skip 0 so that the steering gain is never 0, otherwise the robot will not steer at all.
+            if app.settings['steering_gain'].v == 0:
+                app.settings['steering_gain'].v = -1
+            self._signed_steering_gain = app.settings['steering_gain'].v
+            app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["UP"]):
             app.button_states.clear()
-            app.settings['line_threshold'].v = app.settings['line_threshold'].inc(app.settings['line_threshold'].v)
-            if self.line_sensors is not None:
-                self.line_sensors.threshold = app.settings['line_threshold'].v
-            app.refresh = True
-        elif app.button_states.get(BUTTON_TYPES["DOWN"]):
-            app.button_states.clear()
-            app.settings['line_threshold'].v = app.settings['line_threshold'].dec(app.settings['line_threshold'].v)
-            if self.line_sensors is not None:
-                self.line_sensors.threshold = app.settings['line_threshold'].v
-            app.refresh = True
-        #if self.line_sensors.updated:
-        #    app.refresh = True
-        #    self.line_sensors.clear_updated()
-        if self.sample_time > _LINE_SENSOR_SAMPLE_RATE_UPDATE_PERIOD_MS and self.line_sensors is not None:
-            sample_count = self.line_sensors.sample_count_and_reset()
-            self.sensor_rate = int(((self.sample_time / self.line_sensors.num_sensors) * sample_count) // self.sample_time)
-            self.sample_time = 0
+            app.settings['steering_gain'].v = app.settings['steering_gain'].inc(app.settings['steering_gain'].v)
+            # we need to skip 0 so that the steering gain is never 0, otherwise the robot will not steer at all.
+            if app.settings['steering_gain'].v == 0:
+                app.settings['steering_gain'].v = 1
+            self._signed_steering_gain = app.settings['steering_gain'].v
             app.refresh = True
         return True
 
@@ -424,33 +279,50 @@ class LineFollowMgr:
     # ------------------------------------------------------------------
 
     def background_update(self, delta) -> tuple[int, int] | None:  # pylint: disable=unused-argument
-        """Line follower motor control.
+        """Line follower motor control based on the colour sensor hue.
         Returns motor output tuple, or None if not active."""
-        #app = self._app
-        #output = (0, 0)
-        #s = self.line_sensors.values()
-        #if self.follower_mode == _FOLLOWER_MODE_DIFFERENTIAL:
-            # PID control
-            # Calculate the error as the normalised difference between the two sensor readings
-        if self.line_sensors is not None:
-            self.line_sensors.read_blocking()    # wait for sensor reading
-            error = self.compute_error(self.line_sensors.raw_value(0), self.line_sensors.raw_value(1))
-            # self.line_sensors.read()           # initiate next sensor reading (non-blocking, using IRQ handler to capture values when ready)
-            output = self.compute_differential_output(error)
+        sensor_mgr = self._app.sensor_test_mgr
+        if sensor_mgr is None or self._colour_hexdrive is None:
+            return None
+
+        # Poll the shared colour sensor; read_colour also updates the ring colour on change.
+        new_sample, hue, name, _raw = sensor_mgr.read_colour(self._colour_hexdrive)
+        if new_sample:
+            if self._app.logging:
+                print(f"Line Follower: Hue={hue//10}.{hue%10}° Name={name}")
+            self._last_colour_hue = hue
+            self._last_colour_name = name
+            self._last_colour = _raw
+            self._new_sample = True
+
+            if self._last_colour_name not in ("White", "Grey", "Black"):
+                hue_difference_from_neutral = _signed_hue_delta(self._last_colour_hue, self._hue_neutral)
+
+                if self.follower_mode == _FOLLOWER_MODE_BINARY:
+                    # Binary mode: if the hue is within the neutral +/- max range, go straight; otherwise turn left or right.
+                    # NOT TESTED – this is a simple example of a non-PID line follower, but it is not as effective as the differential mode.
+                    if abs(hue_difference_from_neutral) < self._hue_max:
+                        output = (self.line_power, self.line_power)
+                    elif hue_difference_from_neutral > 0:
+                        output = (self.line_power // 2, self.line_power)
+                    else:
+                        output = (self.line_power, self.line_power // 2)
+                elif self.follower_mode == _FOLLOWER_MODE_DIFFERENTIAL:
+                    # Use circular hue distance so values near 0/3600 wrap correctly.
+                    # need setting to flip the sign of the steering input to reverse the direction of the turn if needed
+                    if abs(hue_difference_from_neutral) < self._hue_max:
+                        steering_input = self._signed_steering_gain * hue_difference_from_neutral
+                        output = self.compute_differential_output(steering_input)
+                    else:
+                        output = (0, 0)
+                else:
+                    output = (0, 0)
+            else:
+                # Stop if the colour is white, grey, or black (i.e. no line detected)
+                output = (0, 0)
+            self.motor_output = output
         else:
-            output = (0, 0)
-        #    # Bang Bang control
-        #    if s != self._sensor_state:
-        #        self._sensor_state = s
-        #        if s[0] and not s[1]:
-        #            output = (-app.settings['max_power'].v, app.settings['max_power'].v)
-        #        elif not s[0] and s[1]:
-        #            output = (app.settings['max_power'].v, -app.settings['max_power'].v)
-        #        else:
-        #            output = (app.settings['max_power'].v, app.settings['max_power'].v)
-        #        self.motor_output = output
-        #    else:
-        #        output = self.motor_output
+            output = self.motor_output
         return output
 
 
@@ -460,87 +332,116 @@ class LineFollowMgr:
         Uses the difference between left and right sensor readings as the error signal,
         and applies proportional, integral, and derivative terms to compute a steering correction.
         Returns a tuple of (left_motor, right_motor) power values, clamped to max_power.
+        Uses integer maths for efficiency, scaling down the PID gains and error values to avoid overflow.
         """
 
         # Proportional term
-        p_term = (self.kp * error) // 1000  # Scale down the error for the proportional term
+        p_term = (self.kp * error) // _FOLLOWER_PID_SCALE_FACTOR  # Scale down the error for the proportional term
 
         # Integral term - accumulate error over time with anti-windup clamping
-        #self.pid_integral += error
-        #self.pid_integral = max(min(self.pid_integral, self.integral_limit), -self.integral_limit)
-        #i_term = (self.ki * self.pid_integral) // 1000
+        if self.ki > 0:
+            self.pid_integral += error
+            self.pid_integral = max(min(self.pid_integral, self.integral_limit), -self.integral_limit)
+            i_term = (self.ki * self.pid_integral) // _FOLLOWER_PID_SCALE_FACTOR
+        else:
+            i_term = 0
 
         # Derivative term - rate of change of error
-        #d_term = (self.kd * (error - self.pid_previous_error)) // 1000
-        #self.pid_previous_error = error
+        d_term = (self.kd * (error - self.pid_previous_error)) // _FOLLOWER_PID_SCALE_FACTOR
+        self.pid_previous_error = error
 
         # Combined PID output
-        # make correction value as integer to avoid issues with motor control expecting int values
-        correction = p_term # + int(i_term) + int(d_term)
+        correction = p_term + i_term + d_term
 
-        # Combine correction with base forward power to get output for each motor
-        output = (self.forward_power + correction, self.forward_power - correction)
+        # Combine correction with base forward power to get output for each motor & limit output to max power
+        max_power = self.max_pwr
+        output = (_clamp(self.line_power + correction, -max_power, max_power), _clamp(self.line_power - correction, -max_power, max_power))
 
-        # Limit output to max power
-        output = (max(min(output[0], self.max_pwr), -self.max_pwr), max(min(output[1], self.max_pwr), -self.max_pwr))
-
-        #if self.self._logging:
-        #    print(f"PID: err={error} P={p_term} I={i_term} D={d_term} corr={correction} out={output}")
+        if self._logging:
+            print(f"PID: err={error} P={p_term} I={i_term} D={d_term} corr={correction} out={output}")
 
         return output
-
-
-    @staticmethod
-    def compute_error(left_raw: int, right_raw: int) -> int:
-        """Compute a normalised error from raw sensor discharge times.
-
-        Parameters
-        ----------
-        left_raw : int
-            Raw discharge time (µs) from the left sensor.
-        right_raw : int
-            Raw discharge time (µs) from the right sensor.
-
-        Returns
-        -------
-        int
-            Error in range [-1000, +1000].
-            Negative = line is to the left (steer left).
-            Positive = line is to the right (steer right).
-
-        The sensor with the *shorter* discharge time is further from the dark line
-        (higher reflectance).  So if left_raw > right_raw the line is to the
-        left and the error is negative.
-        """
-        total = left_raw + right_raw
-        if total == 0:
-            return 0
-        return (1000 * (right_raw - left_raw)) // total
 
 
     # ------------------------------------------------------------------
     # Draw
     # ------------------------------------------------------------------
 
+
+
     def draw(self, ctx) -> bool:
         """Render Line Follower UI.  Returns True if handled."""
-        app = self._app
 
-        ctx.save()
-        ctx.rgb(1, 1, 0).move_to(0, -1 * label_font_size).text(f"TH:{self.line_threshold}")
-        ctx.rgb(0, 1, 1).move_to(-70, -1 * label_font_size).text(f"{self.sensor_rate} Hz")
-        spacing = 80
-        offset = (spacing // 2) * (app.num_line_sensors // 2)
-        for i in range(app.num_line_sensors):
-            x = offset - i * spacing
-            # make a simple visualization of the sensor reading as a filled circle, with colour indicating whether it's above or below the threshold
-            if self.line_sensors is not None:
-                colour = (0, 1, 0) if self.line_sensors.raw_value(i) < self.line_threshold else (0, 0, 0)
-                ctx.rgb(*colour).arc(x, 0, 24, 0, 2 * pi, True).fill()
-                ctx.rgb(1, 1, 1).arc(x, 0, 25, 0, 2 * pi, True).stroke()
-                ctx.rgb(1, 1, 0).move_to(x - 20, 2 * label_font_size).text(f"{self.line_sensors.raw_value(i):4}")
-                #    if self._logging:
-                #        print(f"Sensor {i}: {self.line_sensors.value(i)} (raw: {self.line_sensors.raw_value(i)})")
-        ctx.restore()
-        button_labels(ctx, up_label="+", down_label="-", cancel_label="Cancel")
+        # draw a box to show the deviation from neutral hue:
+        # outer box shows the maximum hue deviation possible, inner box shows the maxiimum hue deviation used, and a line shows the current deviation position
+        ctx.rgb(0.5,0.5,0.5).rectangle(-100, (-label_font_size+8)//2, 200, label_font_size - 8).fill()
+        #ctx.rgb(1,0,1).rectangle(-max_deviation_x, -label_font_size//2 + 4, 2 * max_deviation_x, label_font_size - 8).fill()
+
+        # draw 'rainbow' like bands to show the hue ranges for the different colours between the minimum and maximum hue deviation, with the neutral hue in the centre
+        width = 4
+        half_height = label_font_size // 2
+        ctx.line_width = width
+        max_deviation_x = (100 * self._hue_max) // 1800
+        # only need to draw lines every line_width pixels, so we can skip some to reduce the number of lines drawn
+        for x in range(-max_deviation_x, max_deviation_x + 1, width):
+            pixel_x = x + width // 2
+            hue_offset = (x * 1800) // 100
+            if self._signed_steering_gain < 0:
+                # reverse the hue direction if the steering gain is negative
+                hue_offset = -hue_offset
+            hue = (self._hue_neutral + hue_offset) % _HUE_CIRCLE
+            ctx.rgb(*hue_to_rgb(hue)).move_to(pixel_x, -half_height).line_to(pixel_x, half_height).stroke()
+
+        if self._last_colour is not None:
+            ctx.rgb(1,1,1).move_to(-ctx.text_width("Hue")//2, -(3 * label_font_size)//2 ).text("Hue")
+
+            neutral_hue_text = f"{self._hue_neutral//10}°"
+            ctx.rgb(1, 1, 0).move_to(-ctx.text_width(neutral_hue_text)//2, -label_font_size//2).text(neutral_hue_text)
+
+            #ctx.move_to(-80,  2 * label_font_size).text(f"Hue:{self._last_colour_hue//10}.{self._last_colour_hue%10}°")
+            display_rgb = self._app.sensor_test_mgr.colour_card_rgb(self._last_colour_name) if self._app.sensor_test_mgr is not None else (0.5, 0.5, 0.5)
+            ctx.rgb(*display_rgb).move_to(-ctx.text_width(f"{self._last_colour_name}")//2, 2 * label_font_size).text(f"{self._last_colour_name}")
+
+            # Steering Gain
+            steering_gain_text = f"Gain: {self._signed_steering_gain}"
+            ctx.rgb(1, 1, 0).move_to(-ctx.text_width(steering_gain_text)//2, 3 * label_font_size).text(steering_gain_text)
+
+            deviation = _signed_hue_delta(self._last_colour_hue, self._hue_neutral)
+            deviation_x = (100 * deviation) // 1800
+            if self._signed_steering_gain < 0:
+                # reverse the deviation direction if the steering gain is negative
+                deviation_x = -deviation_x
+
+            # current deviation line in white
+            ctx.line_width = 4
+            ctx.rgb(1,1,1).move_to(deviation_x, -half_height).line_to(deviation_x, half_height).stroke()
+
+        # tick mark for the centre in black
+        ctx.line_width = 2
+        ctx.rgb(0,0,0).move_to(0, -half_height).line_to(0, 0).stroke()
+
+        button_labels(ctx, cancel_label="Cancel", up_label="+gain", down_label="-gain", left_label="\u25C0", right_label="\u25B6")
+
         return True
+
+def hue_to_rgb(h: int) -> tuple[float, float, float]:
+    """Convert a hue value (0-360 degrees) to an RGB tuple (0-1.0 each).
+    This function uses the HSV to RGB conversion algorithm, assuming full saturation and value.
+    h values are in units of 0.1degrees (0-3600).
+    """
+    x = 1 - abs(((h / 600) % 2) - 1)
+
+    if h < 600:
+        r1, g1, b1 = 1, x, 0
+    elif h < 1200:
+        r1, g1, b1 = x, 1, 0
+    elif h < 1800:
+        r1, g1, b1 = 0, 1, x
+    elif h < 2400:
+        r1, g1, b1 = 0, x, 1
+    elif h < 3000:
+        r1, g1, b1 = x, 0, 1
+    else:
+        r1, g1, b1 = 1, 0, x
+
+    return r1, g1, b1

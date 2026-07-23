@@ -117,7 +117,8 @@ _BLE_LOGGING = False
 _IS_SIMULATOR = sys.platform != "esp32"  # True when running in the simulator, not on real badge hardware
 _FWD_DIR_DEFAULT = const(0)
 _FRONT_FACE_DEFAULT = const(0)
-
+_DEFAULT_MOTOR_DEADBAND = const(1000)  # Minimum motor PWM value below which we don't try to move the motor.
+_DEFAULT_MOTOR_MIN = const(35000)  # Minimum motor PWM value (0-65535) for each motor, below which the motor will not move.  This is used to compensate for differences in motors and gearboxes, so that both motors start moving at the same time when given the same power level.
 
 # Main Menu Items
 MAIN_MENU_ITEMS = ["Line Follower","Motor Moves", "Servo Test", "PID Auto Tune", "Sensor Test", "Auto Drive", "Hexpansions", "Settings", "About","Exit"]
@@ -171,7 +172,7 @@ SettingsMgr, MySetting                                    = _try_import('setting
 MotorMovesMgr, _motor_moves_init_settings                 = _try_import('motor_moves',   'MotorMovesMgr', 'init_settings')
 ServoTestMgr, _servo_test_init_settings                   = _try_import('servo_test',    'ServoTestMgr', 'init_settings')
 LineFollowMgr, _line_follow_init_settings                 = _try_import('line_follow',   'LineFollowMgr', 'init_settings')
-(AutotuneMgr,)                                            = _try_import('autotune_mgr',  'AutotuneMgr')
+#(AutotuneMgr,)                                            = _try_import('autotune_mgr',  'AutotuneMgr')
 SensorTestMgr, _sensor_test_init_settings                 = _try_import('sensor_test',   'SensorTestMgr', 'init_settings')
 AutoDriveMgr, _autodrive_init_settings                    = _try_import('autodrive',     'AutoDriveMgr', 'init_settings')
 emit_diagnostics_output, set_diagnostics_output           = _try_import('diagnostics',   'output', 'set_output')
@@ -197,8 +198,11 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         "scroll_offset",
         "run_countdown_elapsed_ms",
         "countdown_next_state",
+        "_motor_deadband",
         "_motor1_reversed",
         "_motor2_reversed",
+        "_motor1_min",
+        "_motor2_min",
         "current_state",
         "previous_state",
         "update_period",
@@ -242,7 +246,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         super().__init__()
 
         print("B:BadgeBotApp: Initialising...")
-        self._bluetooth_enabled: bool = True
+        self._bluetooth_enabled: bool = False
         self._ble_override_active: bool = False
 
         # UI Button Controls
@@ -286,8 +290,11 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.run_countdown_elapsed_ms: int = 0
         self.countdown_next_state: int | None = None  # which state to go to after countdown
 
-        self._motor1_reversed: bool = False       # 0 or 1 to control direction of motor 1, set based on settings
-        self._motor2_reversed: bool = False       # 0 or 1 to control direction of motor 2, set based on settings
+        self._motor_deadband: int = _DEFAULT_MOTOR_DEADBAND  # Minimum motor PWM value below which we don't try to move the motor.
+        self._motor1_reversed: bool = False         # 0 or 1 to control direction of motor 1, set based on settings
+        self._motor2_reversed: bool = False         # 0 or 1 to control direction of motor 2, set based on settings
+        self._motor1_min: int = _DEFAULT_MOTOR_MIN  # Minimum motor PWM value (0-65535) for motor 1, below which the motor will not move.  This is used to compensate for differences in motors and gearboxes, so that both motors start moving at the same time when given the same power level.
+        self._motor2_min: int = _DEFAULT_MOTOR_MIN  # Minimum motor PWM value (0-65535) for motor 2, below which the motor will not move.  This is used to compensate for differences in motors and gearboxes, so that both motors start moving at the same time when given the same power level.
 
         # Overall app state (controls what is displayed and what user inputs are accepted)
         self.current_state = STATE_HEXPANSION
@@ -304,8 +311,11 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
             self.settings['ble_logging']   = MySetting(self.settings, _BLE_LOGGING, False, True)
             # Direction settings
+            self.settings['motor_deadband'] = MySetting(self.settings, _DEFAULT_MOTOR_DEADBAND, 0, 30000)
             self.settings['motor1_dir']    = MySetting(self.settings, _FWD_DIR_DEFAULT, 0, 1, labels=_MOTOR_DIRECTION_LABELS)
             self.settings['motor2_dir']    = MySetting(self.settings, _FWD_DIR_DEFAULT, 0, 1, labels=_MOTOR_DIRECTION_LABELS)
+            self.settings['motor1_min']    = MySetting(self.settings, _DEFAULT_MOTOR_MIN, 0, 50000)
+            self.settings['motor2_min']    = MySetting(self.settings, _DEFAULT_MOTOR_MIN, 0, 50000)
             self.settings['front_face']    = MySetting(self.settings, _FRONT_FACE_DEFAULT, 0, 11, labels=_FRONT_FACE_LABELS)
 
             # Module-specific settings - only initialise modules which are NOT dependent on specific Hexpansion hardware here, as we want to be able to access settings in the HexpansionMgr before we have detected what hardware is present.  For Hexpansion-dependent modules, we will initialise their settings after we have scanned for hardware and know which modules we will be using.
@@ -395,9 +405,9 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self._servo_test_mgr   = ServoTestMgr(self, logging=self.logging)   if ServoTestMgr is not None else None
         self._settings_mgr     = SettingsMgr(self, logging=self.logging)    if SettingsMgr is not None else None
         self._line_follow_mgr  = LineFollowMgr(self, logging=self.logging)  if LineFollowMgr is not None else None
-        self._autotune_mgr     = AutotuneMgr(self, self._line_follow_mgr, logging=self.logging) if AutotuneMgr is not None else None
+        self._autotune_mgr     = None # AutotuneMgr(self, self._line_follow_mgr, logging=self.logging) if AutotuneMgr is not None else None
         self._sensor_test_mgr  = SensorTestMgr(self, logging=self.logging)  if SensorTestMgr is not None else None
-        self._autodrive_mgr    = AutoDriveMgr(self, logging=self.logging)   if AutoDriveMgr is not None else None
+        self._autodrive_mgr    = None # AutoDriveMgr(self, logging=self.logging)   if AutoDriveMgr is not None else None
 
         # State -> manager dispatch tables (only include managers that exist)
         self._state_update_dispatch = {}
@@ -594,7 +604,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             else:
                 self._ble_override_active = False
             if output is not None:
-                if not self.hexdrive_apps[0].set_motors(self.apply_motor_directions(output)):
+                if not self.hexdrive_apps[0].set_motors(self.apply_motor_calibration(output)):
                     if self.logging:
                         print("Failed to set motor outputs to HexDrive app")
 
@@ -659,8 +669,9 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             _sensor_test_init_settings(self.settings, MySetting)
         if self.enable_autodrive and _autodrive_init_settings is not None:
             _autodrive_init_settings(self.settings, MySetting)
-        self.update_settings()  # Load settings from EEPROM after initialisation
-        self.fast_settings_update()  # Update fast access settings
+        # The below functions get called during return_to_menu anyway
+        #self.update_settings()  # Load settings from EEPROM after initialisation
+        #self.fast_settings_update()  # Update fast access settings
 
 
     def update_settings(self):
@@ -677,8 +688,12 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         """Update fast access settings from the main settings dictionary."""
         if self.logging:
             print("B:Updating fast access settings")
+        self._motor_deadband = self.settings['motor_deadband'].v
         self._motor1_reversed: bool = self.settings['motor1_dir'].v != 0
         self._motor2_reversed: bool = self.settings['motor2_dir'].v != 0
+        self._motor1_min = self.settings['motor1_min'].v
+        self._motor2_min = self.settings['motor2_min'].v
+
         ble_ctrl = getattr(self, '_ble_controller', None)
         if ble_ctrl is not None:
             if self.ble_logging:
@@ -813,6 +828,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                     self.refresh = True
         elif self.button_states.get(BUTTON_TYPES["CANCEL"]) and self.current_state in MINIMISE_VALID_STATES:
             self.button_states.clear()
+            settings.save()  # Save settings before minimising
             self.minimise()
 
         ### Shared Countdown Display ###
@@ -1039,13 +1055,29 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             tildagonos.leds[i] = (0, 0, 0)
 
 
-    def apply_motor_directions(self, output: tuple) -> tuple:
+    def apply_motor_calibration(self, output: tuple) -> tuple:
         """Negate individual motor outputs as per settings."""
         output1, output2 = output
-        output = (-output1 if self._motor1_reversed else output1, -output2 if self._motor2_reversed else output2)
-        #if self.logging:
-        #    print(f"M:{output}")
-        return output
+
+        # Apply deadband correction
+        if abs(output1) < self._motor_deadband:
+            # If the absolute value of output1 is less than the deadband threshold, set it to zero to prevent small motor outputs from being sent to the motors
+            output1 = 0
+        else:
+            # Otherwise apply the motor offset to ensure that the motors start moving when a non-zero output is sent. This compensates for any mechanical resistance or friction in the motor system.
+            if output1 > 0:
+                output1 = self._motor1_min + ((output1 * (65536 - self._motor1_min)) // 65536)
+            else:
+                output1 = -self._motor1_min - ((-output1 * (65536 - self._motor1_min)) // 65536)
+        if abs(output2) < self._motor_deadband:
+            output2 = 0
+        else:
+            if output2 > 0:
+                output2 = self._motor2_min + ((output2 * (65536 - self._motor2_min)) // 65536)
+            else:
+                output2 = -self._motor2_min - ((-output2 * (65536 - self._motor2_min)) // 65536)
+
+        return (-output1 if self._motor1_reversed else output1, -output2 if self._motor2_reversed else output2)
 
 
     def set_direction_leds(self, direction: Button):
@@ -1104,9 +1136,9 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
         self.current_state = STATE_MENU
         self.refresh = True
-
         self.update_settings()
         self.fast_settings_update()
+
 
     def show_message(self, msg_content, msg_colours, msg_type = None, return_state: int | None = None):
         """Utility function to set the current state to the message display, and populate the message content and colours. The message_type can be used to indicate whether this is an 'error' (red) or 'warning' (green) message, which can affect both the display and the behaviour when the user acknowledges the message."""
@@ -1201,7 +1233,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 )
         elif menu_name == MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS] and self._settings_mgr is not None: # "Settings"
             # construct the settings menu
-            _settings_menu_items = ["SAVE ALL", "DEFAULT ALL"]
+            _settings_menu_items = ["Save All", "Default All"]
             for _, setting in enumerate(self.settings):
                 _settings_menu_items.append(f"{setting}")
             self.menu = Menu(
@@ -1315,6 +1347,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     def _menu_back_handler(self):
         if self.current_menu == "main":
             self._main_menu_position = self.menu.position if self.menu else 0
+            settings.save()         # Save settings before minimising
             self.minimise()
         # for submenus, just return to the main menu
         if self.current_menu == MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS]:

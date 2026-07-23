@@ -3,7 +3,6 @@
 import bluetooth
 import struct
 import sys
-import time
 from micropython import const
 
 # --- BLE Constants for Nordic UART Service (NUS) ---
