@@ -36,20 +36,20 @@ _TICK_MS       =  10
 _LONG_PRESS_MS = 750
 
 # Default user timings for drive and turn steps (can be configured in settings)
-_ACCELERATION_SCALE_FACTOR = 512
+ACCELERATION_SCALE_FACTOR = 512
 POWER_SCALE_FACTOR        = 512
-_DEFAULT_ACCELERATION  = 24576 // _ACCELERATION_SCALE_FACTOR  # user-friendly acceleration value
+DEFAULT_ACCELERATION  = 24576 // ACCELERATION_SCALE_FACTOR  # user-friendly acceleration value
 DEFAULT_MAX_POWER      = 50000 // POWER_SCALE_FACTOR          # exposed for use in other modules
 _DEFAULT_USER_DRIVE_MS =  50
 _DEFAULT_USER_TURN_MS  =  20
 
-_MIN_ACCELERATION      = 1     # 1024 // _ACCELERATION_SCALE_FACTOR
+_MIN_ACCELERATION      = 1     # 1024 // ACCELERATION_SCALE_FACTOR
 MIN_MAX_POWER          = 10240 // POWER_SCALE_FACTOR
 _MIN_USER_DRIVE_MS     = 10
 _MIN_USER_TURN_MS      = 10
 
 MAX_MAX_POWER          = 65535 // POWER_SCALE_FACTOR
-_MAX_ACCELERATION      = 65535 // _ACCELERATION_SCALE_FACTOR
+_MAX_ACCELERATION      = 65535 // ACCELERATION_SCALE_FACTOR
 _MAX_USER_DRIVE_MS     = 10000
 _MAX_USER_TURN_MS      = 10000
 
@@ -133,7 +133,7 @@ class Instruction:
         curr_power = 0
         ramp_up = []
         _d = self._duration * self.directional_duration(mysettings)
-        _a = _ACCELERATION_SCALE_FACTOR * (mysettings['acceleration'].v if 'acceleration' in mysettings else _DEFAULT_ACCELERATION)
+        _a = ACCELERATION_SCALE_FACTOR * (mysettings['acceleration'].v if 'acceleration' in mysettings else DEFAULT_ACCELERATION)
         _m = POWER_SCALE_FACTOR * (mysettings['max_power'].v if 'max_power' in mysettings else DEFAULT_MAX_POWER)
         max_ramp_up_ticks = (_d // (2 * _TICK_MS)) - 1
         for _ in range(max_ramp_up_ticks):
@@ -162,7 +162,7 @@ class Instruction:
 
 def init_settings(s, MySetting: type):  #pylint: disable=invalid-name
     """Register motor-moves-specific settings in the shared settings dict."""
-    s['acceleration']  = MySetting(s, _DEFAULT_ACCELERATION,  _MIN_ACCELERATION,  _MAX_ACCELERATION)
+    s['acceleration']  = MySetting(s, DEFAULT_ACCELERATION,  _MIN_ACCELERATION,  _MAX_ACCELERATION)
     s['max_power']     = MySetting(s, DEFAULT_MAX_POWER,     MIN_MAX_POWER,     MAX_MAX_POWER)
     s['drive_step_ms'] = MySetting(s, _DEFAULT_USER_DRIVE_MS, _MIN_USER_DRIVE_MS, _MAX_USER_DRIVE_MS)
     s['turn_step_ms']  = MySetting(s, _DEFAULT_USER_TURN_MS,  _MIN_USER_TURN_MS,  _MAX_USER_TURN_MS)

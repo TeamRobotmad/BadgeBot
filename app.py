@@ -190,7 +190,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         "current_menu",
         "menu",
         "_main_menu_position",
-        "_settings_menu_position",
+        "settings_menu_position",
         "_last_scroll",
         "scroll_mode_enabled",
         "scroll_ignore_next_c_button",
@@ -277,7 +277,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.current_menu: str | None = None
         self.menu: Menu | None = None
         self._main_menu_position: int = 0
-        self._settings_menu_position: int = 0
+        self.settings_menu_position: int = 0
 
         # Member data related to scrolling
         self._last_scroll : int = 0 # The last scroll posoition during non-scroll mode
@@ -381,7 +381,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             if _app is not None:
                 print(f"B:HexDrive2 (with App) found in slot {slots[0]}")
                 self.hexdrive_apps.append(_app)
-            self.calc_num_motors_servos_sensors()
+            self._calc_num_motors_servos_sensors()
             if self.logging:
                 print(f"B:Num motors={self.num_motors}, servos={self.num_servos}, sensors={self.num_sensors}")
 
@@ -447,7 +447,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             name = "BdgBotXX"
             uniqueid = self._hexpansion_mgr.get_active_hexdrive_unique_id()
             if uniqueid is not None:
-                name = "BdgBot" + "{:02d}".format(uniqueid % 100)
+                name = f"BdgBot{uniqueid % 100:02d}"
                 print("B: BluetoothLE Name:", name)
             self._ble_controller = RobotBLE(self._ble, name=name)
             # Register the command processor
@@ -478,7 +478,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             print(f"B:BadgeBot App V{self.app_version} Initialised")
 
 
-    def calc_num_motors_servos_sensors(self):
+    def _calc_num_motors_servos_sensors(self):
+        """Calculate the total number of motors, servos, and sensors based on the detected HexDrive hexpansion types."""
         self.num_motors = 0
         self.num_servos = 0
         self.num_sensors = 0
@@ -1241,7 +1242,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 _settings_menu_items,
                 select_handler=self._settings_menu_select_handler,
                 back_handler=self._menu_back_handler,
-                position=self._settings_menu_position,
+                position=self.settings_menu_position,
                 )
 
 
@@ -1351,7 +1352,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             self.minimise()
         # for submenus, just return to the main menu
         if self.current_menu == MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS]:
-            self._settings_menu_position = self.menu.position if self.menu else 0
+            self.settings_menu_position = self.menu.position if self.menu else 0
         self.set_menu()
 
 

@@ -20,7 +20,7 @@ from app_components.tokens import label_font_size, button_labels
 import micropython
 
 from .app import MOTOR_PWM_FREQ
-from .motor_moves import DEFAULT_MAX_POWER, POWER_SCALE_FACTOR, MIN_MAX_POWER, MAX_MAX_POWER
+from .motor_moves import DEFAULT_MAX_POWER, POWER_SCALE_FACTOR, MIN_MAX_POWER, MAX_MAX_POWER, DEFAULT_ACCELERATION, ACCELERATION_SCALE_FACTOR
 
 try:
     from micropython import const
@@ -32,6 +32,7 @@ except ImportError:
 
 # Line Follower constants
 _LINE_SENSOR_UPDATE_PERIOD_MS = const(10)
+
 # For integer Hue values we use 0.1-degree units, so 360 degrees = 3600 units.
 _DEFAULT_HUE_NEUTRAL = const(3000)  # Default 'neutral hue' for colour sensor, midway between red and blue (3000 = 300.0 degrees)
 _DEFAULT_HUE_MAX = const(900)       # Clamp steering input to this hue-distance from neutral (0.1-degree units)
@@ -46,8 +47,10 @@ _FOLLOWER_PID_KD_DEFAULT = const(10000)
 _FOLLOWER_PID_SCALE_FACTOR = const(1000)
 
 # Do not set this too high otherwise there is no scope for one wheel to be given more power than the other to steer. (max is 65536)
-_DEFAULT_FOLLOWER_POWER = 30000 // POWER_SCALE_FACTOR
-_DEFAULT_STEERING_GAIN = 10 # while this could be taken up by the PID gains, this fixed scale factor allows the PID gains to be smaller values.
+_DEFAULT_FOLLOWER_POWER = const(30000 // POWER_SCALE_FACTOR)
+
+_STEERING_SCALE_FACTOR = const(3)   # scale factor for steering gain to allow finer adjustment in settings
+_DEFAULT_STEERING_GAIN = const(10)  # while this could be taken up by the PID gains, this fixed scale factor allows the PID gains to be smaller values.
 
 # Line Follower Modes
 _FOLLOWER_MODE_DIFFERENTIAL = const(0)
@@ -102,7 +105,7 @@ class LineFollowMgr:
     app : BadgeBotApp
         Reference to the main application instance.
     """
-    __slots__ = ("_app", "_logging", "sensor_rate", "follower_mode",
+    __slots__ = ("_app", "_logging", "sensor_rate", "follower_mode", "acceleration",
                  "line_power", "pid_integral", "pid_previous_error",
                  "kp", "ki", "kd", "max_pwr", "integral_limit", "motor_output",
                  "_last_colour", "_last_colour_hue", "_last_colour_name", "_colour_hexdrive",
@@ -113,6 +116,7 @@ class LineFollowMgr:
         self._logging: bool = logging
         self.sensor_rate: int = 0     # sample rate
         self.follower_mode: int = _FOLLOWER_MODE_DIFFERENTIAL   # Default follower mode
+        self.acceleration: int = ACCELERATION_SCALE_FACTOR * DEFAULT_ACCELERATION
         self.line_power: int = _DEFAULT_FOLLOWER_POWER                # Default line follower power
         self.pid_integral: int = 0                              # Accumulated integral term for PID controller
         self.pid_previous_error: int = 0                        # Previous error for derivative term of PID controller
@@ -131,7 +135,7 @@ class LineFollowMgr:
         self._new_sample: bool = False
         self._refresh_time: int = 0
         self._refresh_interval: int = 200
-        self._signed_steering_gain: int = -_DEFAULT_STEERING_GAIN       # sign reversed for line-following on the opposite side of the line
+        self._signed_steering_gain: int = _STEERING_SCALE_FACTOR * _DEFAULT_STEERING_GAIN       # sign reversed for line-following on the opposite side of the line
         if self._logging:
             print("LineFollowMgr initialised")
 
@@ -170,13 +174,14 @@ class LineFollowMgr:
 
         # Load any persisted colour calibration, then enable the colour sensor for polling
         # (no events, no interrupts).
-        if not sensor_mgr.enable_colour_sensor(colour_hexdrive, events=False, interrupts=False):
-            app.notification = Notification("Colour Sensor not available")
-            return False
-        # Load any persisted colour calibration
-        if not sensor_mgr.apply_colour_calibration(colour_hexdrive):
-            app.notification = Notification("Please Calibrate Colour Sensor")
-            return False
+        if sensor_mgr is not None:
+            if not sensor_mgr.enable_colour_sensor(colour_hexdrive, events=False, interrupts=False):
+                app.notification = Notification("Colour Sensor not available")
+                return False
+            # Load any persisted colour calibration
+            if not sensor_mgr.apply_colour_calibration(colour_hexdrive):
+                app.notification = Notification("Please Calibrate Colour Sensor")
+                return False
         self._colour_hexdrive = colour_hexdrive
 
         app.update_period = _LINE_SENSOR_UPDATE_PERIOD_MS
@@ -199,11 +204,13 @@ class LineFollowMgr:
         self.kp = app.settings['pid_kp'].v
         self.ki = app.settings['pid_ki'].v
         self.kd = app.settings['pid_kd'].v
-        self._hue_neutral = app.settings['hue_neutral'].v
-        self._signed_steering_gain = app.settings['steering_gain'].v
-        self._hue_max = app.settings['hue_max'].v
+        self._hue_neutral = app.settings['hue_neutral'].v if 'hue_neutral' in app.settings else _DEFAULT_HUE_NEUTRAL
+        self._signed_steering_gain = _STEERING_SCALE_FACTOR * (app.settings['steering_gain'].v if 'steering_gain' in app.settings else _DEFAULT_STEERING_GAIN)
+        self._hue_max = app.settings['hue_max'].v if 'hue_max' in app.settings else _DEFAULT_HUE_MAX
         self.max_pwr = POWER_SCALE_FACTOR * (app.settings['max_power'].v if 'max_power' in app.settings else DEFAULT_MAX_POWER)
         self.line_power = POWER_SCALE_FACTOR * (app.settings['line_power'].v if 'line_power' in app.settings else _DEFAULT_FOLLOWER_POWER)
+        self.acceleration = ACCELERATION_SCALE_FACTOR * (app.settings['acceleration'].v if 'acceleration' in app.settings else DEFAULT_ACCELERATION)
+
         if self.ki > 0:
             self.integral_limit = self.max_pwr // self.ki
         else:
@@ -320,6 +327,10 @@ class LineFollowMgr:
             else:
                 # Stop if the colour is white, grey, or black (i.e. no line detected)
                 output = (0, 0)
+            # limit rate of change of motor output to maximum acceleration
+            max_delta = self.acceleration # maximum change in motor output per update
+            output = (self.motor_output[0] + _clamp(output[0] - self.motor_output[0], -max_delta, max_delta),
+                      self.motor_output[1] + _clamp(output[1] - self.motor_output[1], -max_delta, max_delta))
             self.motor_output = output
         else:
             output = self.motor_output
@@ -423,6 +434,7 @@ class LineFollowMgr:
         button_labels(ctx, cancel_label="Cancel", up_label="+gain", down_label="-gain", left_label="\u25C0", right_label="\u25B6")
 
         return True
+
 
 def hue_to_rgb(h: int) -> tuple[float, float, float]:
     """Convert a hue value (0-360 degrees) to an RGB tuple (0-1.0 each).
