@@ -117,8 +117,8 @@ _BLE_LOGGING = False
 _IS_SIMULATOR = sys.platform != "esp32"  # True when running in the simulator, not on real badge hardware
 _FWD_DIR_DEFAULT = const(0)
 _FRONT_FACE_DEFAULT = const(0)
-_DEFAULT_MOTOR_DEADBAND = const(1000)  # Minimum motor PWM value below which we don't try to move the motor.
-_DEFAULT_MOTOR_MIN = const(35000)  # Minimum motor PWM value (0-65535) for each motor, below which the motor will not move.  This is used to compensate for differences in motors and gearboxes, so that both motors start moving at the same time when given the same power level.
+_DEFAULT_MOTOR_DEADBAND = const(500)  # Minimum motor power value below which we don't try to move the motor.
+_DEFAULT_MOTOR_MIN = const(35000)     # Minimum motor PWM value (0-65535) for each motor, below which the motor will not move.  This is used to compensate for differences in motors and gearboxes, so that both motors start moving at the same time when given the same power level.
 
 # Main Menu Items
 MAIN_MENU_ITEMS = ["Line Follower","Motor Moves", "Servo Test", "PID Auto Tune", "Sensor Test", "Auto Drive", "Hexpansions", "Settings", "About","Exit"]

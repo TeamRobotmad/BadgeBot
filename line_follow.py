@@ -16,7 +16,7 @@
 
 from events.input import BUTTON_TYPES
 from app_components.notification import Notification
-from app_components.tokens import label_font_size, button_labels
+from app_components.tokens import label_font_size, small_font_size, button_labels
 import micropython
 
 from .app import MOTOR_PWM_FREQ
@@ -34,23 +34,25 @@ except ImportError:
 _LINE_SENSOR_UPDATE_PERIOD_MS = const(10)
 
 # For integer Hue values we use 0.1-degree units, so 360 degrees = 3600 units.
-_DEFAULT_HUE_NEUTRAL = const(3000)  # Default 'neutral hue' for colour sensor, midway between red and blue (3000 = 300.0 degrees)
-_DEFAULT_HUE_MAX = const(900)       # Clamp steering input to this hue-distance from neutral (0.1-degree units)
+_DEFAULT_MID_HUE = const(300)      # Default 'mid hue' for colour sensor, midway between red and blue (300 = 300.0 degrees)
+_DEFAULT_MAX_HUE = const(90)       # Clamp steering input to this hue-distance from neutral (degree units)
 
 _HUE_CIRCLE = const(3600)
 _HUE_HALF_CIRCLE = const(_HUE_CIRCLE // 2)
+_HUE_COLOUR_UNKNOWN = const(-1)  # special value for unknown hue (Achromatic colours - so not indicated in UI)
+_HUE_SCALE_FACTOR = const(10)  # scale factor for hue values to allow finer adjustment in settings
 
 # PID Gains for Steering Control (scaled up by 1000 for integer maths)
-_FOLLOWER_PID_KP_DEFAULT = const(10000)
+_FOLLOWER_PID_KP_DEFAULT = const(5000)
 _FOLLOWER_PID_KI_DEFAULT = const(0)
-_FOLLOWER_PID_KD_DEFAULT = const(10000)
+_FOLLOWER_PID_KD_DEFAULT = const(5000)
 _FOLLOWER_PID_SCALE_FACTOR = const(1000)
 
 # Do not set this too high otherwise there is no scope for one wheel to be given more power than the other to steer. (max is 65536)
-_DEFAULT_FOLLOWER_POWER = const(30000 // POWER_SCALE_FACTOR)
+_DEFAULT_FOLLOWER_POWER = 20000 // POWER_SCALE_FACTOR   # NB can't warp inside const()
 
 _STEERING_SCALE_FACTOR = const(3)   # scale factor for steering gain to allow finer adjustment in settings
-_DEFAULT_STEERING_GAIN = const(10)  # while this could be taken up by the PID gains, this fixed scale factor allows the PID gains to be smaller values.
+_DEFAULT_STEERING_GAIN = const(5)   # while this could be taken up by the PID gains, this fixed scale factor allows the PID gains to be smaller values.
 
 # Line Follower Modes
 _FOLLOWER_MODE_DIFFERENTIAL = const(0)
@@ -87,9 +89,9 @@ def _clamp(value: int, lo: int, hi: int) -> int:
 def init_settings(s, MySetting: type):      #pylint: disable=invalid-name
     """Register line-follower-specific settings in the shared settings dict."""
     s['line_power']     = MySetting(s, _DEFAULT_FOLLOWER_POWER, MIN_MAX_POWER, MAX_MAX_POWER)  # Follow power setting
-    s['hue_neutral']    = MySetting(s, _DEFAULT_HUE_NEUTRAL, 0, 3600)
-    s['hue_max']        = MySetting(s, _DEFAULT_HUE_MAX, 0, 1800)
-    s['steering_gain']  = MySetting(s, _DEFAULT_STEERING_GAIN, -100, 100)
+    s['mid_hue']        = MySetting(s, _DEFAULT_MID_HUE, 0, 360)
+    s['max_hue']        = MySetting(s, _DEFAULT_MAX_HUE, 0, 180)
+    s['line_gain']      = MySetting(s, _DEFAULT_STEERING_GAIN, -100, 100)
     s['pid_kp']         = MySetting(s, _FOLLOWER_PID_KP_DEFAULT, 0, 65536)
     s['pid_ki']         = MySetting(s, _FOLLOWER_PID_KI_DEFAULT, 0, 65535)
     s['pid_kd']         = MySetting(s, _FOLLOWER_PID_KD_DEFAULT, 0, 65535)
@@ -109,7 +111,7 @@ class LineFollowMgr:
                  "line_power", "pid_integral", "pid_previous_error",
                  "kp", "ki", "kd", "max_pwr", "integral_limit", "motor_output",
                  "_last_colour", "_last_colour_hue", "_last_colour_name", "_colour_hexdrive",
-                 "_hue_neutral", "_hue_max", "_new_sample", "_refresh_time", "_refresh_interval", "_signed_steering_gain")
+                 "_mid_hue", "_max_hue", "_new_sample", "_refresh_time", "_refresh_interval", "_signed_steering_gain")
 
     def __init__(self, app, logging: bool = False):
         self._app = app
@@ -130,8 +132,8 @@ class LineFollowMgr:
         self._last_colour: tuple[int, int, int] = (0, 0, 0)
         self._last_colour_name: str = "unknown"
         self._colour_hexdrive = None
-        self._hue_neutral: int = _DEFAULT_HUE_NEUTRAL
-        self._hue_max: int = _DEFAULT_HUE_MAX
+        self._mid_hue: int = _DEFAULT_MID_HUE
+        self._max_hue: int = _DEFAULT_MAX_HUE
         self._new_sample: bool = False
         self._refresh_time: int = 0
         self._refresh_interval: int = 200
@@ -204,9 +206,9 @@ class LineFollowMgr:
         self.kp = app.settings['pid_kp'].v
         self.ki = app.settings['pid_ki'].v
         self.kd = app.settings['pid_kd'].v
-        self._hue_neutral = app.settings['hue_neutral'].v if 'hue_neutral' in app.settings else _DEFAULT_HUE_NEUTRAL
-        self._signed_steering_gain = _STEERING_SCALE_FACTOR * (app.settings['steering_gain'].v if 'steering_gain' in app.settings else _DEFAULT_STEERING_GAIN)
-        self._hue_max = app.settings['hue_max'].v if 'hue_max' in app.settings else _DEFAULT_HUE_MAX
+        self._mid_hue = _HUE_SCALE_FACTOR * (app.settings['mid_hue'].v if 'mid_hue' in app.settings else _DEFAULT_MID_HUE)
+        self._signed_steering_gain = _STEERING_SCALE_FACTOR * (app.settings['line_gain'].v if 'line_gain' in app.settings else _DEFAULT_STEERING_GAIN)
+        self._max_hue = _HUE_SCALE_FACTOR * (app.settings['max_hue'].v if 'max_hue' in app.settings else _DEFAULT_MAX_HUE)
         self.max_pwr = POWER_SCALE_FACTOR * (app.settings['max_power'].v if 'max_power' in app.settings else DEFAULT_MAX_POWER)
         self.line_power = POWER_SCALE_FACTOR * (app.settings['line_power'].v if 'line_power' in app.settings else _DEFAULT_FOLLOWER_POWER)
         self.acceleration = ACCELERATION_SCALE_FACTOR * (app.settings['acceleration'].v if 'acceleration' in app.settings else DEFAULT_ACCELERATION)
@@ -248,35 +250,43 @@ class LineFollowMgr:
             self.pid_integral = 0
             self.pid_previous_error = 0
             # persist any changes to the line follower settings before returning to the menu
-            app.settings['hue_neutral'].persist()
-            app.settings['steering_gain'].persist()
+            app.settings['mid_hue'].persist()
+            app.settings['line_gain'].persist()
             app.return_to_menu()
             return True
         elif app.button_states.get(BUTTON_TYPES["RIGHT"]): # Left/Right provide a shortcut to adjust the neutral hue for line following, without having to go into the settings menu.
             app.button_states.clear()
-            app.settings['hue_neutral'].v = app.settings['hue_neutral'].inc(app.settings['hue_neutral'].v, l=1)
-            self._hue_neutral = app.settings['hue_neutral'].v
+            # wrap at 360 to 0
+            if app.settings['mid_hue'].v >= 359:
+                app.settings['mid_hue'].v = 0
+            else:
+                app.settings['mid_hue'].v = app.settings['mid_hue'].inc(app.settings['mid_hue'].v)
+            self._mid_hue = _HUE_SCALE_FACTOR * app.settings['mid_hue'].v
             app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["LEFT"]):
             app.button_states.clear()
-            app.settings['hue_neutral'].v = app.settings['hue_neutral'].dec(app.settings['hue_neutral'].v, l=1)
-            self._hue_neutral = app.settings['hue_neutral'].v
+            # wrap at 0 to 360
+            if app.settings['mid_hue'].v < 1:
+                app.settings['mid_hue'].v = 359
+            else:
+                app.settings['mid_hue'].v = app.settings['mid_hue'].dec(app.settings['mid_hue'].v)
+            self._mid_hue = _HUE_SCALE_FACTOR * app.settings['mid_hue'].v
             app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["DOWN"]): # Up/Down provide a shortcut to adjust the steering gain for line following, without having to go into the settings menu.
             app.button_states.clear()
-            app.settings['steering_gain'].v = app.settings['steering_gain'].dec(app.settings['steering_gain'].v)
+            app.settings['line_gain'].v = app.settings['line_gain'].dec(app.settings['line_gain'].v)
             # we need to skip 0 so that the steering gain is never 0, otherwise the robot will not steer at all.
-            if app.settings['steering_gain'].v == 0:
-                app.settings['steering_gain'].v = -1
-            self._signed_steering_gain = app.settings['steering_gain'].v
+            if app.settings['line_gain'].v == 0:
+                app.settings['line_gain'].v = -1
+            self._signed_steering_gain = _STEERING_SCALE_FACTOR * app.settings['line_gain'].v
             app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["UP"]):
             app.button_states.clear()
-            app.settings['steering_gain'].v = app.settings['steering_gain'].inc(app.settings['steering_gain'].v)
+            app.settings['line_gain'].v = app.settings['line_gain'].inc(app.settings['line_gain'].v)
             # we need to skip 0 so that the steering gain is never 0, otherwise the robot will not steer at all.
-            if app.settings['steering_gain'].v == 0:
-                app.settings['steering_gain'].v = 1
-            self._signed_steering_gain = app.settings['steering_gain'].v
+            if app.settings['line_gain'].v == 0:
+                app.settings['line_gain'].v = 1
+            self._signed_steering_gain = _STEERING_SCALE_FACTOR * app.settings['line_gain'].v
             app.refresh = True
         return True
 
@@ -303,22 +313,22 @@ class LineFollowMgr:
             self._new_sample = True
 
             if self._last_colour_name not in ("White", "Grey", "Black"):
-                hue_difference_from_neutral = _signed_hue_delta(self._last_colour_hue, self._hue_neutral)
+                hue_difference_from_mid = _signed_hue_delta(self._last_colour_hue, self._mid_hue)
 
                 if self.follower_mode == _FOLLOWER_MODE_BINARY:
                     # Binary mode: if the hue is within the neutral +/- max range, go straight; otherwise turn left or right.
                     # NOT TESTED – this is a simple example of a non-PID line follower, but it is not as effective as the differential mode.
-                    if abs(hue_difference_from_neutral) < self._hue_max:
+                    if abs(hue_difference_from_mid) < self._max_hue:
                         output = (self.line_power, self.line_power)
-                    elif hue_difference_from_neutral > 0:
+                    elif hue_difference_from_mid > 0:
                         output = (self.line_power // 2, self.line_power)
                     else:
                         output = (self.line_power, self.line_power // 2)
                 elif self.follower_mode == _FOLLOWER_MODE_DIFFERENTIAL:
                     # Use circular hue distance so values near 0/3600 wrap correctly.
                     # need setting to flip the sign of the steering input to reverse the direction of the turn if needed
-                    if abs(hue_difference_from_neutral) < self._hue_max:
-                        steering_input = self._signed_steering_gain * hue_difference_from_neutral
+                    if abs(hue_difference_from_mid) < self._max_hue:
+                        steering_input = self._signed_steering_gain * hue_difference_from_mid
                         output = self.compute_differential_output(steering_input)
                     else:
                         output = (0, 0)
@@ -326,6 +336,7 @@ class LineFollowMgr:
                     output = (0, 0)
             else:
                 # Stop if the colour is white, grey, or black (i.e. no line detected)
+                self._last_colour_hue = _HUE_COLOUR_UNKNOWN
                 output = (0, 0)
             # limit rate of change of motor output to maximum acceleration
             max_delta = self.acceleration # maximum change in motor output per update
@@ -383,55 +394,72 @@ class LineFollowMgr:
     def draw(self, ctx) -> bool:
         """Render Line Follower UI.  Returns True if handled."""
 
-        # draw a box to show the deviation from neutral hue:
-        # outer box shows the maximum hue deviation possible, inner box shows the maxiimum hue deviation used, and a line shows the current deviation position
-        ctx.rgb(0.5,0.5,0.5).rectangle(-100, (-label_font_size+8)//2, 200, label_font_size - 8).fill()
-        #ctx.rgb(1,0,1).rectangle(-max_deviation_x, -label_font_size//2 + 4, 2 * max_deviation_x, label_font_size - 8).fill()
+        # ================================================
+        # draw a box to show the deviation from mid hue:
+        # ================================================
+        half_height = label_font_size
+        half_width = 100
 
-        # draw 'rainbow' like bands to show the hue ranges for the different colours between the minimum and maximum hue deviation, with the neutral hue in the centre
-        width = 4
-        half_height = label_font_size // 2
+        # outer box shows the maximum hue deviation possible, inner box shows the maximum hue deviation used, and a line shows the current deviation position
+        ctx.rgb(0.5,0.5,0.5).rectangle(-half_width, -half_height, 2 * half_width, label_font_size * 2).fill()
+
+        # 'rainbow' like bands to show the hue ranges for the different colours between the minimum and maximum hue deviation, with the neutral hue in the centre
+        width = 2
         ctx.line_width = width
-        max_deviation_x = (100 * self._hue_max) // 1800
+        max_deviation_x = (half_width * self._max_hue) // (180 * _HUE_SCALE_FACTOR)
         # only need to draw lines every line_width pixels, so we can skip some to reduce the number of lines drawn
         for x in range(-max_deviation_x, max_deviation_x + 1, width):
             pixel_x = x + width // 2
-            hue_offset = (x * 1800) // 100
+            hue_offset = (x * 180 * _HUE_SCALE_FACTOR) // half_width
             if self._signed_steering_gain < 0:
                 # reverse the hue direction if the steering gain is negative
                 hue_offset = -hue_offset
-            hue = (self._hue_neutral + hue_offset) % _HUE_CIRCLE
+            hue = (self._mid_hue + hue_offset) % _HUE_CIRCLE
             ctx.rgb(*hue_to_rgb(hue)).move_to(pixel_x, -half_height).line_to(pixel_x, half_height).stroke()
 
+        # if we have a valid colour reading, draw the current deviation line and the hue value
         if self._last_colour is not None:
-            ctx.rgb(1,1,1).move_to(-ctx.text_width("Hue")//2, -(3 * label_font_size)//2 ).text("Hue")
+            # 'mid XXX° hue' label in the middle of the box, with the hue value in the colour of the mid hue
+            hue_y = -(3 * label_font_size)//2
+            ctx.font_size = small_font_size
+            mid_rgb = hue_to_rgb(self._mid_hue)
+            ctx.rgb(*mid_rgb)
+            ctx.move_to(-80, hue_y).text("Mid")
+            ctx.move_to( 50, hue_y).text("Hue")
 
-            neutral_hue_text = f"{self._hue_neutral//10}°"
-            ctx.rgb(1, 1, 0).move_to(-ctx.text_width(neutral_hue_text)//2, -label_font_size//2).text(neutral_hue_text)
+            # draw the mid hue value in the colour of the mid hue, centred in the box
+            ctx.font_size = label_font_size
+            mid_hue_text = f"{self._mid_hue // _HUE_SCALE_FACTOR}°"
+            mid_rgb = hue_to_rgb(self._mid_hue)
+            ctx.rgb(*mid_rgb).move_to(-ctx.text_width(mid_hue_text)//2, hue_y).text(mid_hue_text)
 
-            #ctx.move_to(-80,  2 * label_font_size).text(f"Hue:{self._last_colour_hue//10}.{self._last_colour_hue%10}°")
-            display_rgb = self._app.sensor_test_mgr.colour_card_rgb(self._last_colour_name) if self._app.sensor_test_mgr is not None else (0.5, 0.5, 0.5)
-            ctx.rgb(*display_rgb).move_to(-ctx.text_width(f"{self._last_colour_name}")//2, 2 * label_font_size).text(f"{self._last_colour_name}")
+            # You can see the current colour in the outer ring - so no need to duplicate with this...
+            # 'last colour' label in the middle of the box, with the colour name in the colour of the last detected hue
+            #ctx.font_size = small_font_size
+            #display_rgb = self._app.sensor_test_mgr.colour_card_rgb(self._last_colour_name) if self._app.sensor_test_mgr is not None else (0.5, 0.5, 0.5)
+            #ctx.rgb(*display_rgb).move_to(-ctx.text_width(f"{self._last_colour_name}")//2, 2 * label_font_size).text(f"{self._last_colour_name}")
 
-            # Steering Gain
-            steering_gain_text = f"Gain: {self._signed_steering_gain}"
-            ctx.rgb(1, 1, 0).move_to(-ctx.text_width(steering_gain_text)//2, 3 * label_font_size).text(steering_gain_text)
+            # Steering Gain 'Gain: XXX' label in yellow, centred below the box
+            steering_gain_text = f"Gain: {self._signed_steering_gain // _STEERING_SCALE_FACTOR}"
+            ctx.rgb(1, 1, 0).move_to(-ctx.text_width(steering_gain_text)//2, 2 * label_font_size).text(steering_gain_text)
 
-            deviation = _signed_hue_delta(self._last_colour_hue, self._hue_neutral)
-            deviation_x = (100 * deviation) // 1800
-            if self._signed_steering_gain < 0:
-                # reverse the deviation direction if the steering gain is negative
-                deviation_x = -deviation_x
+            if self._last_colour_hue != _HUE_COLOUR_UNKNOWN:
+                # If the last colour was sufficiently saturated to have a hue (hue is known) then draw a line to show the current deviation from the mid hue, in white.
+                deviation = _signed_hue_delta(self._last_colour_hue, self._mid_hue)
+                deviation_x = (half_width * deviation) // (180 * _HUE_SCALE_FACTOR)
+                if self._signed_steering_gain < 0:
+                    # reverse the deviation direction if the steering gain is negative
+                    deviation_x = -deviation_x
 
-            # current deviation line in white
-            ctx.line_width = 4
-            ctx.rgb(1,1,1).move_to(deviation_x, -half_height).line_to(deviation_x, half_height).stroke()
+                # current deviation line in white
+                ctx.line_width = 4
+                ctx.rgb(1,1,1).move_to(deviation_x, -half_height).line_to(deviation_x, half_height).stroke()
 
         # tick mark for the centre in black
         ctx.line_width = 2
         ctx.rgb(0,0,0).move_to(0, -half_height).line_to(0, 0).stroke()
 
-        button_labels(ctx, cancel_label="Cancel", up_label="+gain", down_label="-gain", left_label="\u25C0", right_label="\u25B6")
+        button_labels(ctx, cancel_label="Cancel", up_label="+gain", down_label="-gain", left_label="\u25C0Hue", right_label="Hue\u25B6")
 
         return True
 
