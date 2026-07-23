@@ -1,8 +1,8 @@
 # Pylint formatting policy used across the project.
-# Set to 200 to match existing code style and reduce noisy line wrapping.
+# Set to 500 to match existing code style and reduce noisy line wrapping.
 [tool.pylint.format]
-max-line-length = 200
-max-module-lines = 2000
+max-line-length = 500
+max-module-lines = 3000
 
 # General pylint behavior for this repository.
 [tool.pylint.master]
@@ -33,6 +33,7 @@ ignored-modules = [
     "display",
     "imu",
     "egpio",
+    "bluetooth",
 ]
 disable = [
     "import-outside-toplevel",  # Allow imports inside functions for lazy imports and to avoid circular dependencies.
@@ -50,6 +51,7 @@ generated-members = [
     "asyncio.sleep_ms",
     "time.ticks_us",
     "time.sleep_us",
+    "time.sleep",
 ]
 
 [tool.pytest.ini_options]
