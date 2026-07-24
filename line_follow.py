@@ -364,9 +364,27 @@ class LineFollowMgr:
             self._last_colour = _raw
             self._new_sample = True
 
-            if self._last_colour_name not in ("White", "Grey", "Black"):
+            if self._last_colour_name is "Black":
+                # Stop Immediately if the colour is black
+                if self._logging:
+                    print("B:LF:Black detected, auto stop")
+                self._last_colour_hue = _HUE_COLOUR_UNKNOWN
+                self._enable_movement = False
+                self._time_since_line_detected = _MAX_TIME_WITHOUT_LINE
+                output = (0, 0)
+                self._app.performance_mode = False  # stop performance mode if we have lost the line for a while
+            elif self._last_colour_name in ("White", "Grey"):
+                # Allow a short period to pick up the line again if the colour is white or grey (i.e. no line detected)
+                self._last_colour_hue = _HUE_COLOUR_UNKNOWN
+                self._time_since_line_detected += delta
+                if self._time_since_line_detected < _MAX_TIME_WITHOUT_LINE:
+                    output = self.motor_output
+                else:
+                    self._time_since_line_detected = _MAX_TIME_WITHOUT_LINE  # clamp to max so we don't overflow
+                    output = (0, 0)
+                    self._app.performance_mode = False  # stop performance mode if we have lost the line for a while
+            else:
                 hue_difference_from_mid = _signed_hue_delta(self._last_colour_hue, self._mid_hue)
-
                 if self.follower_mode == _FOLLOWER_MODE_BINARY:
                     # place holder for another algorithm that uses a binary on/off approach to steering, rather than a PID controller.
                     output = (0, 0)
@@ -393,18 +411,10 @@ class LineFollowMgr:
                             # as we are not moving we don't need to get updates as fast.
                     print(f"B:LF:hue_diff={hue_difference_from_mid}, Output={output}")
                 else:
+                    # Unknown follower mode, so stop the motors
                     output = (0, 0)
-            else:
-                # Stop if the colour is white, grey, or black (i.e. no line detected)
-                self._last_colour_hue = _HUE_COLOUR_UNKNOWN
-                # continue with last output for a limited period of time to allow the robot to continue on its path, then stop if no line is detected for a while
-                self._time_since_line_detected += delta
-                if self._time_since_line_detected < _MAX_TIME_WITHOUT_LINE:
-                    output = self.motor_output
-                else:
-                    output = (0, 0)
-                    self._time_since_line_detected = _MAX_TIME_WITHOUT_LINE  # clamp to max so we don't overflow
-                    self._app.performance_mode = False  # stop performance mode if we have lost the line for a while
+                    self._app.performance_mode = False  # disable performance mode if we are not actively following the line
+
             # limit rate of change of motor output to maximum acceleration
             max_delta = self.acceleration # maximum change in motor output per update
             output = (self.motor_output[0] + _clamp(output[0] - self.motor_output[0], -max_delta, max_delta),
@@ -451,7 +461,7 @@ class LineFollowMgr:
             line_power = self.line_power * ((self._max_hue + (self._max_hue//4)) - abs_error) // self._max_hue
         else:
             line_power = self.line_power
-            
+
         # Combine correction with base forward power to get output for each motor & limit output to max power
         max_power = self.max_pwr
         output = (_clamp(line_power + correction, -max_power, max_power), _clamp(line_power - correction, -max_power, max_power))
