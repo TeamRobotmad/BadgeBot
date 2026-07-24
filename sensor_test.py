@@ -309,7 +309,7 @@ class SensorTestMgr:
             self._update_reading(delta)
         # diagnostics if the sub-state changes
         if self._sub_state != self._last_sub_state:
-            if self.logging and self._last_sub_state is not None:
+            if self._logging and self._last_sub_state is not None:
                 print(f"B:Sub-state changed from {self._last_sub_state} to {self._sub_state}")
             self._last_sub_state = self._sub_state
 
@@ -331,13 +331,13 @@ class SensorTestMgr:
         if self._sensor_type == _SENSOR_RANGE:
             range_sensor = getattr(self._hexdrive_app, "range_sensor", None)
             if range_sensor is None:
-                if self.logging:
+                if self._logging:
                     print("B:Range sensor not available on this HexDrive.")
         elif self._sensor_type is _SENSOR_COLOUR:
             self._test_card: str = _COLOUR_TEST_CARDS[0] # default to black test card
             colour_sensor = getattr(self._hexdrive_app, "colour_sensor", None)
             if colour_sensor is None:
-                if self.logging:
+                if self._logging:
                     print("B:Colour sensor not available on this HexDrive.")
             elif not self.apply_colour_calibration(self._hexdrive_app):
                 # Colour sensor needs calibration, so prompt the user to perform calibration
@@ -373,7 +373,7 @@ class SensorTestMgr:
                     # Check if this HexDrive App has any sensors attached
                     try:
                         if hexdrive_app.capabilities & (hexdrive_app.CAPABILITY_RANGE | hexdrive_app.CAPABILITY_COLOUR):
-                            if self.logging:
+                            if self._logging:
                                 print(f"B: HexDrive App on port {self._port_selected} has sensors: {hex(hexdrive_app.capabilities & 0xFFFF)}")
                             app.notification = Notification("Selected", port=self._port_selected)
                             self._hexdrive_app = hexdrive_app
@@ -388,7 +388,7 @@ class SensorTestMgr:
                 app.notification = Notification("No Sensors", port=self._port_selected)
         elif app.button_states.get(BUTTON_TYPES["CANCEL"]):
             app.button_states.clear()
-            if self.logging:
+            if self._logging:
                 print("Exiting Sensor Test")
             self._disable_sensors()
             self._hexdrive_app = None
@@ -469,36 +469,36 @@ class SensorTestMgr:
         or False if the sensor still needs the user to perform calibration."""
         colour_sensor = getattr(hexdrive_app, "colour_sensor", None) if hexdrive_app is not None else None
         if colour_sensor is None:
-            if self.logging:
+            if self._logging:
                 print("B:Colour sensor not available on this HexDrive.")
             return False
         sensor_white_gains = getattr(colour_sensor, "white_gains", None)
         if sensor_white_gains is None:
-            if self.logging:
+            if self._logging:
                 print("B:Colour sensor does not have a 'white_gains' attribute.")
             return True  # sensor does not expose gains; nothing to calibrate
         calibrated = getattr(colour_sensor, "calibrated", None)
         if calibrated is None:
-            if self.logging:
+            if self._logging:
                 print("B:Colour sensor does not have a 'calibrated' attribute.")
             return True
         if calibrated:
-            if self.logging:
+            if self._logging:
                 print("B:Colour sensor already calibrated.")
             return True
         settings_white_gains = self._load_colour_calibration("gain")
         if settings_white_gains is not None:
             colour_sensor.white_gains = settings_white_gains
-            if self.logging:
+            if self._logging:
                 print(f"B:Loaded white gains from settings: {settings_white_gains}")
             settings_black_reference = self._load_colour_calibration("black")
             if settings_black_reference is not None:
                 colour_sensor.black_reference = settings_black_reference
-                if self.logging:
+                if self._logging:
                     print(f"B:Loaded black reference from settings: {settings_black_reference}")
-            elif self.logging:
+            elif self._logging:
                 print("B:Black reference not found in settings.")
-        elif self.logging:
+        elif self._logging:
             print("B:White gains not found in settings.")
             return False  # sensor needs calibration
         return bool(getattr(colour_sensor, "calibrated", True))
@@ -572,7 +572,7 @@ class SensorTestMgr:
             if colour_sensor is not None:
                 calibrated = getattr(colour_sensor, "calibrated", None)
                 if calibrated is not None:
-                    if self.logging:
+                    if self._logging:
                         print("B:Colour sensor has a 'calibrated' attribute.")
                     self._page_count = 4
         if self._page_selected >= self._page_count:
@@ -818,7 +818,6 @@ class SensorTestMgr:
 
     def _draw_reading(self, ctx):
         up_label = down_label = confirm_label = ""
-        #ctx.font = "Arimo Regular" - the font doesn't appear to change
         lines = []
         colours = []
         if self._sensor_type is _SENSOR_COLOUR:
@@ -970,7 +969,7 @@ class SensorTestMgr:
         self._range_sensor_stats.new_sample()
         if self._sensor_type is _SENSOR_RANGE:
             self._new_sample = True
-        elif self.logging:
+        elif self._logging:
             print(f"B:Received range event for {self._sensor_type}")
 
 
@@ -981,7 +980,7 @@ class SensorTestMgr:
         self._colour_sensor_stats.new_sample()
         if self._sensor_type is _SENSOR_COLOUR:
             self._new_sample = True
-        elif self.logging:
+        elif self._logging:
             print(f"B:Received colour event for {self._sensor_type}")
 
 

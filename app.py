@@ -40,7 +40,7 @@ from .bluetooth_mgr import bluetooth, RobotBLE, ble_process_command, enable_ble_
 from .utils import draw_logo_animated, parse_version
 
 HEXDRIVE_APP_VERSION = 6
-HEXDRIVE2_APP_VERSION = 2
+HEXDRIVE2_APP_VERSION = 3
 
 SETTINGS_NAME_PREFIX = "badgebot"  # Prefix for settings keys in EEPROM
 APP_VERSION = "2.7" # BadgeBot App Version Number
@@ -238,6 +238,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         "_state_draw_dispatch",
         "_state_background_dispatch",
         "countdown_value",
+        "_performance_mode",
         "_ble",
         "_ble_controller",
     )
@@ -263,7 +264,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self._ring_colour: tuple[float, float, float] | None = None  # (r, g, b) each 0.0-1.0 while a ring is shown, or None for no ring
         self.rpm: int = 5                    # logo rotation speed in RPM
         self.animation_counter: int = 0
-        self.pattern_status: bool = True     # True = Pattern Enabled, False = Pattern Disabled
+        self.pattern_status: bool = True     # Badge Controlled LED pattern: True = Pattern Enabled, False = Pattern Disabled
         self.qr_code = _QR_CODE
         self.app_version: str = APP_VERSION
         # strings shown on the Logo screen
@@ -405,9 +406,10 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self._servo_test_mgr   = ServoTestMgr(self, logging=self.logging)   if ServoTestMgr is not None else None
         self._settings_mgr     = SettingsMgr(self, logging=self.logging)    if SettingsMgr is not None else None
         self._line_follow_mgr  = LineFollowMgr(self, logging=self.logging)  if LineFollowMgr is not None else None
-        self._autotune_mgr     = None # AutotuneMgr(self, self._line_follow_mgr, logging=self.logging) if AutotuneMgr is not None else None
         self._sensor_test_mgr  = SensorTestMgr(self, logging=self.logging)  if SensorTestMgr is not None else None
+        # Auto Tune and Auto Drive are not available.
         self._autodrive_mgr    = None # AutoDriveMgr(self, logging=self.logging)   if AutoDriveMgr is not None else None
+        self._autotune_mgr     = None # AutotuneMgr(self, self._line_follow_mgr, logging=self.logging) if AutotuneMgr is not None else None
 
         # State -> manager dispatch tables (only include managers that exist)
         self._state_update_dispatch = {}
@@ -417,22 +419,26 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self._register_state_functions(STATE_HEXPANSION, self._hexpansion_mgr)
         self._register_state_functions(STATE_MOTOR_MOVES, self._motor_moves_mgr)
         self._register_state_functions(STATE_FOLLOWER, self._line_follow_mgr)
-        #self._register_state_functions(STATE_AUTOTUNE, self._autotune_mgr)
+        self._register_state_functions(STATE_AUTOTUNE, self._autotune_mgr)
         self._register_state_functions(STATE_SERVO, self._servo_test_mgr)
         self._register_state_functions(STATE_SETTINGS, self._settings_mgr)
         self._register_state_functions(STATE_SENSOR, self._sensor_test_mgr)
-        #self._register_state_functions(STATE_AUTODRIVE, self._autodrive_mgr)
+        self._register_state_functions(STATE_AUTODRIVE, self._autodrive_mgr)
 
         # Countdown timer value
         self.countdown_value: int = 0
+
+        # Performance mode flag - when True we will try to run the app as fast as possible
+        self._performance_mode: bool = False
 
         # Hexpansion event handlers registered directly by hexpansion_mgr
         if self._hexpansion_mgr is not None:
             self._hexpansion_mgr.register_events()
 
         # Event handlers for gaining and losing focus
-        eventbus.on_async(RequestForegroundPushEvent, self._gain_focus, self)
-        eventbus.on_async(RequestForegroundPopEvent, self._lose_focus, self)
+        eventbus.on_async(RequestForegroundPushEvent, self._gain_focus,      self)
+        eventbus.on_async(RequestForegroundPopEvent,  self._lose_focus,      self)
+        eventbus.on_async(RequestStopAppEvent,        self._handle_stop_app, self)
 
         # We start with focus on launch, without an event emmited
         # This version is compatible with the simulator
@@ -522,6 +528,16 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             return self.settings['ble_logging'].v
         return False
 
+    @property
+    def performance_mode(self):
+        """Convenience property to access performance_mode setting."""
+        return self._performance_mode
+
+    @performance_mode.setter
+    def performance_mode(self, value: bool):
+        """Convenience property to set performance_mode setting."""
+        self._performance_mode = value
+
 
     @property
     def front_face(self):
@@ -539,12 +555,30 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
     ### ASYNC EVENT HANDLERS ###
 
+    async def _handle_stop_app(self, event: RequestStopAppEvent):
+        """ Handle the RequestStopAppEvent so that we can release resources """
+        if event.app == self:
+            if self.logging:
+                print("B:BadgeBot received RequestStopAppEvent, releasing resources")
+            if self.pattern_status:
+                eventbus.emit(PatternEnable())
+                self.pattern_status = True
+            if self._hexpansion_mgr is not None:
+                self._hexpansion_mgr.unregister_events()
+            if self.scroll_mode_enabled:
+                eventbus.remove(ButtonUpEvent, self._handle_button_up, self)
+            eventbus.remove(RequestForegroundPushEvent, self._gain_focus, self)
+            eventbus.remove(RequestForegroundPopEvent, self._lose_focus, self)
+            eventbus.remove(RequestStopAppEvent, self._handle_stop_app, self)
+
+
     async def _gain_focus(self, event: RequestForegroundPushEvent):
         if event.app is self:
             if self.logging:
                 print(f"B:BadgeBot gained focus in state {self.current_state}")
             if self.current_state in _LED_CONTROL_STATES:
                 eventbus.emit(PatternDisable())
+                self.pattern_status = False
             if self.scroll_mode_enabled:
                 eventbus.on_async(ButtonUpEvent, self._handle_button_up, self)
 
@@ -553,8 +587,9 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if event.app is self:
             if self.logging:
                 print(f"B:BadgeBot lost focus from state {self.current_state}")
-            eventbus.emit(PatternEnable())
-            self.pattern_status = True
+            if not self.pattern_status:
+                eventbus.emit(PatternEnable())
+                self.pattern_status = True
             if self.scroll_mode_enabled:
                 eventbus.remove(ButtonUpEvent, self._handle_button_up, self)
 
@@ -637,6 +672,16 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
 
     @property
+    def enable_autotune(self):
+        """Whether the Autotune feature is enabled.  Requires two motors, the line-follow manager, and a colour sensor (detected and driven via the sensor test manager)."""
+        return (self.num_motors > 1
+                and self._line_follow_mgr is not None
+                and self._sensor_test_mgr is not None
+                and self._sensor_test_mgr.colour_sensor_present()
+                and self._autotune_mgr is not None)
+
+
+    @property
     def enable_sensor_test(self):
         """Whether the Sensor Test feature is enabled, based on whether we have detected sensor hardware and have the manager available."""
         #print(f"Checking if Sensor Test is enabled: sensor_test_mgr={'present' if self._sensor_test_mgr is not None else 'absent'}")
@@ -679,10 +724,12 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         """Update settings from EEPROM."""
         if self.logging:
             print("B:Updating settings from EEPROM")
-        for s in self.settings:
-            self.settings[s].v = settings.get(f"{SETTINGS_NAME_PREFIX}.{s}", self.settings[s].d)
+        for s, setting in self.settings.items():
+            setting.v = settings.get(f"{SETTINGS_NAME_PREFIX}.{s}", setting.d)
+            # check settings against min/max values and adjust if necessary - in case min/max values have changed since the setting was last saved
+            setting.clamp()
             if self.logging:
-                print(f"B:Setting {s} = {self.settings[s].v}")
+                print(f"B:Setting {s} = {setting.v}")
 
 
     def fast_settings_update(self):
@@ -973,15 +1020,17 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
            Pass an (r, g, b) tuple (each 0.0-1.0) to show a coloured ring, or None to stop showing the ring (the default).
            Setting a colour flags a ring refresh so the ring is rendered on the next draw regardless of whether a full display refresh is required."""
         self._ring_colour = colour
-        if colour is None:
-            # Full refresh needed to erase the previously drawn ring
-            self.refresh = True
-        else:
-            self._ring_refresh = True
+        self._ring_refresh = True
 
 
     def draw(self, ctx):
         """Main draw function called from the main loop. Handles drawing the current state, including any notifications."""
+
+        if self._performance_mode:
+            # drawing the screen takes a VERY long time - so when trying to run robot control algorithms as fast as possible we skip drawing the screen to avoid stalling the background updates
+            return
+
+        # diagnostics output for measuring draw time on a scope - pin 2 is high while draw() is running, low when it is finished
         diagnostics_output(2, 1)
 
         if self.current_state == STATE_MENU and self.menu is not None:
@@ -1215,7 +1264,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_MOTOR_MOVES])
             if not self.enable_line_follow and MAIN_MENU_ITEMS[MENU_ITEM_LINE_FOLLOWER] in menu_items:
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_LINE_FOLLOWER])
-            if not self.enable_line_follow and MAIN_MENU_ITEMS[MENU_ITEM_PID_AUTOTUNE] in menu_items:
+            if not self.enable_autotune and MAIN_MENU_ITEMS[MENU_ITEM_PID_AUTOTUNE] in menu_items:
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_PID_AUTOTUNE])
             if not self.enable_sensor_test and MAIN_MENU_ITEMS[MENU_ITEM_SENSOR_TEST] in menu_items:
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_SENSOR_TEST])
@@ -1317,10 +1366,10 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             self.current_state = STATE_LOGO
             self.refresh = True
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_EXIT]:       # Exit
-            if self._hexpansion_mgr is not None:
-                self._hexpansion_mgr.unregister_events()
-            eventbus.remove(RequestForegroundPushEvent, self._gain_focus, self)
-            eventbus.remove(RequestForegroundPopEvent, self._lose_focus, self)
+            #if self._hexpansion_mgr is not None:
+            #    self._hexpansion_mgr.unregister_events()
+            #eventbus.remove(RequestForegroundPushEvent, self._gain_focus, self)
+            #eventbus.remove(RequestForegroundPopEvent, self._lose_focus, self)
             eventbus.emit(RequestStopAppEvent(self))
 
 

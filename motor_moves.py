@@ -491,8 +491,9 @@ class MotorMovesMgr:
         if self.logging:
             print("Robot reset")
         if len(app.hexdrive_apps) > 0:
-            range_app = app.hexdrive_apps[0]
-            range_app.set_power(False)
+            hexdrive_app = app.hexdrive_apps[0]
+            hexdrive_app.set_motors((0, 0))
+            hexdrive_app.set_power(False)
 
     def reset_instructions(self):
         """Reset the instruction list and related state."""

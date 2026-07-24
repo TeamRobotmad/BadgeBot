@@ -338,29 +338,27 @@ class ServoTestMgr:
 
     def draw(self, ctx) -> bool:
         """Render Servo Tester UI.  Returns True if handled."""
-        app = self._app
-
         servo_count = self.available_servo_count
-        servo_text = ["S"] * (1 + servo_count)
-        servo_text_colours: list[tuple[float, float, float]] = [(0.4, 0.0, 0.0)] * (1 + servo_count)
-        servo_text[0] = "Servo Test"
-        servo_text_colours[0] = (1, 1, 0)
+        text_line = "Servo Test"
+        text_colour = (1, 1, 0)
+        ctx.rgb(*text_colour).move_to(-ctx.text_width(text_line)//2, (-3 * label_font_size)//2).text(text_line)
         for i in range(servo_count):
             if self.servo[i] is None or self.servo_mode[i] == ServoMode.OFF:
                 body_colour = (0.2, 0.2, 0.2)
                 bar_colour = (0.4, 0.4, 0.4)
+                text_colour = (0.4, 0.0, 0.0) if i != self.servo_selected else (1,0,0)
             elif self.servo_mode[i] == ServoMode.SCANNING:
                 body_colour = (0.1, 0.5, 0.1)
                 bar_colour = (0.1, 1.0, 0.1)
-                servo_text_colours[1 + i] = (0.4, 0.0, 0.4)
+                text_colour = (0.4, 0.0, 0.4) if i != self.servo_selected else (1,0,1)
             else:
                 body_colour = (0.1, 0.1, 0.5)
                 bar_colour = (0.1, 0.1, 1.0)
-                servo_text_colours[1 + i] = (0.4, 0.4, 0.0)
+                text_colour = (0.4, 0.4, 0.0) if i != self.servo_selected else (1,1,0)
 
             ctx.save()
-            ctx.translate(0, (i - (servo_count / 2) + 0.5) * label_font_size)
-            background_colour = (0.1, 0.1, 0.1) if i != self.servo_selected else (0.15, 0.15, 0.15)
+            ctx.translate(0, ((2*i + 1 - servo_count) * label_font_size)//2)
+            background_colour = (0.1, 0.1, 0.1) if i != self.servo_selected else (0.18, 0.18, 0.18)
             ctx.rgb(*background_colour).rectangle(-100, 1, 200, label_font_size - 2).fill()
             c = 100 * (self.servo_centre[i] - _SERVO_DEFAULT_CENTRE) / self.servo_range[i]
             servo_value = self.servo[i]
@@ -373,18 +371,15 @@ class ServoTestMgr:
                 elif x < (c - 4):
                     ctx.rectangle(x + 4, 3, c - x - 4, label_font_size - 6).fill()
             ctx.rgb(0, 0, 0).move_to(c, 0).line_to(c, label_font_size).stroke()
-            ctx.restore()
             if self.servo_mode[i] == ServoMode.SCANNING:
-                servo_text[i + 1] = f"{int(abs(self.servo_rate[i])):4}\u00B5s/s"
+                text_line = f"{int(abs(self.servo_rate[i])):4}\u00B5s/s"
             else:
-                servo_text[i + 1] = "Off" if (servo_value is None or self.servo_mode[i] == ServoMode.OFF) else f"{servo_value:+5}\u00B5s"
-        selected_colour = servo_text_colours[1 + self.servo_selected]
-        servo_text_colours[1 + self.servo_selected] = (
-            selected_colour[0] * 2.5,
-            selected_colour[1] * 2.5,
-            selected_colour[2] * 2.5,
-        )
-        app.draw_message(ctx, servo_text, servo_text_colours, label_font_size)
+                text_line = "Off" if (servo_value is None or self.servo_mode[i] == ServoMode.OFF) else f"{servo_value:+5}\u00B5s"
+
+            ctx.rgb(*text_colour).move_to(-ctx.text_width(text_line)//2, label_font_size - 6).text(text_line)
+
+            ctx.restore()
+
         if self.servo_mode[self.servo_selected] == ServoMode.SCANNING:
             button_labels(ctx, up_label="\u25B2", down_label="\u25BC", confirm_label="Mode", cancel_label="Back", left_label="Slower", right_label="Faster")
         elif self.servo_mode[self.servo_selected] == ServoMode.TRIM:
