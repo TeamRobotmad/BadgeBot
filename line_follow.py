@@ -19,8 +19,7 @@ from app_components.notification import Notification
 from app_components.tokens import label_font_size, small_font_size, button_labels
 import micropython
 
-from .app import MOTOR_PWM_FREQ
-from .motor_moves import DEFAULT_MAX_POWER, POWER_SCALE_FACTOR, DEFAULT_ACCELERATION, ACCELERATION_SCALE_FACTOR
+from .app import MOTOR_PWM_FREQ, MOTOR_POWER_SCALE_FACTOR, ACCELERATION_SCALE_FACTOR, DEFAULT_MAX_POWER, DEFAULT_ACCELERATION
 
 try:
     from micropython import const
@@ -52,9 +51,9 @@ _DEFAULT_FOLLOWER_PID_KD = const(200)
 _FOLLOWER_PID_SCALE_FACTOR = const(10)        # if you change the number of digits in this scale factor then update the draw formatting
 
 # Do not set this too high otherwise there is no scope for one wheel to be given more power than the other to steer. (max is 65536)
-_DEFAULT_FOLLOWER_POWER = const(10) # 20000 // POWER_SCALE_FACTOR   # NB can't wrap inside const()
-_MIN_LINE_POWER = const(2)          #  1000 // POWER_SCALE_FACTOR
-_MAX_LINE_POWER = const(127)        # 65536 // POWER_SCALE_FACTOR
+_DEFAULT_FOLLOWER_POWER = const(10) # 20000 // MOTOR_POWER_SCALE_FACTOR   # NB can't wrap inside const()
+_MIN_LINE_POWER = const(2)          #  1000 // MOTOR_POWER_SCALE_FACTOR
+_MAX_LINE_POWER = const(127)        # 65536 // MOTOR_POWER_SCALE_FACTOR
 
 # Line Follower Modes
 _FOLLOWER_MODE_DIFFERENTIAL = const(0)
@@ -145,7 +144,7 @@ class LineFollowMgr:
         self.kp: int = _DEFAULT_FOLLOWER_PID_KP
         self.ki: int = _DEFAULT_FOLLOWER_PID_KI
         self.kd: int = _DEFAULT_FOLLOWER_PID_KD
-        self.max_pwr: int = DEFAULT_MAX_POWER * POWER_SCALE_FACTOR
+        self.max_pwr: int = DEFAULT_MAX_POWER * MOTOR_POWER_SCALE_FACTOR
         self.integral_limit: int = 0
         self.motor_output = (0, 0)
         self._last_colour_hue: int = 0
@@ -200,7 +199,7 @@ class LineFollowMgr:
         # Load any persisted colour calibration, then enable the colour sensor for polling
         # (no events, no interrupts).
         if sensor_mgr is not None:
-            if not sensor_mgr.enable_colour_sensor(colour_hexdrive, events=False, interrupts=False):
+            if not sensor_mgr.enable_colour_sensor(colour_hexdrive, period=_LINE_SENSOR_BACKGROUND_UPDATE_PERIOD_MS, events=False, interrupts=False):
                 app.notification = Notification("Colour Sensor not available")
                 return False
             # Load any persisted colour calibration
@@ -233,8 +232,8 @@ class LineFollowMgr:
         self.kd = app.settings['pid_kd'].v
         self._mid_hue = _HUE_SCALE_FACTOR * (app.settings['mid_hue'].v if 'mid_hue' in app.settings else _DEFAULT_MID_HUE)
         self._max_hue = _HUE_SCALE_FACTOR * (app.settings['max_hue'].v if 'max_hue' in app.settings else _DEFAULT_MAX_HUE)
-        self.max_pwr = POWER_SCALE_FACTOR * (app.settings['max_power'].v if 'max_power' in app.settings else DEFAULT_MAX_POWER)
-        self.line_power = POWER_SCALE_FACTOR * (app.settings['line_power'].v if 'line_power' in app.settings else _DEFAULT_FOLLOWER_POWER)
+        self.max_pwr = MOTOR_POWER_SCALE_FACTOR * (app.settings['max_power'].v if 'max_power' in app.settings else DEFAULT_MAX_POWER)
+        self.line_power = MOTOR_POWER_SCALE_FACTOR * (app.settings['line_power'].v if 'line_power' in app.settings else _DEFAULT_FOLLOWER_POWER)
         self.acceleration = ACCELERATION_SCALE_FACTOR * (app.settings['acceleration'].v if 'acceleration' in app.settings else DEFAULT_ACCELERATION)
 
         if self.ki > 0:

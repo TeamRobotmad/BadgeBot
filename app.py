@@ -29,8 +29,6 @@ except ImportError:
     # on MicroPython; replicate that so module-level const() calls work.
     const = lambda x: x         #pylint: disable=unnecessary-lambda-assignment
 
-from .bluetooth_mgr import bluetooth, RobotBLE, ble_process_command, enable_ble_logging, disable_ble_logging, get_ble_motor_override
-
 # If you could use hard=True in setting up a Pin IRQ hander, which you can't as of BadgeOS V1.10, then it is recommended to
 # allocate the emergency exception buffer to prevent crashes due to OSError: Out of memory when an interrupt occurs and
 # there is no memory available to handle the exception.
@@ -80,9 +78,13 @@ _BRIGHTNESS = 1.0
 # Screen positioning constant for scroll mode display
 H_START = -63
 
-# Timings
+# Timings/Settings
 MOTOR_PWM_FREQ = const(20000)      # 20kHz is a good default for motors as it is above the audible range for most people and works with most motors and ESC
 MOTOR_POWER_SCALE_FACTOR = const(512)  # Settings store motor power / acceleration divided by this; multiply back to get 0-65535 PWM values
+ACCELERATION_SCALE_FACTOR = const(512)  # Settings store motor power / acceleration divided by this; multiply back to get 0-65535 PWM values
+DEFAULT_ACCELERATION   = const(10000) // ACCELERATION_SCALE_FACTOR  # user-friendly acceleration value per 10ms Tick
+DEFAULT_MAX_POWER      = const(55000) // MOTOR_POWER_SCALE_FACTOR   # exposed for use in other modules
+
 _LONG_PRESS_MS = const(750)        # Time for long button press to register, in ms
 _RUN_COUNTDOWN_MS = const(5000)    # Time after running program until drive starts, in ms
 _AUTO_REPEAT_MS = const(200)       # Time between auto-repeats, in ms
@@ -104,34 +106,37 @@ STATE_AUTOTUNE = const(8)        # PID Auto Tune
 STATE_SENSOR = const(9)          # Sensor Test
 STATE_AUTODRIVE = const(10)      # Autonomous Drive
 STATE_HEXPANSION = const(11)     # Hexpansion Management (sub-states managed by HexpansionMgr)
+STATE_BLUETOOTH = const(12)     # Bluetooth Control (sub-states managed by BluetoothMgr)
 
 # App states where user can minimise app (Menu, Message, Logo)
 MINIMISE_VALID_STATES = [STATE_MENU, STATE_MESSAGE, STATE_LOGO]
 
-# App states where BadgeBot directly controls the badge LEDs (Motor Moves, Countdown, Message, Logo, Line Follower, AutoTune)
+# App states where BadgeBot directly controls the badge LEDs (Motor Moves, Countdown, Message, Logo, Line Follower, AutoTune, AutoDrive, Sensor Test)
 _LED_CONTROL_STATES    = [STATE_MOTOR_MOVES, STATE_COUNTDOWN, STATE_MESSAGE, STATE_LOGO, STATE_FOLLOWER, STATE_AUTOTUNE, STATE_AUTODRIVE, STATE_SENSOR]
 
 #Misceallaneous Settings
-_LOGGING = False
-_BLE_LOGGING = False
+_DEFAULT_LOGGING = False
 _IS_SIMULATOR = sys.platform != "esp32"  # True when running in the simulator, not on real badge hardware
-_FWD_DIR_DEFAULT = const(0)
-_FRONT_FACE_DEFAULT = const(0)
-_DEFAULT_MOTOR_DEADBAND = const(500)  # Minimum motor power value below which we don't try to move the motor.
-_DEFAULT_MOTOR_MIN = const(35000)     # Minimum motor PWM value (0-65535) for each motor, below which the motor will not move.  This is used to compensate for differences in motors and gearboxes, so that both motors start moving at the same time when given the same power level.
+_DEFAULT_FWD_DIR = const(0)
+_DEFAULT_FRONT_FACE = const(5)        # Front Face is Slot 3 on a standard build BadgeBot
+_DEFAULT_MOTOR_DEADBAND = const(1)    # Minimum motor demand output value below which we don't try to move the motor. i.e. only if demand is above this do we apply the compensation below...
+_DEFAULT_MOTOR_MIN = const((64 * 65536) // (512 * 100)) # Minimum motor PWM value (0-65535) for each motor, below which the motor will not move.  This is used to compensate for differences in motors and gearboxes, so that both motors start moving at the same time when given the same power level.
+                                                # The figure of 64% of full power comes from measurement and analysis of 200 motors used for BadgeBot, which showed that 64% of full power was the minimum required to get 80% ofmotors moving reliably.
+                                                # this can be customised through settings for each motor.
 
 # Main Menu Items
-MAIN_MENU_ITEMS = ["Line Follower","Motor Moves", "Servo Test", "PID Auto Tune", "Sensor Test", "Auto Drive", "Hexpansions", "Settings", "About","Exit"]
-MENU_ITEM_LINE_FOLLOWER = const(0)
-MENU_ITEM_MOTOR_MOVES = const(1)
-MENU_ITEM_SERVO_TEST = const(2)
-MENU_ITEM_PID_AUTOTUNE = const(3)
-MENU_ITEM_SENSOR_TEST = const(4)
-MENU_ITEM_AUTO_DRIVE = const(5)
-MENU_ITEM_HEXPANSION = const(6)
-MENU_ITEM_SETTINGS = const(7)
-MENU_ITEM_ABOUT = const(8)
-MENU_ITEM_EXIT = const(9)
+MAIN_MENU_ITEMS = ["Bluetooth", "Line Follower","Motor Moves", "Servo Test", "PID Auto Tune", "Sensor Test", "Auto Drive", "Hexpansions", "Settings", "About","Exit"]
+MENU_ITEM_BLUETOOTH = const(0)
+MENU_ITEM_LINE_FOLLOWER = const(1)
+MENU_ITEM_MOTOR_MOVES = const(2)
+MENU_ITEM_SERVO_TEST = const(3)
+MENU_ITEM_PID_AUTOTUNE = const(4)
+MENU_ITEM_SENSOR_TEST = const(5)
+MENU_ITEM_AUTO_DRIVE = const(6)
+MENU_ITEM_HEXPANSION = const(7)
+MENU_ITEM_SETTINGS = const(8)
+MENU_ITEM_ABOUT = const(9)
+MENU_ITEM_EXIT = const(10)
 
 # Front face direction labels (0=BtnA corner between slots 6 & 1, each step = 30° CW)
 _FRONT_FACE_LABELS = (
@@ -142,7 +147,7 @@ _MOTOR_DIRECTION_LABELS = ("Normal", "Reverse")
 
 _FILE_DEST_LABELS = ("Badge FS", "Hex FS")
 
-_MIN_BADGEOS_VERSION = (2, 0, 0)     # v2.0.0 is required to be able to use the new hexpansion utilite
+_MIN_BADGEOS_VERSION = (2, 2, 0)     # v2.2.0 is required to be able to use the new hexpansion utilite
 
 
 # Import sub-modules after constants are defined so they can safely
@@ -167,20 +172,21 @@ def _try_import(module_name, *attr_names):
         print(f"Error importing {module_name} module ({e})")
     return nones
 
-HexpansionMgr, HexpansionType, _hexpansion_init_settings = _try_import('hexpansion_mgr', 'HexpansionMgr', 'HexpansionType', 'init_settings')
-SettingsMgr, MySetting                                    = _try_import('settings_mgr',  'SettingsMgr', 'MySetting')
+BluetoothMgr, _bluetooth_init_settings                    = _try_import('bluetooth_mgr', 'BluetoothMgr',  'init_settings')
+HexpansionMgr, HexpansionType, _hexpansion_init_settings  = _try_import('hexpansion_mgr','HexpansionMgr', 'HexpansionType', 'init_settings')
+SettingsMgr, MySetting                                    = _try_import('settings_mgr',  'SettingsMgr',   'MySetting')
 MotorMovesMgr, _motor_moves_init_settings                 = _try_import('motor_moves',   'MotorMovesMgr', 'init_settings')
-ServoTestMgr, _servo_test_init_settings                   = _try_import('servo_test',    'ServoTestMgr', 'init_settings')
+ServoTestMgr, _servo_test_init_settings                   = _try_import('servo_test',    'ServoTestMgr',  'init_settings')
 LineFollowMgr, _line_follow_init_settings                 = _try_import('line_follow',   'LineFollowMgr', 'init_settings')
-#(AutotuneMgr,)                                            = _try_import('autotune_mgr',  'AutotuneMgr')
+#(AutotuneMgr,)                                           = _try_import('autotune_mgr',  'AutotuneMgr')
 SensorTestMgr, _sensor_test_init_settings                 = _try_import('sensor_test',   'SensorTestMgr', 'init_settings')
-AutoDriveMgr, _autodrive_init_settings                    = _try_import('autodrive',     'AutoDriveMgr', 'init_settings')
-emit_diagnostics_output, set_diagnostics_output           = _try_import('diagnostics',   'output', 'set_output')
+AutoDriveMgr, _autodrive_init_settings                    = _try_import('autodrive',     'AutoDriveMgr',  'init_settings')
+emit_diagnostics_output, set_diagnostics_output           = _try_import('diagnostics',   'output',        'set_output')
 
 class BadgeBotApp(app.App):         # pylint: disable=no-member
     """Main application class for BadgeBot.  Manages overall state, user input, and delegates to functional area managers for specific features."""
     __slots__ = (
-        "_bluetooth_enabled", "_ble_override_active", "button_states", "last_press", "_auto_repeat_intervals",
+        "_ble_override_active", "button_states", "last_press", "_auto_repeat_intervals",
         "_auto_repeat", "_auto_repeat_count", "auto_repeat_level", "refresh", "_ring_refresh", "_ring_colour", "rpm",
         "animation_counter", "pattern_status", "qr_code", "app_version", "b_msg", "t_msg", "notification",
         "message",
@@ -203,6 +209,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         "_motor2_reversed",
         "_motor1_min",
         "_motor2_min",
+        "_max_pwr",
         "current_state",
         "previous_state",
         "update_period",
@@ -247,8 +254,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         super().__init__()
 
         print("B:BadgeBotApp: Initialising...")
-        self._bluetooth_enabled: bool = False
-        self._ble_override_active: bool = False
 
         # UI Button Controls
         self.button_states = Buttons(self)
@@ -294,8 +299,9 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self._motor_deadband: int = _DEFAULT_MOTOR_DEADBAND  # Minimum motor PWM value below which we don't try to move the motor.
         self._motor1_reversed: bool = False         # 0 or 1 to control direction of motor 1, set based on settings
         self._motor2_reversed: bool = False         # 0 or 1 to control direction of motor 2, set based on settings
-        self._motor1_min: int = _DEFAULT_MOTOR_MIN  # Minimum motor PWM value (0-65535) for motor 1, below which the motor will not move.  This is used to compensate for differences in motors and gearboxes, so that both motors start moving at the same time when given the same power level.
-        self._motor2_min: int = _DEFAULT_MOTOR_MIN  # Minimum motor PWM value (0-65535) for motor 2, below which the motor will not move.  This is used to compensate for differences in motors and gearboxes, so that both motors start moving at the same time when given the same power level.
+        self._motor1_min: int = _DEFAULT_MOTOR_MIN * MOTOR_POWER_SCALE_FACTOR # Minimum motor PWM value (0-65535) for motor 1, below which the motor will not move.  This is used to compensate for differences in motors and gearboxes, so that both motors start moving at the same time when given the same power level.
+        self._motor2_min: int = _DEFAULT_MOTOR_MIN * MOTOR_POWER_SCALE_FACTOR # Minimum motor PWM value (0-65535) for motor 2, below which the motor will not move.  This is used to compensate for differences in motors and gearboxes, so that both motors start moving at the same time when given the same power level.
+        self._max_pwr: int = 65535                  # Maximum motor PWM value (0-65535)
 
         # Overall app state (controls what is displayed and what user inputs are accepted)
         self.current_state = STATE_HEXPANSION
@@ -307,17 +313,16 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if MySetting is not None:
             # General settings
             self.settings['brightness']    = MySetting(self.settings, _BRIGHTNESS, 0.1, 1.0)
-            self.settings['logging']       = MySetting(self.settings, _LOGGING, False, True)
-            self.settings['path']          = MySetting(self.settings, 0, 0, len(_FILE_DEST_LABELS) - 1, labels=_FILE_DEST_LABELS)
-
-            self.settings['ble_logging']   = MySetting(self.settings, _BLE_LOGGING, False, True)
-            # Direction settings
-            self.settings['motor_deadband'] = MySetting(self.settings, _DEFAULT_MOTOR_DEADBAND, 0, 30000)
-            self.settings['motor1_dir']    = MySetting(self.settings, _FWD_DIR_DEFAULT, 0, 1, labels=_MOTOR_DIRECTION_LABELS)
-            self.settings['motor2_dir']    = MySetting(self.settings, _FWD_DIR_DEFAULT, 0, 1, labels=_MOTOR_DIRECTION_LABELS)
-            self.settings['motor1_min']    = MySetting(self.settings, _DEFAULT_MOTOR_MIN, 0, 50000)
-            self.settings['motor2_min']    = MySetting(self.settings, _DEFAULT_MOTOR_MIN, 0, 50000)
-            self.settings['front_face']    = MySetting(self.settings, _FRONT_FACE_DEFAULT, 0, 11, labels=_FRONT_FACE_LABELS)
+            self.settings['logging']       = MySetting(self.settings, _DEFAULT_LOGGING, False, True)
+            #self.settings['path']         = MySetting(self.settings, 0, 0, len(_FILE_DEST_LABELS) - 1, labels=_FILE_DEST_LABELS)
+            # Motor/Drive Direction settings
+            self.settings['max_power']     = MySetting(self.settings, DEFAULT_MAX_POWER, 0, 127)
+            self.settings['mtr_deadband'] = MySetting(self.settings, _DEFAULT_MOTOR_DEADBAND, 0, 127)
+            self.settings['mtr1_dir']    = MySetting(self.settings, _DEFAULT_FWD_DIR, 0, 1, labels=_MOTOR_DIRECTION_LABELS)
+            self.settings['mtr2_dir']    = MySetting(self.settings, _DEFAULT_FWD_DIR, 0, 1, labels=_MOTOR_DIRECTION_LABELS)
+            self.settings['mtr1_min']    = MySetting(self.settings, _DEFAULT_MOTOR_MIN, 0, 127)
+            self.settings['mtr2_min']    = MySetting(self.settings, _DEFAULT_MOTOR_MIN, 0, 127)
+            self.settings['front_face']    = MySetting(self.settings, _DEFAULT_FRONT_FACE, 0, 11, labels=_FRONT_FACE_LABELS)
 
             # Module-specific settings - only initialise modules which are NOT dependent on specific Hexpansion hardware here, as we want to be able to access settings in the HexpansionMgr before we have detected what hardware is present.  For Hexpansion-dependent modules, we will initialise their settings after we have scanned for hardware and know which modules we will be using.
             if _hexpansion_init_settings is not None:
@@ -401,6 +406,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.motor_controller = None
 
         # Functional area managers
+        self._bluetooth_mgr    = BluetoothMgr(self, logging=self.logging)   if BluetoothMgr is not None else None
         self._hexpansion_mgr   = HexpansionMgr(self, logging=self.logging)  if HexpansionMgr is not None else None
         self._motor_moves_mgr  = MotorMovesMgr(self, logging=self.logging)  if MotorMovesMgr is not None else None
         self._servo_test_mgr   = ServoTestMgr(self, logging=self.logging)   if ServoTestMgr is not None else None
@@ -416,6 +422,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self._state_draw_dispatch = {}
         self._state_background_dispatch = {}
 
+        self._register_state_functions(STATE_BLUETOOTH, self._bluetooth_mgr)
         self._register_state_functions(STATE_HEXPANSION, self._hexpansion_mgr)
         self._register_state_functions(STATE_MOTOR_MOVES, self._motor_moves_mgr)
         self._register_state_functions(STATE_FOLLOWER, self._line_follow_mgr)
@@ -431,6 +438,9 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         # Performance mode flag - when True we will try to run the app as fast as possible
         self._performance_mode: bool = False
 
+        # Bluetooth LE
+        self._ble_override_active: bool = False
+
         # Hexpansion event handlers registered directly by hexpansion_mgr
         if self._hexpansion_mgr is not None:
             self._hexpansion_mgr.register_events()
@@ -444,24 +454,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         # This version is compatible with the simulator
         asyncio.get_event_loop().create_task(self._gain_focus(RequestForegroundPushEvent(self)))
 
-        # BluetoothLE setup
-        if self._bluetooth_enabled and self._hexpansion_mgr is not None:
-            print("B: Initialising Bluetooth LE...")
-            self._ble = bluetooth.BLE()
-            # Make unique Bluetooth Name from HexDrive Unique ID, so that multiple BadgeBots can be used in the same area without confusion:
-            # Name is limited to 8 characters, so we use "BdgBot" & a two digit decimal number from the unique ID, which is a 32-bit number, so we take the last two digits of the unique ID modulo 100
-            name = "BdgBotXX"
-            uniqueid = self._hexpansion_mgr.get_active_hexdrive_unique_id()
-            if uniqueid is not None:
-                name = f"BdgBot{uniqueid % 100:02d}"
-                print("B: BluetoothLE Name:", name)
-            self._ble_controller = RobotBLE(self._ble, name=name)
-            # Register the command processor
-            self._ble_controller.on_write(ble_process_command)
 
-            # Apply BLE logging setting now that _ble_controller exists
-            if self.ble_logging:
-                enable_ble_logging(self._ble_controller)
 
         # Check what version of the Badge s/w we are running on
         ver: list[int | str] | None = None
@@ -522,13 +515,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
 
     @property
-    def ble_logging(self):
-        """Convenience property to access ble_logging setting."""
-        if 'ble_logging' in self.settings:
-            return self.settings['ble_logging'].v
-        return False
-
-    @property
     def performance_mode(self):
         """Convenience property to access performance_mode setting."""
         return self._performance_mode
@@ -544,12 +530,12 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         """Convenience property to access front_face setting representing the forward direction for movement."""
         if 'front_face' in self.settings:
             return self.settings['front_face'].v
-        return _FRONT_FACE_DEFAULT
+        return _DEFAULT_FRONT_FACE
 
 
     @property
     def sensor_test_mgr(self):
-        """Public access to the SensorTestMgr, used by AutoDriveMgr to share the sensor manager."""
+        """Public access to the SensorTestMgr, used by LineFollowMgr & AutoDriveMgr to share the sensor manager."""
         return self._sensor_test_mgr
 
 
@@ -626,24 +612,26 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         bg_fn = self._state_background_dispatch.get(self.current_state)
         output = bg_fn(delta) if bg_fn is not None else None
 
-        if len(self.hexdrive_apps) > 0:
+        if len(self.hexdrive_apps) > 0 and self._bluetooth_mgr:
             # BLE direction buttons override the state's motor output while held,
             # regardless of whether the current state produced any output.
-            max_pwr = self.settings['max_power'].v * MOTOR_POWER_SCALE_FACTOR if 'max_power' in self.settings else 49152
-            ble_override = get_ble_motor_override(max_pwr)
+            ble_override = self._bluetooth_mgr.motor_override(self._max_pwr)
             if ble_override is not None:
                 self._ble_override_active = True
                 output = ble_override
-            elif self._ble_override_active and output is None:
-                output = (0, 0)
-                self._ble_override_active = False
             else:
+                if self._ble_override_active and output is None:
+                    # ensure we stop the motors if we were previously overriding them with BLE and now there is no output from the current state
+                    output = (0, 0)
                 self._ble_override_active = False
+
             if output is not None:
                 if not self.hexdrive_apps[0].set_motors(self.apply_motor_calibration(output)):
                     if self.logging:
                         print("Failed to set motor outputs to HexDrive app")
 
+
+    # Helper properties to determine whether specific features are enabled based on detected hardware and available managers.
 
     @property
     def enable_motor_moves(self):
@@ -659,6 +647,12 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     def enable_servo_test(self):
         """Whether the Servo Test feature is enabled, based on whether we have detected servo hardware and have the manager available."""
         return self.num_servos > 0 and self._servo_test_mgr is not None
+
+
+    @property
+    def enable_bluetooth(self):
+        """Whether Bluetooth is enabled, based on whether we have BLE controller available and a hexpansion from which to get a unique id."""
+        return self._bluetooth_mgr is not None and self._hexpansion_mgr is not None
 
 
     @property
@@ -705,6 +699,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if MySetting is None:
             return  # Settings system not available, skip initialisation
         # Module-specific settings
+        if self.enable_bluetooth and _bluetooth_init_settings is not None:
+            _bluetooth_init_settings(self.settings, MySetting)
         if self.enable_motor_moves and _motor_moves_init_settings is not None:
             _motor_moves_init_settings(self.settings, MySetting)
         if self.enable_servo_test and _servo_test_init_settings is not None:
@@ -736,18 +732,12 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         """Update fast access settings from the main settings dictionary."""
         if self.logging:
             print("B:Updating fast access settings")
-        self._motor_deadband = self.settings['motor_deadband'].v
-        self._motor1_reversed: bool = self.settings['motor1_dir'].v != 0
-        self._motor2_reversed: bool = self.settings['motor2_dir'].v != 0
-        self._motor1_min = self.settings['motor1_min'].v
-        self._motor2_min = self.settings['motor2_min'].v
-
-        ble_ctrl = getattr(self, '_ble_controller', None)
-        if ble_ctrl is not None:
-            if self.ble_logging:
-                enable_ble_logging(ble_ctrl)
-            else:
-                disable_ble_logging()
+        self._motor_deadband: int = self.settings['mtr_deadband'].v * MOTOR_POWER_SCALE_FACTOR
+        self._motor1_reversed: bool = self.settings['mtr1_dir'].v != 0
+        self._motor2_reversed: bool = self.settings['mtr2_dir'].v != 0
+        self._motor1_min: int = self.settings['mtr1_min'].v * MOTOR_POWER_SCALE_FACTOR
+        self._motor2_min: int = self.settings['mtr2_min'].v * MOTOR_POWER_SCALE_FACTOR
+        self._max_pwr = self.settings['max_power'].v * MOTOR_POWER_SCALE_FACTOR
 
 
     def hexdiag_setup(self):
@@ -1258,6 +1248,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if menu_name == "main":
             # construct the main menu based on template
             menu_items = MAIN_MENU_ITEMS.copy()
+            if not self.enable_bluetooth and MAIN_MENU_ITEMS[MENU_ITEM_BLUETOOTH] in menu_items:
+                menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_BLUETOOTH])
             if not self.enable_servo_test and MAIN_MENU_ITEMS[MENU_ITEM_SERVO_TEST] in menu_items:
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_SERVO_TEST])
             if not self.enable_motor_moves and MAIN_MENU_ITEMS[MENU_ITEM_MOTOR_MOVES] in menu_items:
@@ -1300,7 +1292,19 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if self.logging:
             print(f"H:Main Menu {item} at index {idx} position {self.menu.position if self.menu else 'N/A'}")
         self._main_menu_position = self.menu.position if self.menu else 0
-        if   item == MAIN_MENU_ITEMS[MENU_ITEM_LINE_FOLLOWER]: # Line Follower
+        if item == MAIN_MENU_ITEMS[MENU_ITEM_BLUETOOTH]: # Bluetooth
+            if self._bluetooth_mgr is not None and self._hexpansion_mgr is not None:
+                self._bluetooth_mgr.logging = self.logging
+                # Make unique Bluetooth Name from HexDrive Unique ID, so that multiple BadgeBots can be used in the same area without confusion:
+                # Name is limited to 8 characters, so we use "BgBot" & a three digit decimal number from the unique ID, which is a 32-bit number, so we take the last three digits of the unique ID modulo 1000
+                uniqueid = self._hexpansion_mgr.get_active_hexdrive_unique_id()
+                if uniqueid is not None:
+                    name = f"B6t{uniqueid % 1000:03d}"
+                else:
+                    name = None
+                if self._bluetooth_mgr.start(name = name):
+                    self.current_state = STATE_BLUETOOTH
+        elif item == MAIN_MENU_ITEMS[MENU_ITEM_LINE_FOLLOWER]: # Line Follower
             # Check for required hardware and show message if not present, otherwise start the line follower manager and switch to follower state
             if self.num_motors == 0:
                 self.notification = Notification("No Motors")

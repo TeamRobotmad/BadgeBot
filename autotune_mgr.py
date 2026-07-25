@@ -25,7 +25,7 @@ from system.hexpansion.config import HexpansionConfig
 
 from .autotune import PIDAutoTuner, METHOD_ZIEGLER_NICHOLS
 from .line_follow import create_line_sensors
-from .app import (STATE_AUTOTUNE, STATE_COUNTDOWN, MOTOR_PWM_FREQ)
+from .app import (STATE_AUTOTUNE, STATE_COUNTDOWN, MOTOR_PWM_FREQ, MOTOR_POWER_SCALE_FACTOR)
 
 AUTOTUNER_UPDATE_PERIOD = 10  # ms between updates while tuning
 
@@ -116,8 +116,8 @@ class AutotuneMgr:
         Called when the countdown finishes (after the user pressed CONFIRM).
         """
         app = self._app
-        relay_amp = app.settings['max_power'].v // 4
-        base_power = -app.settings['max_power'].v // 2
+        relay_amp = (app.settings['max_power'].v * MOTOR_POWER_SCALE_FACTOR) // 4
+        base_power = -(app.settings['max_power'].v * MOTOR_POWER_SCALE_FACTOR) // 2
         self.autotuner = PIDAutoTuner(
             relay_amplitude=relay_amp,
             base_power=base_power,

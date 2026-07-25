@@ -504,10 +504,12 @@ class SensorTestMgr:
         return bool(getattr(colour_sensor, "calibrated", True))
 
 
-    def enable_colour_sensor(self, hexdrive_app, events: bool = False, interrupts: bool = False) -> bool:
+    def enable_colour_sensor(self, hexdrive_app, period: int | None = None, events: bool = False, interrupts: bool = False) -> bool:
         """Enable the colour sensor on hexdrive_app for polling.
-        events selects event-based reporting.  The colour sensor has no interrupt mode, so
-        interrupts is accepted for API symmetry but is not used.  Returns True on success."""
+           period sets the update period in milliseconds.
+           events selects event-based reporting.
+           interrupts enables interrupts (not recommended).
+           Returns True on success."""
         if not self.has_colour_sensor(hexdrive_app):
             return False
         colour_enable = getattr(hexdrive_app, "colour_enable", None)
@@ -517,6 +519,13 @@ class SensorTestMgr:
         set_flood_led = getattr(hexdrive_app, "set_flood_led", None)
         if set_flood_led is not None:
             set_flood_led(True)
+        set_colour_period = getattr(hexdrive_app, "set_colour_period", None)
+        if set_colour_period is not None and period is not None:
+            try:
+                set_colour_period(period)  # period for fast updates
+            except (TypeError, RuntimeError) as e:
+                print(f"B:Error setting colour period={period}ms: {e}")
+                return False
         try:
             colour_enable(True, events=events, interrupts=interrupts)
         except (TypeError, RuntimeError) as e:

@@ -25,7 +25,7 @@ from events.input import BUTTON_TYPES, Button
 from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
 from .utils import chain
-from .app import (STATE_COUNTDOWN, STATE_MOTOR_MOVES, STATE_LOGO, DEFAULT_BACKGROUND_UPDATE_PERIOD, MOTOR_PWM_FREQ)
+from .app import (STATE_COUNTDOWN, STATE_MOTOR_MOVES, STATE_LOGO, DEFAULT_BACKGROUND_UPDATE_PERIOD, MOTOR_PWM_FREQ, MOTOR_POWER_SCALE_FACTOR, ACCELERATION_SCALE_FACTOR, DEFAULT_ACCELERATION, DEFAULT_MAX_POWER)
 
 # Screen positioning for movement sequence text
 H_START = -63
@@ -36,19 +36,15 @@ _TICK_MS       =  10
 _LONG_PRESS_MS = 750
 
 # Default user timings for drive and turn steps (can be configured in settings)
-ACCELERATION_SCALE_FACTOR = 512
-POWER_SCALE_FACTOR        = 512
-DEFAULT_ACCELERATION  = 24576 // ACCELERATION_SCALE_FACTOR  # user-friendly acceleration value
-DEFAULT_MAX_POWER      = 50000 // POWER_SCALE_FACTOR          # exposed for use in other modules
 _DEFAULT_USER_DRIVE_MS =  50
 _DEFAULT_USER_TURN_MS  =  20
 
 _MIN_ACCELERATION      = 1     # 1024 // ACCELERATION_SCALE_FACTOR
-MIN_MAX_POWER          = 10240 // POWER_SCALE_FACTOR
+MIN_MAX_POWER          = 10240 // MOTOR_POWER_SCALE_FACTOR
 _MIN_USER_DRIVE_MS     = 10
 _MIN_USER_TURN_MS      = 10
 
-MAX_MAX_POWER          = 65535 // POWER_SCALE_FACTOR
+MAX_MAX_POWER          = 65535 // MOTOR_POWER_SCALE_FACTOR
 _MAX_ACCELERATION      = 65535 // ACCELERATION_SCALE_FACTOR
 _MAX_USER_DRIVE_MS     = 10000
 _MAX_USER_TURN_MS      = 10000
@@ -134,7 +130,7 @@ class Instruction:
         ramp_up = []
         _d = self._duration * self.directional_duration(mysettings)
         _a = ACCELERATION_SCALE_FACTOR * (mysettings['acceleration'].v if 'acceleration' in mysettings else DEFAULT_ACCELERATION)
-        _m = POWER_SCALE_FACTOR * (mysettings['max_power'].v if 'max_power' in mysettings else DEFAULT_MAX_POWER)
+        _m = MOTOR_POWER_SCALE_FACTOR * (mysettings['max_power'].v if 'max_power' in mysettings else DEFAULT_MAX_POWER)
         max_ramp_up_ticks = (_d // (2 * _TICK_MS)) - 1
         for _ in range(max_ramp_up_ticks):
             curr_power += _a
@@ -558,7 +554,7 @@ class MotorMovesMgr:
         elif self._sub_state == _SUB_RUN:
             current_power, _ = self.current_power_duration
             # scale factor to get power values between 0 and 100 for display
-            s = POWER_SCALE_FACTOR * app.settings['max_power'].v if 'max_power' in app.settings else DEFAULT_MAX_POWER
+            s = MOTOR_POWER_SCALE_FACTOR * (app.settings['max_power'].v if 'max_power' in app.settings else DEFAULT_MAX_POWER)
             power_str = str(tuple([int((100*x) / s) for x in current_power]))
             app.draw_message(ctx, ["Running...", power_str], [(1, 1, 0), (1, 1, 0)], label_font_size)
         elif self._sub_state == _SUB_DONE:
