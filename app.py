@@ -226,14 +226,14 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         "_motor2_reversed",
         "_motor1_min",
         "_motor2_min",
-        "max_pwr",
+        "max_power",
         "acceleration",
         "_output1",
         "_output2",
         "_front_face",
         "current_state",
         "previous_state",
-        "update_period",
+        "_update_period",
         "settings",
         "HEXPANSION_TYPES",
         "HEXDRIVE_HEXPANSION_INDEX",
@@ -324,18 +324,18 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self._motor_deadband: int = _DEFAULT_MOTOR_DEADBAND  # Minimum motor PWM value below which we don't try to move the motor.
         self._motor1_reversed: bool = False         # 0 or 1 to control direction of motor 1, set based on settings
         self._motor2_reversed: bool = False         # 0 or 1 to control direction of motor 2, set based on settings
-        self._motor1_min: int = _DEFAULT_MOTOR_MIN * MOTOR_POWER_SCALE_FACTOR # Minimum motor PWM value (0-65535) for motor 1, below which the motor will not move.  This is used to compensate for differences in motors and gearboxes, so that both motors start moving at the same time when given the same power level.
-        self._motor2_min: int = _DEFAULT_MOTOR_MIN * MOTOR_POWER_SCALE_FACTOR # Minimum motor PWM value (0-65535) for motor 2, below which the motor will not move.  This is used to compensate for differences in motors and gearboxes, so that both motors start moving at the same time when given the same power level.
-        self.max_pwr: int = 65535                  # Maximum motor PWM value (0-65535)
+        self._motor1_min:  int = _DEFAULT_MOTOR_MIN * MOTOR_POWER_SCALE_FACTOR     # Minimum motor PWM value (0-65535) for motor 1, below which the motor will not move.  This is used to compensate for differences in motors and gearboxes, so that both motors start moving at the same time when given the same power level.
+        self._motor2_min:  int = _DEFAULT_MOTOR_MIN * MOTOR_POWER_SCALE_FACTOR     # Minimum motor PWM value (0-65535) for motor 2, below which the motor will not move.  This is used to compensate for differences in motors and gearboxes, so that both motors start moving at the same time when given the same power level.
+        self.max_power:    int = DEFAULT_MAX_POWER * MOTOR_POWER_SCALE_FACTOR      # Maximum motor PWM value (0-65535)
         self.acceleration: int = DEFAULT_ACCELERATION * ACCELERATION_SCALE_FACTOR  # Maximum change in motor output per update, used to limit acceleration and deceleration of the motors to prevent wheel slip and loss of control
-        self._front_face: int = _DEFAULT_FRONT_FACE  # Front Face is Slot 3 on a standard build BadgeBot, but can be changed in settings to any of the 12 possible directions (0-11) representing the forward direction for movement.
-        self._output1: int = 0                      # Current motor output for motor 1, after applying acceleration limits
-        self._output2: int = 0                      # Current motor output for motor 2, after applying acceleration limits
+        self._front_face:  int = _DEFAULT_FRONT_FACE  # Front Face is Slot 3 on a standard build BadgeBot, but can be changed in settings to any of the 12 possible directions (0-11) representing the forward direction for movement.
+        self._output1:     int = 0                      # Current motor output for motor 1, after applying acceleration limits
+        self._output2:     int = 0                      # Current motor output for motor 2, after applying acceleration limits
 
         # Overall app state (controls what is displayed and what user inputs are accepted)
         self.current_state = STATE_HEXPANSION
         self.previous_state = self.current_state
-        self.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD   # mS
+        self._update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD   # mS
 
         # Settings - common settings first, then each module registers its own later
         self.settings: dict = {}
@@ -559,6 +559,19 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         return self._sensor_test_mgr
 
 
+    @property
+    def update_period(self):
+        """Convenience property to access update_period setting."""
+        return self._update_period
+
+    @update_period.setter
+    def update_period(self, value: int):
+        """Convenience property to set update_period setting."""
+        if self._logging:
+            print(f"B:Setting update_period to {value} ms")
+        self._update_period = value
+
+
     ### ASYNC EVENT HANDLERS ###
 
     async def _handle_stop_app(self, event: RequestStopAppEvent):
@@ -620,7 +633,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             diagnostics_output(0, 1)
             self.background_update(delta_ticks)
             diagnostics_output(0, 0)
-            await asyncio.sleep_ms(max (1, self.update_period - (time.ticks_ms() - cur_time)))  # sleep for the remainder of the update period, accounting for time taken by background_update
+            await asyncio.sleep_ms(max (1, self._update_period - (time.ticks_ms() - cur_time)))  # sleep for the remainder of the update period, accounting for time taken by background_update
             last_time = cur_time
 
 
@@ -635,7 +648,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if len(self.hexdrive_apps) > 0 and self._bluetooth_mgr:
             # BLE direction buttons override the state's motor output while held,
             # regardless of whether the current state produced any output.
-            ble_override = self._bluetooth_mgr.motor_override(self.max_pwr)
+            ble_override = self._bluetooth_mgr.motor_override(self.max_power)
             if ble_override is not None:
                 self._ble_override_active = True
                 output = ble_override
@@ -759,7 +772,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self._motor2_reversed: bool = self.settings['mtr2_dir'].v != 0
         self._motor1_min: int = self.settings['mtr1_min'].v * MOTOR_POWER_SCALE_FACTOR
         self._motor2_min: int = self.settings['mtr2_min'].v * MOTOR_POWER_SCALE_FACTOR
-        self.max_pwr: int = self.settings['max_power'].v * MOTOR_POWER_SCALE_FACTOR
+        self.max_power: int = self.settings['max_power'].v * MOTOR_POWER_SCALE_FACTOR
         self.acceleration: int = self.settings['acceleration'].v * ACCELERATION_SCALE_FACTOR
 
     def hexdiag_setup(self):
@@ -818,7 +831,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         # didn't trigger, so we need to perform extra display refresh cycles in case.
         # As the draw function is VERY slow, and hence it stalls background updates
         # we only do extra refresh cycles if the update period is long.
-        if self.update_period >= DEFAULT_BACKGROUND_UPDATE_PERIOD:
+        if self._update_period >= DEFAULT_BACKGROUND_UPDATE_PERIOD:
             #if self.logging:
             #    print("Extra refresh cycle due to long update period")
             self.refresh = True
@@ -1141,10 +1154,10 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
         # limit rate of change of motor output to maximum acceleration
         max_delta = self.acceleration # maximum change in motor output per update
-        output1 = self._motor_output1 + _clamp(output1 - self._motor_output1, -max_delta, max_delta)
-        output2 = self._motor_output2 + _clamp(output2 - self._motor_output2, -max_delta, max_delta)
-        self._motor_output1 = output1
-        self._motor_output2 = output2
+        output1 = self._output1 + _clamp(output1 - self._output1, -max_delta, max_delta)
+        output2 = self._output2 + _clamp(output2 - self._output2, -max_delta, max_delta)
+        self._output1 = output1
+        self._output2 = output2
 
         return (-output1 if self._motor1_reversed else output1, -output2 if self._motor2_reversed else output2)
 

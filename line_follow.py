@@ -13,7 +13,6 @@
 #                             returns motor output tuple or None
 #   init_settings(settings) – register line-follower specific settings
 
-
 from events.input import BUTTON_TYPES
 from app_components.notification import Notification
 from app_components.tokens import label_font_size, small_font_size, button_labels
@@ -33,6 +32,7 @@ except ImportError:
 _LINE_SENSOR_BACKGROUND_UPDATE_PERIOD_MS = const(10)
 _MAX_TIME_WITHOUT_LINE = const(500)  # milliseconds to continue moving after losing the line before stopping
 _DEFAULT_DISPLAY_REFRESH_INTERVAL_MS = const(1000)
+_DEFAULT_MIN_OBSTACLE_DISTANCE = const(70)  # minimum distance in mm to an obstacle before stopping
 
 # For integer Hue values we use 0.1-degree units, so 360 degrees = 3600 units.
 _DEFAULT_MID_HUE = const(300)      # Default 'mid hue' for colour sensor, midway between red and blue (300 = 300.0 degrees)
@@ -115,6 +115,7 @@ def init_settings(s, MySetting: type):      #pylint: disable=invalid-name
     s['pid_kp']         = MySetting(s, _DEFAULT_FOLLOWER_PID_KP, 0, 65536)
     s['pid_ki']         = MySetting(s, _DEFAULT_FOLLOWER_PID_KI, 0, 65535)
     s['pid_kd']         = MySetting(s, _DEFAULT_FOLLOWER_PID_KD, 0, 65535)
+    s['min_range']      = MySetting(s, _DEFAULT_MIN_OBSTACLE_DISTANCE, 0, 1000)  # minimum distance in mm to an obstacle before stopping
 
 
 # ---- Line Follower Manager -------------------------------------------------
@@ -130,9 +131,9 @@ class LineFollowMgr:
     __slots__ = ("_app", "_logging", "sensor_rate", "follower_mode",
                  "line_power", "pid_integral", "pid_previous_error",
                  "kp", "ki", "kd", "integral_limit", "motor_output",
-                 "_last_colour", "_last_colour_hue", "_last_colour_name", "_colour_hexdrive",
+                 "_last_colour", "_last_colour_hue", "_last_colour_name", "_colour_hexdrive", "_range_hexdrive",
                  "_mid_hue", "_max_hue", "_new_sample", "_display_refresh_time", "_display_refresh_interval", "_signed_steering_gain",
-                 "_time_since_line_detected", "_selected_field", "_enable_movement")
+                 "_time_since_line_detected", "_selected_field", "_enable_movement", "_min_obstacle_distance")
 
     def __init__(self, app, logging: bool = True):
         self._app = app
@@ -151,6 +152,7 @@ class LineFollowMgr:
         self._last_colour: tuple[int, int, int] = (0, 0, 0)
         self._last_colour_name: str = "unknown"
         self._colour_hexdrive = None
+        self._range_hexdrive = None
         self._mid_hue: int = _DEFAULT_MID_HUE
         self._max_hue: int = _DEFAULT_MAX_HUE
         self._new_sample: bool = False
@@ -160,6 +162,7 @@ class LineFollowMgr:
         self._time_since_line_detected: int = _MAX_TIME_WITHOUT_LINE  # time since a line was last detected, in milliseconds
         self._selected_field: int = 0  # index into _EDIT_FIELDS of the field currently being adjusted
         self._enable_movement: bool = False
+        self._min_obstacle_distance: int = _DEFAULT_MIN_OBSTACLE_DISTANCE  # minimum distance in mm to an obstacle before stopping
         if self._logging:
             print("B:LineFollowMgr initialised")
 
@@ -199,7 +202,7 @@ class LineFollowMgr:
         # Load any persisted colour calibration, then enable the colour sensor for polling
         # (no events, no interrupts).
         if sensor_mgr is not None:
-            if not sensor_mgr.enable_colour_sensor(colour_hexdrive, period=_LINE_SENSOR_BACKGROUND_UPDATE_PERIOD_MS, events=False, interrupts=False):
+            if not sensor_mgr.enable_colour_sensor(colour_hexdrive, period=_LINE_SENSOR_BACKGROUND_UPDATE_PERIOD_MS):
                 app.notification = Notification("Colour Sensor not available")
                 return False
             # Load any persisted colour calibration
@@ -233,11 +236,19 @@ class LineFollowMgr:
         self._mid_hue = _HUE_SCALE_FACTOR * (app.settings['mid_hue'].v if 'mid_hue' in app.settings else _DEFAULT_MID_HUE)
         self._max_hue = _HUE_SCALE_FACTOR * (app.settings['max_hue'].v if 'max_hue' in app.settings else _DEFAULT_MAX_HUE)
         self.line_power = MOTOR_POWER_SCALE_FACTOR * (app.settings['line_power'].v if 'line_power' in app.settings else _DEFAULT_FOLLOWER_POWER)
+        self._min_obstacle_distance = app.settings['min_range'].v if 'min_range' in app.settings else _DEFAULT_MIN_OBSTACLE_DISTANCE
 
         if self.ki > 0:
             self.integral_limit = self._app.max_power // self.ki
         else:
             self.integral_limit = 0
+
+        # optionally enable range sensor for obstacle detection
+        range_hexdrive = sensor_mgr.active_range_hexdrive() if sensor_mgr is not None else None
+        if range_hexdrive is not None and sensor_mgr is not None:
+            if sensor_mgr.enable_range_sensor(range_hexdrive):
+                self._range_hexdrive = range_hexdrive
+
         if self._logging:
             print("B:Line Follower mode started")
         return True
@@ -269,9 +280,14 @@ class LineFollowMgr:
             if sensor_mgr is not None and self._colour_hexdrive is not None:
                 sensor_mgr.disable_colour_sensor(self._colour_hexdrive)
             self._colour_hexdrive = None
+            if sensor_mgr is not None and self._range_hexdrive is not None:
+                sensor_mgr.disable_range_sensor(self._range_hexdrive)
+            self._range_hexdrive = None
             app.set_ring_colour(None)
             self.pid_integral = 0
             self.pid_previous_error = 0
+
+
             # persist any changes to the line follower settings before returning to the menu
             app.settings['mid_hue'].persist()
             app.settings['pid_kp'].persist()
@@ -350,6 +366,21 @@ class LineFollowMgr:
         sensor_mgr = self._app.sensor_test_mgr
         if sensor_mgr is None or self._colour_hexdrive is None:
             return None
+
+        # Poll the shared range sensor if we are allowed to move
+        if self._range_hexdrive is not None and self._enable_movement:
+            new_sample, range_mm = sensor_mgr.read_range(self._range_hexdrive)
+            if new_sample:
+                if self._logging:
+                    print(f"B:LF:Range={range_mm}mm")
+                if range_mm < self._min_obstacle_distance:
+                    # Stop immediately if an obstacle is detected within 100mm
+                    if self._logging:
+                        print("B:LF:Obstacle detected, auto stop")
+                    self._enable_movement = False
+                    output = (0, 0)
+                    self._app.performance_mode = False
+                    self._app.notification = Notification("Emergency Stop", self._range_hexdrive.config.port)
 
         # Poll the shared colour sensor; read_colour also updates the ring colour on change.
         new_sample, hue, name, _raw = sensor_mgr.read_colour(self._colour_hexdrive)

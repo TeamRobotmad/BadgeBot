@@ -279,15 +279,8 @@ class SensorTestMgr:
             if self._hexdrive_app is not None:
                 # Poll the sensors for new readings
                 if self._sensor_type == _SENSOR_RANGE:
-                    range_sensor = getattr(self._hexdrive_app, "range_sensor", None)
-                    if range_sensor is not None:
-                        s = range_sensor.sequence
-                        if s != self._last_range_sequence:
-                            # If so, update the display values and stats.
-                            self._last_range_sequence = s
-                            self._last_range = range_sensor.range
-                            self._new_sample = True
-                            self._range_sensor_stats.new_sample(s)
+                    if self.read_range(self._hexdrive_app)[0]:
+                        self._new_sample = True
                 elif self._sensor_type == _SENSOR_COLOUR:
                     # Poll the colour sensor via the shared reader (also updates the ring colour).
                     if self.read_colour(self._hexdrive_app)[0]:
@@ -431,7 +424,98 @@ class SensorTestMgr:
 
 
     # ------------------------------------------------------------------
-    # Public colour-sensor interface (shared with the Line Follower)
+    # Public range-sensor interface
+    # ------------------------------------------------------------------
+    def has_range_sensor(self, hexdrive_app) -> bool:
+        """Return True if hexdrive_app reports a range-sensor capability."""
+        if hexdrive_app is None:
+            return False
+        capabilities = getattr(hexdrive_app, "capabilities", 0)
+        capability_range = getattr(hexdrive_app, "CAPABILITY_RANGE", 0)
+        return bool(capability_range) and bool(capabilities & capability_range)
+
+
+    def active_range_hexdrive(self):
+        """Return the first connected HexDrive app that provides a range sensor, or None."""
+        for hexdrive_app in self._app.hexdrive_apps:
+            if self.has_range_sensor(hexdrive_app):
+                return hexdrive_app
+            elif self._logging:
+                print(f"B:HexDrive on port {hexdrive_app.config.port} does not have a range sensor.")
+        return None
+
+    def range_sensor_present(self) -> bool:
+        """Return True if any connected HexDrive provides a range sensor."""
+        return self.active_range_hexdrive() is not None
+
+
+    def enable_range_sensor(self, hexdrive_app, period: int | None = None, events: bool = False, interrupts: bool = True) -> bool:
+        """Enable the range sensor on hexdrive_app for polling.
+           period sets the update period in milliseconds.
+           events selects event-based reporting (not recommended).
+           interrupts enables interrupts.
+           Returns True on success."""
+        if not self.has_range_sensor(hexdrive_app):
+            return False
+        range_enable = getattr(hexdrive_app, "range_enable", None)
+        if range_enable is None:
+            return False
+        try:
+            range_enable(True, events=events, interrupts=interrupts)
+        except (TypeError, RuntimeError) as e:
+            print(f"B:Error enabling range sensor: {e}")
+            return False
+        set_range_period = getattr(hexdrive_app, "set_range_period", None)
+        if set_range_period is not None and period is not None:
+            try:
+                set_range_period(period)
+            except (TypeError, RuntimeError) as e:
+                print(f"B:Error setting range period={period}ms: {e}")
+                return False
+
+        print("B:Range Enabled")
+        return True
+
+
+    def disable_range_sensor(self, hexdrive_app) -> None:
+        """Disable the range sensor on hexdrive_app."""
+        if hexdrive_app is None:
+            return
+        range_enable = getattr(hexdrive_app, "range_enable", None)
+        if range_enable is not None:
+            try:
+                range_enable(False)
+            except (TypeError, RuntimeError) as e:
+                print(f"B:Error disabling range sensor: {e}")
+            print("B:Range Disabled")
+        self._range_sensor_stats.reset()
+
+
+    def read_range(self, hexdrive_app) -> tuple[bool, int | None]:
+        """Read the range sensor on hexdrive_app.
+        Returns a tuple (success, range_mm) where success is True if the reading was successful,
+        and range_mm is the measured distance in millimeters (or None if unsuccessful)."""
+        range_sensor = getattr(hexdrive_app, "range_sensor", None) if hexdrive_app is not None else None
+        if range_sensor is None:
+            return (False, None)
+        try:
+            s = range_sensor.sequence
+            if s == self._last_range_sequence:
+                # No new reading available
+                return (False, self._last_range)
+            self._last_range_sequence = s
+            self._last_range = range_sensor.range
+            self._range_sensor_stats.new_sample(s)
+            return (True, self._last_range)
+        except Exception as e:
+            print(f"B:Error reading range sensor: {e}")
+            return (False, None)
+
+
+
+
+    # ------------------------------------------------------------------
+    # Public colour-sensor interface
     # ------------------------------------------------------------------
 
     @staticmethod
@@ -507,7 +591,7 @@ class SensorTestMgr:
     def enable_colour_sensor(self, hexdrive_app, period: int | None = None, events: bool = False, interrupts: bool = False) -> bool:
         """Enable the colour sensor on hexdrive_app for polling.
            period sets the update period in milliseconds.
-           events selects event-based reporting.
+           events selects event-based reporting (not recommended).
            interrupts enables interrupts (not recommended).
            Returns True on success."""
         if not self.has_colour_sensor(hexdrive_app):
@@ -527,7 +611,7 @@ class SensorTestMgr:
         set_colour_period = getattr(hexdrive_app, "set_colour_period", None)
         if set_colour_period is not None and period is not None:
             try:
-                set_colour_period(period)  # period for fast updates
+                set_colour_period(period)
             except (TypeError, RuntimeError) as e:
                 print(f"B:Error setting colour period={period}ms: {e}")
                 return False
@@ -562,31 +646,22 @@ class SensorTestMgr:
             return (False, self._last_colour_hue, self._last_colour_name, self._last_colour)
         s = colour_sensor.sequence
         if s == self._last_colour_sequence:
+            # No new reading available
             return (False, self._last_colour_hue, self._last_colour_name, self._last_colour)
-        self._last_colour_sequence = s
-        self._last_colour = colour_sensor.colour
-        self._last_colour_hue = colour_sensor.colour_hue
-        colour_name = colour_sensor.colour_name
-        if colour_name != self._last_colour_name:
-            self._last_colour_name = colour_name
-            if update_ring:
-                self._app.set_ring_colour(self.colour_card_rgb(colour_name))
-        self._colour_sensor_stats.new_sample(s)
-        return (True, self._last_colour_hue, self._last_colour_name, self._last_colour)
-
-
-    def _update_page_count(self) -> None:
-        self._page_count = 3  # default to 3 pages for all sensors
-        if self._sensor_type is _SENSOR_COLOUR:
-            colour_sensor = getattr(self._hexdrive_app, "colour_sensor", None)
-            if colour_sensor is not None:
-                calibrated = getattr(colour_sensor, "calibrated", None)
-                if calibrated is not None:
-                    if self._logging:
-                        print("B:Colour sensor has a 'calibrated' attribute.")
-                    self._page_count = 4
-        if self._page_selected >= self._page_count:
-            self._page_selected = _PAGE_RAW
+        try:
+            self._last_colour_sequence = s
+            self._last_colour = colour_sensor.colour
+            self._last_colour_hue = colour_sensor.colour_hue
+            colour_name = colour_sensor.colour_name
+            if colour_name != self._last_colour_name:
+                self._last_colour_name = colour_name
+                if update_ring:
+                    self._app.set_ring_colour(self.colour_card_rgb(colour_name))
+            self._colour_sensor_stats.new_sample(s)
+            return (True, self._last_colour_hue, self._last_colour_name, self._last_colour)
+        except Exception as e:
+            print(f"B:Error reading colour sensor: {e}")
+            return (False, self._last_colour_hue, self._last_colour_name, self._last_colour)
 
 
     def _capture_white_reference(self) -> bool:
@@ -660,6 +735,20 @@ class SensorTestMgr:
         self._update_display_values()
 
 
+    def _update_page_count(self) -> None:
+        self._page_count = 3  # default to 3 pages for all sensors
+        if self._sensor_type is _SENSOR_COLOUR:
+            colour_sensor = getattr(self._hexdrive_app, "colour_sensor", None)
+            if colour_sensor is not None:
+                calibrated = getattr(colour_sensor, "calibrated", None)
+                if calibrated is not None:
+                    if self._logging:
+                        print("B:Colour sensor has a 'calibrated' attribute.")
+                    self._page_count = 4
+        if self._page_selected >= self._page_count:
+            self._page_selected = _PAGE_RAW
+
+
     def _update_display_values(self):      # pylint: disable=unused-argument
         # clear old display data
         self._display_data = {}
@@ -715,21 +804,23 @@ class SensorTestMgr:
             if sensor.stats.update(delta):
                 app.refresh = True
 
-        self._update_timer += delta
-        if self._update_timer >= self._min_update_period_ms:
-            # we do not display every sample to avoid overwhelming the display with too many updates per second
-            if self._new_sample:
-                if self._use_events and self._hexdrive_app is not None and self._sensor_type is _SENSOR_COLOUR:
-                    # only the raw RGB values are received via events, so we need to update the colour name here
-                    colour_sensor = getattr(self._hexdrive_app, "colour_sensor", None)
-                    if colour_sensor is not None:
-                        try:
-                            self._last_colour_name = colour_sensor.colour_name
-                        except Exception as e:          # pylint: disable=broad-except
-                            print(f"Error updating colour sensor name and display colour: {e}")
-                self._new_sample = False
-                self._update_timer = 0
-                app.refresh = True
+        # if the page shows any of the sensor readings, update the display values at a limited rate
+        if self._page_selected in (_PAGE_RAW, _PAGE_DATA, _PAGE_CAL):
+            self._update_timer += delta
+            if self._update_timer >= self._min_update_period_ms:
+                # we do not display every sample to avoid overwhelming the display with too many updates per second
+                if self._new_sample:
+                    if self._use_events and self._hexdrive_app is not None and self._sensor_type is _SENSOR_COLOUR:
+                        # only the raw RGB values are received via events, so we need to update the colour name here
+                        colour_sensor = getattr(self._hexdrive_app, "colour_sensor", None)
+                        if colour_sensor is not None:
+                            try:
+                                self._last_colour_name = colour_sensor.colour_name
+                            except Exception as e:          # pylint: disable=broad-except
+                                print(f"Error updating colour sensor name and display colour: {e}")
+                    self._new_sample = False
+                    self._update_timer = 0
+                    app.refresh = True
 
         if app.refresh:
             self._update_display_values()
@@ -900,15 +991,9 @@ class SensorTestMgr:
         if (sensor is not None and self._sensor_list[sensor].sensor_type != "Range") or 0 == (capabilities & capability_range):
             pass  # Don't enable the range sensor if the selected sensor is not a range sensor or if the hexdrive_app does not support range sensors
         else:
-            range_enable = getattr(hexdrive_app, "range_enable", None)
-            if range_enable is not None:
-                try:
-                    range_enable(True, events = self._use_events, interrupts = True)
-                except (TypeError, RuntimeError) as e:
-                    print(f"B:Error enabling range sensor: {e}")
-                set_range_period = getattr(hexdrive_app, "set_range_period", None)
-                if set_range_period is not None:
-                    set_range_period(100)  # Set the range sensor period to 100ms (example value)
+            if self.enable_range_sensor(hexdrive_app, events=self._use_events):
+
+
                 print("B:Range Enabled")
                 num_sensors_enabled += 1
                 if self._use_events:
@@ -920,6 +1005,8 @@ class SensorTestMgr:
                             self
                         )
                         print("B:Range Event enabled")
+            elif self._logging:
+                print(f"B:Range sensor not available on this HexDrive.")
 
         if (sensor is not None and self._sensor_list[sensor].sensor_type is not _SENSOR_COLOUR) or 0 == (capabilities & capability_colour):
             pass  # Don't enable the colour sensor if the selected sensor is not a colour sensor or if the hexdrive_app does not support colour sensors
@@ -935,6 +1022,9 @@ class SensorTestMgr:
                             self
                         )
                         print("B:Colour Event enabled")
+            elif self._logging:
+                print(f"B:Colour sensor not available on this HexDrive.")
+
         return num_sensors_enabled > 0
 
 
