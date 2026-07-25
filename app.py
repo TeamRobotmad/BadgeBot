@@ -1273,7 +1273,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 )
         elif menu_name == MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS] and self._settings_mgr is not None: # "Settings"
             # construct the settings menu
-            _settings_menu_items = ["Save All", "Default All"]
+            _settings_menu_items = ["Default All"]
             for _, setting in enumerate(self.settings):
                 _settings_menu_items.append(f"{setting}")
             self.menu = Menu(
@@ -1378,13 +1378,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     def _settings_menu_select_handler(self, item: str, idx: int):
         if self.logging:
             print(f"B:Setting {item} @ {idx}")
-        if idx == 0: #Save
-            if self.logging:
-                print("B:Settings Save All")
-            settings.save()
-            self.notification = Notification("  Settings  Saved")
-            self.set_menu()
-        elif idx == 1: #Default
+        if idx == 0: #Default
             if self.logging:
                 print("B:Settings Default All")
             for s in self.settings:
