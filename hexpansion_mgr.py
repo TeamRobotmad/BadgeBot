@@ -726,6 +726,7 @@ class HexpansionMgr:
             try:
                 from .motor_controller import MotorController
                 app.motor_controller = MotorController(
+                    app,
                     app.hexdrive_apps[0], app.settings,
                     logging=self._logging,
                     front_face_setting=app.settings.get('front_face'),

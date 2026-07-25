@@ -2,7 +2,7 @@
 
 Provides simple awaitable commands such as:
 
-    mc = MotorController(hexdrive_app, settings)
+    mc = MotorController(app, hexdrive_app, settings)
     await mc.forward(500)        # drive forward for 500 ms
     await mc.turn(90)            # turn 90° clockwise using the gyro
     await mc.turn(-45)           # turn 45° anti-clockwise
@@ -23,28 +23,35 @@ try:
 except ImportError:
     _imu = None
 
+try:
+    from micropython import const
+except ImportError:
+    # CPython / simulator fallback – const() is just an identity function
+    # on MicroPython; replicate that so module-level const() calls work.
+    const = lambda x: x         #pylint: disable=unnecessary-lambda-assignment
+
 from .app import MOTOR_PWM_FREQ, MOTOR_POWER_SCALE_FACTOR
 
 # Constants inlined from Sensor_Testing constants.py to avoid splitting
 # application constants into a separate module.
-_TICK_MS                = 10        # Smallest unit of change for power, in ms
-_AUTO_GYRO_AXIS         = 2         # index into gyro_read() tuple for yaw (0=X,1=Y,2=Z)
-_AUTO_GYRO_DEADBAND_DPS = 3.0       # ignore gyro readings below this magnitude (noise floor)
-_AUTO_ACCEL_AXIS        = 0         # index into acc_read() tuple for fwd/back (0=X,1=Y,2=Z)
-_AUTO_ACCEL_DEADBAND    = 0.05      # m/s² - ignore accel readings below this (vibration/noise)
-_AUTO_ACCEL_LPF_ALPHA   = 0.6       # low-pass filter coefficient (0-1, higher = faster response)
-_AUTO_ACCEL_SCALE       = 100       # distance calibration % (100 = 1:1, raise if undershooting)
-_AUTO_DRIVE_TIMEOUT_MS  = 30000     # safety timeout for distance-based drives (ms)
+_TICK_MS                = const(10)        # Smallest unit of change for power, in ms
+_AUTO_GYRO_AXIS         = const(2)         # index into gyro_read() tuple for yaw (0=X,1=Y,2=Z)
+_AUTO_GYRO_DEADBAND_DPS = const(3.0)       # ignore gyro readings below this magnitude (noise floor)
+_AUTO_ACCEL_AXIS        = const(0)         # index into acc_read() tuple for fwd/back (0=X,1=Y,2=Z)
+_AUTO_ACCEL_DEADBAND    = const(0.05)      # m/s² - ignore accel readings below this (vibration/noise)
+_AUTO_ACCEL_LPF_ALPHA   = const(0.6)       # low-pass filter coefficient (0-1, higher = faster response)
+_AUTO_ACCEL_SCALE       = const(100)       # distance calibration % (100 = 1:1, raise if undershooting)
+_AUTO_DRIVE_TIMEOUT_MS  = const(30000)     # safety timeout for distance-based drives (ms)
 
 # ---------------------------------------------------------------------------
 # Defaults (can be overridden via constructor kwargs)
 # ---------------------------------------------------------------------------
-_DEFAULT_TURN_SPEED_FRAC = 0.85     # fraction of max_power used when turning
-_DEFAULT_DRIVE_SPEED_FRAC = 1.0     # fraction of max_power used when driving
-_DEFAULT_TURN_TIMEOUT_MS = 10000    # safety cap on any single turn
+_DEFAULT_TURN_SPEED_FRAC = const(0.85)     # fraction of max_power used when turning
+_DEFAULT_DRIVE_SPEED_FRAC = const(1.0)     # fraction of max_power used when driving
+_DEFAULT_TURN_TIMEOUT_MS = const(10000)    # safety cap on any single turn
 _DEFAULT_DRIVE_TIMEOUT_MS = _AUTO_DRIVE_TIMEOUT_MS  # safety cap on distance drives
-_DEFAULT_UPDATE_MS = 10             # how often the control loop ticks
-_DEFAULT_SETTLE_MS = 50             # brief pause after stopping motors
+_DEFAULT_UPDATE_MS = const(10)             # how often the control loop ticks
+_DEFAULT_SETTLE_MS = const(50)             # brief pause after stopping motors
 
 MotorOutputTuple = tuple
 
@@ -54,11 +61,12 @@ class MotorController:
 
     Parameters
     ----------
+    app : BadgeBotApp
+        The main BadgeBot application instance (``self`` in ``app.py``).
     hexdrive_app : HexDriveApp
         The low-level HexDrive interface (``set_motors``, ``set_power``).
     settings : dict[str, MySetting]
-        The shared BadgeBot settings dict (needs ``max_power``,
-        ``acceleration``).
+        The shared BadgeBot settings dict.
     front_face_setting : MySetting | None
         The ``front_face`` setting (0-11).  Each step is 30° CW around
         the badge.  The accelerometer X/Y axes are rotated by this
@@ -92,6 +100,7 @@ class MotorController:
 
     def __init__(
         self,
+        main_app,
         hexdrive_app,
         settings,
         *,
@@ -109,6 +118,7 @@ class MotorController:
         drive_timeout_ms=_DEFAULT_DRIVE_TIMEOUT_MS,
         update_ms=_DEFAULT_UPDATE_MS,
     ):
+        self._app = main_app
         self._hexdrive = hexdrive_app
         self._settings = settings
         self._logging: bool = logging
@@ -142,6 +152,7 @@ class MotorController:
         if self._logging:
             print("B:MotorController initialised")
 
+
     # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
@@ -161,13 +172,13 @@ class MotorController:
     @property
     def max_power(self) -> int:
         """Maximum motor power (PWM value) from settings."""
-        return int(self._settings['max_power'].v) * MOTOR_POWER_SCALE_FACTOR
+        return self._app.max_power
 
 
     @property
     def acceleration(self) -> int:
         """Acceleration for ramps, in motor PWM per second."""
-        return max(1, int(self._settings['acceleration'].v) * MOTOR_POWER_SCALE_FACTOR)
+        return self._app.acceleration
 
 
     @property
@@ -277,8 +288,7 @@ class MotorController:
         target_output = (speed * direction, -speed * direction)
 
         dir_label = "CW" if direction > 0 else "CCW"
-        print("[MC-DIAG] turn start: %.1f deg %s, speed=%d, timeout=%d ms"
-              % (target_deg, dir_label, speed, timeout))
+        print(f"[MC-DIAG] turn start: {target_deg:.1f} deg {dir_label}, speed={speed}, timeout={timeout} ms")
 
         self._busy = True
         self.integrated_deg = 0.0
@@ -309,10 +319,8 @@ class MotorController:
                 # Periodic progress (every ~250 ms)
                 if loop_count % 25 == 0 and self._logging:
                     remaining = target_deg - self.integrated_deg
-                    print("[MC-DIAG]   turn progress: %.1f / %.1f deg  "
-                          "gyro=%.1f dps  elapsed=%d ms  remaining=%.1f deg"
-                          % (self.integrated_deg, target_deg,
-                             self.gyro_dps, elapsed_ms, remaining))
+                    print(f"[MC-DIAG]   turn progress: {self.integrated_deg:.1f} / {target_deg:.1f} deg  "
+                          f"gyro={self.gyro_dps:.1f} dps  elapsed={elapsed_ms} ms  remaining={remaining:.1f} deg")
 
                 if self.integrated_deg >= target_deg:
                     break
@@ -336,12 +344,10 @@ class MotorController:
                 await asyncio.sleep_ms(self._update_ms)
             coast_deg = self.integrated_deg - post_stop_deg
             if self._logging:
-                print("[MC-DIAG] turn done: integrated=%.2f deg  target=%.1f deg  "
-                    "overshoot=%.2f deg" % (self.integrated_deg, target_deg, overshoot))
-                print("[MC-DIAG]   elapsed=%d ms  loops=%d  avg_loop=%.1f ms"
-                    % (elapsed_ms, loop_count, avg_loop))
-                print("[MC-DIAG]   peak_dps=%.1f  coast_after_stop=%.2f deg"
-                    % (peak_dps, coast_deg))
+                print(f"[MC-DIAG] turn done: integrated={self.integrated_deg:.2f} deg  target={target_deg:.1f} deg  "
+                    f"overshoot={overshoot:.2f} deg")
+                print(f"[MC-DIAG]   elapsed={elapsed_ms} ms  loops={loop_count}  avg_loop={avg_loop:.1f} ms")
+                print(f"[MC-DIAG]   peak_dps={peak_dps:.1f}  coast_after_stop={coast_deg:.2f} deg")
                 if timed_out:
                     print("[MC-DIAG]   WARNING: turn timed out before reaching target")
         finally:
@@ -531,12 +537,12 @@ class MotorController:
         self._accel_filtered = 0.0
         self._accel_calibrated = True
         if self._logging:
-            print("[MC-DIAG] calibrate: bias_x=%.4f  bias_y=%.4f" % (self._accel_bias_x, self._accel_bias_y))
+            print(f"[MC-DIAG] calibrate: bias_x={self._accel_bias_x:.4f}  bias_y={self._accel_bias_y:.4f}")
             if samples_x:
-                sx_str = ', '.join(['%.3f' % s for s in samples_x])
-                sy_str = ', '.join(['%.3f' % s for s in samples_y])
-                print("[MC-DIAG]   raw_x samples: [%s]" % sx_str)
-                print("[MC-DIAG]   raw_y samples: [%s]" % sy_str)
+                sx_str = ', '.join([f'{s:.3f}' for s in samples_x])
+                sy_str = ', '.join([f'{s:.3f}' for s in samples_y])
+                print(f"[MC-DIAG]   raw_x samples: [{sx_str}]")
+                print(f"[MC-DIAG]   raw_y samples: [{sy_str}]")
 
 
     def _reset_distance(self):
@@ -667,7 +673,7 @@ class MotorController:
             return
 
         # Deceleration zone: start slowing at this fraction of the target
-        DECEL_START = 0.70  # begin slowing at 70% of target
+        DECEL_START = const(0.70)  # begin slowing at 70% of target
         decel_start_m = target_m * DECEL_START
         decel_range_m = target_m - decel_start_m  # distance over which we ramp to 0
         # Minimum motor speed during deceleration (below this we just stop)
@@ -685,17 +691,17 @@ class MotorController:
         # --- DIAGNOSTICS: start ---
         if self._logging:
             print("[MC-DIAG] === distance_drive START ===")
-            print("[MC-DIAG]   requested   = %.1f mm" % distance_mm)
-            print("[MC-DIAG]   accel_scale = %d%%" % scale_pct)
-            print("[MC-DIAG]   target_m    = %.4f m  (%.1f mm)" % (target_m, target_mm))
-            print("[MC-DIAG]   decel_start = %.1f mm  decel_range = %.1f mm" % (decel_start_m * 1000, decel_range_m * 1000))
-            print("[MC-DIAG]   bias_x=%.4f  bias_y=%.4f" % (self._accel_bias_x, self._accel_bias_y))
-            print("[MC-DIAG]   lpf_alpha=%s  deadband=%s" % (self._accel_lpf_alpha, self._accel_deadband))
-            print("[MC-DIAG]   motor_target=%s  timeout=%d ms" % (str(target), timeout))
+            print(f"[MC-DIAG]   requested   = {distance_mm:.1f} mm")
+            print(f"[MC-DIAG]   accel_scale = {scale_pct}%")
+            print(f"[MC-DIAG]   target_m    = {target_m:.4f} m  ({target_mm:.1f} mm)")
+            print(f"[MC-DIAG]   decel_start = {decel_start_m * 1000:.1f} mm  decel_range = {decel_range_m * 1000:.1f} mm")
+            print(f"[MC-DIAG]   bias_x={self._accel_bias_x:.4f}  bias_y={self._accel_bias_y:.4f}")
+            print(f"[MC-DIAG]   lpf_alpha={self._accel_lpf_alpha}  deadband={self._accel_deadband}")
+            print(f"[MC-DIAG]   motor_target={str(target)}  timeout={timeout} ms")
             theta_deg = 0.0
             if self._front_face_setting is not None:
                 theta_deg = -(int(self._front_face_setting.v) * 30)
-            print("[MC-DIAG]   front_face_angle=%d deg" % theta_deg)
+            print(f"[MC-DIAG]   front_face_angle={theta_deg} deg")
 
         try:
             self._power_on()
@@ -735,18 +741,17 @@ class MotorController:
                         remaining = max(0, target_m - self.distance_m)
                         spd_pct = int(max(min_frac, min(1.0, remaining / decel_range_m)) * 100)
                     if self._logging:
-                        print("[MC-DIAG]  t=%5dms a=%+.4f m/s2 v=%+.5f m/s d=%.2f/%.1f mm spd=%d%% mot=%s" % (
-                            elapsed, self.accel_mps2, self.velocity_mps, d_mm, target_mm, spd_pct, str(self.motor_output)))
+                        print(f"[MC-DIAG]  t={elapsed:5d}ms a={self.accel_mps2:+.4f} m/s2 v={self.velocity_mps:+.5f} m/s d={d_mm:.2f}/{target_mm:.1f} mm spd={spd_pct}% mot={str(self.motor_output)}")
 
                 await asyncio.sleep_ms(self._update_ms)
             else:
                 d_mm = self.distance_m * 1000
                 if self._logging:
-                    print("[MC-DIAG]  TIMEOUT after %d ms  dist=%.2f mm" % (elapsed, d_mm))
+                    print(f"[MC-DIAG]  TIMEOUT after {elapsed} ms  dist={d_mm:.2f} mm")
 
             d_mm = self.distance_m * 1000
             if self._logging:
-                print("[MC-DIAG]  STOP at dist=%.2f mm (elapsed=%d ms)" % (d_mm, elapsed))
+                print(f"[MC-DIAG]  STOP at dist={d_mm:.2f} mm (elapsed={elapsed} ms)")
 
             # Ramp down remaining motor output while still reading accel
             ramp_start_dist = self.distance_m
@@ -758,12 +763,12 @@ class MotorController:
                 final_mm = self.distance_m * 1000
                 ramp_mm = ramp_dist * 1000
                 over_mm = (self.distance_m - target_m) * 1000
-                print("[MC-DIAG] === distance_drive END ===")
-                print("[MC-DIAG]   final_distance = %.2f mm  (target was %.1f mm, scaled target %.1f mm)" % (final_mm, distance_mm, target_mm))
-                print("[MC-DIAG]   ramp_down_dist = %.2f mm" % ramp_mm)
-                print("[MC-DIAG]   final_velocity = %.5f m/s" % self.velocity_mps)
-                print("[MC-DIAG]   elapsed        = %d ms" % elapsed)
-                print("[MC-DIAG]   overshoot      = %+.2f mm" % over_mm)
+                print(f"[MC-DIAG] === distance_drive END ===")
+                print(f"[MC-DIAG]   final_distance = {final_mm:.2f} mm  (target was {distance_mm:.1f} mm, scaled target {target_mm:.1f} mm)")
+                print(f"[MC-DIAG]   ramp_down_dist = {ramp_mm:.2f} mm")
+                print(f"[MC-DIAG]   final_velocity = {self.velocity_mps:.5f} m/s")
+                print(f"[MC-DIAG]   elapsed        = {elapsed} ms")
+                print(f"[MC-DIAG]   overshoot      = {over_mm:+.2f} mm")
         finally:
             self._busy = False
 

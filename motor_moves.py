@@ -25,7 +25,7 @@ from events.input import BUTTON_TYPES, Button
 from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
 from .utils import chain
-from .app import (STATE_COUNTDOWN, STATE_MOTOR_MOVES, STATE_LOGO, DEFAULT_BACKGROUND_UPDATE_PERIOD, MOTOR_PWM_FREQ, MOTOR_POWER_SCALE_FACTOR, ACCELERATION_SCALE_FACTOR, DEFAULT_ACCELERATION, DEFAULT_MAX_POWER)
+from .app import (STATE_COUNTDOWN, STATE_MOTOR_MOVES, STATE_LOGO, DEFAULT_BACKGROUND_UPDATE_PERIOD, MOTOR_PWM_FREQ)
 
 # Screen positioning for movement sequence text
 H_START = -63
@@ -39,13 +39,9 @@ _LONG_PRESS_MS = 750
 _DEFAULT_USER_DRIVE_MS =  50
 _DEFAULT_USER_TURN_MS  =  20
 
-_MIN_ACCELERATION      = 1     # 1024 // ACCELERATION_SCALE_FACTOR
-MIN_MAX_POWER          = 10240 // MOTOR_POWER_SCALE_FACTOR
 _MIN_USER_DRIVE_MS     = 10
 _MIN_USER_TURN_MS      = 10
 
-MAX_MAX_POWER          = 65535 // MOTOR_POWER_SCALE_FACTOR
-_MAX_ACCELERATION      = 65535 // ACCELERATION_SCALE_FACTOR
 _MAX_USER_DRIVE_MS     = 10000
 _MAX_USER_TURN_MS      = 10000
 
@@ -69,7 +65,8 @@ _SUB_DONE          = 3
 class Instruction:
     """Represents a single movement instruction, consisting of a direction (button press) and duration (number of ticks).
     Also contains the power plan for this instruction, which is a list of (power_tuple)"""
-    def __init__(self, press_type: Button) -> None:
+    def __init__(self, app, press_type: Button) -> None:
+        self._app = app
         self._press_type = press_type
         self._duration = 1
         self.power_plan: list[tuple[tuple[int, int], int]] = []
@@ -129,8 +126,8 @@ class Instruction:
         curr_power = 0
         ramp_up = []
         _d = self._duration * self.directional_duration(mysettings)
-        _a = ACCELERATION_SCALE_FACTOR * (mysettings['acceleration'].v if 'acceleration' in mysettings else DEFAULT_ACCELERATION)
-        _m = MOTOR_POWER_SCALE_FACTOR * (mysettings['max_power'].v if 'max_power' in mysettings else DEFAULT_MAX_POWER)
+        _a = self._app.acceleration
+        _m = self._app.max_power
         max_ramp_up_ticks = (_d // (2 * _TICK_MS)) - 1
         for _ in range(max_ramp_up_ticks):
             curr_power += _a
@@ -158,8 +155,6 @@ class Instruction:
 
 def init_settings(s, MySetting: type):  #pylint: disable=invalid-name
     """Register motor-moves-specific settings in the shared settings dict."""
-    s['acceleration']  = MySetting(s, DEFAULT_ACCELERATION,  _MIN_ACCELERATION,  _MAX_ACCELERATION)
-    s['max_power']     = MySetting(s, DEFAULT_MAX_POWER,     MIN_MAX_POWER,     MAX_MAX_POWER)
     s['drive_step_ms'] = MySetting(s, _DEFAULT_USER_DRIVE_MS, _MIN_USER_DRIVE_MS, _MAX_USER_DRIVE_MS)
     s['turn_step_ms']  = MySetting(s, _DEFAULT_USER_TURN_MS,  _MIN_USER_TURN_MS,  _MAX_USER_TURN_MS)
     s['drive_mode']    = MySetting(s, _DEFAULT_DRIVE_MODE, DRIVE_MODE_TIME, DRIVE_MODE_DISTANCE, labels=_DRIVE_MODE_LABELS)
@@ -457,7 +452,7 @@ class MotorMovesMgr:
             self.current_instruction.inc()
         else:
             self.finalize_instruction()
-            self.current_instruction = Instruction(press_type)
+            self.current_instruction = Instruction(app, press_type)
         app.last_press = press_type
 
 
@@ -554,7 +549,7 @@ class MotorMovesMgr:
         elif self._sub_state == _SUB_RUN:
             current_power, _ = self.current_power_duration
             # scale factor to get power values between 0 and 100 for display
-            s = MOTOR_POWER_SCALE_FACTOR * (app.settings['max_power'].v if 'max_power' in app.settings else DEFAULT_MAX_POWER)
+            s = self._app.max_power
             power_str = str(tuple([int((100*x) / s) for x in current_power]))
             app.draw_message(ctx, ["Running...", power_str], [(1, 1, 0), (1, 1, 0)], label_font_size)
         elif self._sub_state == _SUB_DONE:

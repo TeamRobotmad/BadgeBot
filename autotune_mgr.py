@@ -1,3 +1,4 @@
+""" PID AutoTune UI Manager for BadgeBot """
 # PID AutoTune UI Manager for BadgeBot
 #
 # Manages the PID Auto Tune user interface and state machine.
@@ -21,7 +22,6 @@
 from events.input import BUTTON_TYPES
 from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
-from system.hexpansion.config import HexpansionConfig
 
 from .autotune import PIDAutoTuner, METHOD_ZIEGLER_NICHOLS
 from .app import (STATE_AUTOTUNE, STATE_COUNTDOWN, MOTOR_PWM_FREQ, MOTOR_POWER_SCALE_FACTOR)
@@ -186,6 +186,7 @@ class AutotuneMgr:
 
 
     def autotune_complete(self):
+        """Called when the autotuner has completed or failed."""
         if self.autotuner is not None:
             app = self._app
             app.refresh = True

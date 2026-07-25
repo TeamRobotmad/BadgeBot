@@ -21,6 +21,7 @@ from system.scheduler.events import (RequestForegroundPopEvent,
 from tildagonos import tildagonos
 from machine import Pin
 import app
+import micropython
 
 try:
     from micropython import const
@@ -80,10 +81,18 @@ H_START = -63
 
 # Timings/Settings
 MOTOR_PWM_FREQ = const(20000)      # 20kHz is a good default for motors as it is above the audible range for most people and works with most motors and ESC
-MOTOR_POWER_SCALE_FACTOR = const(512)  # Settings store motor power / acceleration divided by this; multiply back to get 0-65535 PWM values
+
 ACCELERATION_SCALE_FACTOR = const(512)  # Settings store motor power / acceleration divided by this; multiply back to get 0-65535 PWM values
+MOTOR_POWER_SCALE_FACTOR = const(512)  # Settings store motor power / acceleration divided by this; multiply back to get 0-65535 PWM values
+
 DEFAULT_ACCELERATION   = const(10000) // ACCELERATION_SCALE_FACTOR  # user-friendly acceleration value per 10ms Tick
 DEFAULT_MAX_POWER      = const(55000) // MOTOR_POWER_SCALE_FACTOR   # exposed for use in other modules
+
+_MIN_ACCELERATION      =  1024 // ACCELERATION_SCALE_FACTOR
+_MIN_MAX_POWER         = 10240 // MOTOR_POWER_SCALE_FACTOR
+
+_MAX_ACCELERATION      = 65535 // ACCELERATION_SCALE_FACTOR
+_MAX_MAX_POWER         = 65535 // MOTOR_POWER_SCALE_FACTOR
 
 _LONG_PRESS_MS = const(750)        # Time for long button press to register, in ms
 _RUN_COUNTDOWN_MS = const(5000)    # Time after running program until drive starts, in ms
@@ -183,6 +192,14 @@ SensorTestMgr, _sensor_test_init_settings                 = _try_import('sensor_
 AutoDriveMgr, _autodrive_init_settings                    = _try_import('autodrive',     'AutoDriveMgr',  'init_settings')
 emit_diagnostics_output, set_diagnostics_output           = _try_import('diagnostics',   'output',        'set_output')
 
+
+@micropython.viper
+def _clamp(value: int, lo: int, hi: int) -> int:
+    if value < lo:
+        return lo
+    if value > hi:
+        return hi
+    return value
 class BadgeBotApp(app.App):         # pylint: disable=no-member
     """Main application class for BadgeBot.  Manages overall state, user input, and delegates to functional area managers for specific features."""
     __slots__ = (
@@ -209,7 +226,10 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         "_motor2_reversed",
         "_motor1_min",
         "_motor2_min",
-        "_max_pwr",
+        "max_pwr",
+        "acceleration",
+        "_output1",
+        "_output2",
         "_front_face",
         "current_state",
         "previous_state",
@@ -306,8 +326,11 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self._motor2_reversed: bool = False         # 0 or 1 to control direction of motor 2, set based on settings
         self._motor1_min: int = _DEFAULT_MOTOR_MIN * MOTOR_POWER_SCALE_FACTOR # Minimum motor PWM value (0-65535) for motor 1, below which the motor will not move.  This is used to compensate for differences in motors and gearboxes, so that both motors start moving at the same time when given the same power level.
         self._motor2_min: int = _DEFAULT_MOTOR_MIN * MOTOR_POWER_SCALE_FACTOR # Minimum motor PWM value (0-65535) for motor 2, below which the motor will not move.  This is used to compensate for differences in motors and gearboxes, so that both motors start moving at the same time when given the same power level.
-        self._max_pwr: int = 65535                  # Maximum motor PWM value (0-65535)
+        self.max_pwr: int = 65535                  # Maximum motor PWM value (0-65535)
+        self.acceleration: int = DEFAULT_ACCELERATION * ACCELERATION_SCALE_FACTOR  # Maximum change in motor output per update, used to limit acceleration and deceleration of the motors to prevent wheel slip and loss of control
         self._front_face: int = _DEFAULT_FRONT_FACE  # Front Face is Slot 3 on a standard build BadgeBot, but can be changed in settings to any of the 12 possible directions (0-11) representing the forward direction for movement.
+        self._output1: int = 0                      # Current motor output for motor 1, after applying acceleration limits
+        self._output2: int = 0                      # Current motor output for motor 2, after applying acceleration limits
 
         # Overall app state (controls what is displayed and what user inputs are accepted)
         self.current_state = STATE_HEXPANSION
@@ -322,7 +345,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             self.settings['logging']       = MySetting(self.settings, _DEFAULT_LOGGING, False, True)
             #self.settings['path']         = MySetting(self.settings, 0, 0, len(_FILE_DEST_LABELS) - 1, labels=_FILE_DEST_LABELS)
             # Motor/Drive Direction settings
-            self.settings['max_power']     = MySetting(self.settings, DEFAULT_MAX_POWER, 0, 127)
+            self.settings['acceleration']  = MySetting(self.settings, DEFAULT_ACCELERATION,  _MIN_ACCELERATION,  _MAX_ACCELERATION)
+            self.settings['max_power']     = MySetting(self.settings, DEFAULT_MAX_POWER, _MIN_MAX_POWER, _MAX_MAX_POWER)
             self.settings['mtr_deadband'] = MySetting(self.settings, _DEFAULT_MOTOR_DEADBAND, 0, 127)
             self.settings['mtr1_dir']    = MySetting(self.settings, _DEFAULT_FWD_DIR, 0, 1, labels=_MOTOR_DIRECTION_LABELS)
             self.settings['mtr2_dir']    = MySetting(self.settings, _DEFAULT_FWD_DIR, 0, 1, labels=_MOTOR_DIRECTION_LABELS)
@@ -611,7 +635,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if len(self.hexdrive_apps) > 0 and self._bluetooth_mgr:
             # BLE direction buttons override the state's motor output while held,
             # regardless of whether the current state produced any output.
-            ble_override = self._bluetooth_mgr.motor_override(self._max_pwr)
+            ble_override = self._bluetooth_mgr.motor_override(self.max_pwr)
             if ble_override is not None:
                 self._ble_override_active = True
                 output = ble_override
@@ -735,8 +759,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self._motor2_reversed: bool = self.settings['mtr2_dir'].v != 0
         self._motor1_min: int = self.settings['mtr1_min'].v * MOTOR_POWER_SCALE_FACTOR
         self._motor2_min: int = self.settings['mtr2_min'].v * MOTOR_POWER_SCALE_FACTOR
-        self._max_pwr = self.settings['max_power'].v * MOTOR_POWER_SCALE_FACTOR
-
+        self.max_pwr: int = self.settings['max_power'].v * MOTOR_POWER_SCALE_FACTOR
+        self.acceleration: int = self.settings['acceleration'].v * ACCELERATION_SCALE_FACTOR
 
     def hexdiag_setup(self):
         """ Use HS pins on a spare Hexpansion to make diagnostic timing measurements"""
@@ -1114,6 +1138,13 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 output2 = self._motor2_min + ((output2 * (65536 - self._motor2_min)) // 65536)
             else:
                 output2 = -self._motor2_min - ((-output2 * (65536 - self._motor2_min)) // 65536)
+
+        # limit rate of change of motor output to maximum acceleration
+        max_delta = self.acceleration # maximum change in motor output per update
+        output1 = self._motor_output1 + _clamp(output1 - self._motor_output1, -max_delta, max_delta)
+        output2 = self._motor_output2 + _clamp(output2 - self._motor_output2, -max_delta, max_delta)
+        self._motor_output1 = output1
+        self._motor_output2 = output2
 
         return (-output1 if self._motor1_reversed else output1, -output2 if self._motor2_reversed else output2)
 

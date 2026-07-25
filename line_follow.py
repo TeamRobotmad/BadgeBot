@@ -19,7 +19,7 @@ from app_components.notification import Notification
 from app_components.tokens import label_font_size, small_font_size, button_labels
 import micropython
 
-from .app import MOTOR_PWM_FREQ, MOTOR_POWER_SCALE_FACTOR, ACCELERATION_SCALE_FACTOR, DEFAULT_MAX_POWER, DEFAULT_ACCELERATION
+from .app import MOTOR_PWM_FREQ, MOTOR_POWER_SCALE_FACTOR, DEFAULT_MAX_POWER
 
 try:
     from micropython import const
@@ -67,11 +67,13 @@ _FOLLOWER_MODE_BINARY       = const(1)    # not implemented
 #   setting_name - key into app.settings for inc/dec and read-back
 #   l            - order-of-magnitude step passed to MySetting.inc/dec
 #   rect         - absolute grey-highlight rectangle (top-left x, y, width, height)
-_EDIT_FIELDS = (
+# The structure is explicitly: (Label, Variable, ID, (X, Y, W, H))
+_EDIT_FIELDS: tuple[tuple[str, str, int, tuple[int, int, int, int]], ...] = (
     ("Hue", "mid_hue", 0, (-45, -66, 90, 30)),
     ("Kp",  "pid_kp",  1, (-92, 33, 82, 22)),
     ("Kd",  "pid_kd",  1, (10, 33, 82, 22)),
 )
+
 
 _EDIT_FIELDS_LABEL_INDEX = const(0)        # index into each _EDIT_FIELDS entry for the label
 _EDIT_FIELDS_SETTING_INDEX = const(1)      # index into each _EDIT_FIELDS entry for the setting_name
@@ -125,9 +127,9 @@ class LineFollowMgr:
     app : BadgeBotApp
         Reference to the main application instance.
     """
-    __slots__ = ("_app", "_logging", "sensor_rate", "follower_mode", "acceleration",
+    __slots__ = ("_app", "_logging", "sensor_rate", "follower_mode",
                  "line_power", "pid_integral", "pid_previous_error",
-                 "kp", "ki", "kd", "max_pwr", "integral_limit", "motor_output",
+                 "kp", "ki", "kd", "integral_limit", "motor_output",
                  "_last_colour", "_last_colour_hue", "_last_colour_name", "_colour_hexdrive",
                  "_mid_hue", "_max_hue", "_new_sample", "_display_refresh_time", "_display_refresh_interval", "_signed_steering_gain",
                  "_time_since_line_detected", "_selected_field", "_enable_movement")
@@ -137,14 +139,12 @@ class LineFollowMgr:
         self._logging: bool = logging
         self.sensor_rate: int = 0     # sample rate
         self.follower_mode: int = _FOLLOWER_MODE_DIFFERENTIAL   # Default follower mode
-        self.acceleration: int = ACCELERATION_SCALE_FACTOR * DEFAULT_ACCELERATION
         self.line_power: int = _DEFAULT_FOLLOWER_POWER                # Default line follower power
         self.pid_integral: int = 0                              # Accumulated integral term for PID controller
         self.pid_previous_error: int = 0                        # Previous error for derivative term of PID controller
         self.kp: int = _DEFAULT_FOLLOWER_PID_KP
         self.ki: int = _DEFAULT_FOLLOWER_PID_KI
         self.kd: int = _DEFAULT_FOLLOWER_PID_KD
-        self.max_pwr: int = DEFAULT_MAX_POWER * MOTOR_POWER_SCALE_FACTOR
         self.integral_limit: int = 0
         self.motor_output = (0, 0)
         self._last_colour_hue: int = 0
@@ -232,12 +232,10 @@ class LineFollowMgr:
         self.kd = app.settings['pid_kd'].v
         self._mid_hue = _HUE_SCALE_FACTOR * (app.settings['mid_hue'].v if 'mid_hue' in app.settings else _DEFAULT_MID_HUE)
         self._max_hue = _HUE_SCALE_FACTOR * (app.settings['max_hue'].v if 'max_hue' in app.settings else _DEFAULT_MAX_HUE)
-        self.max_pwr = MOTOR_POWER_SCALE_FACTOR * (app.settings['max_power'].v if 'max_power' in app.settings else DEFAULT_MAX_POWER)
         self.line_power = MOTOR_POWER_SCALE_FACTOR * (app.settings['line_power'].v if 'line_power' in app.settings else _DEFAULT_FOLLOWER_POWER)
-        self.acceleration = ACCELERATION_SCALE_FACTOR * (app.settings['acceleration'].v if 'acceleration' in app.settings else DEFAULT_ACCELERATION)
 
         if self.ki > 0:
-            self.integral_limit = self.max_pwr // self.ki
+            self.integral_limit = self._app.max_power // self.ki
         else:
             self.integral_limit = 0
         if self._logging:
@@ -414,10 +412,6 @@ class LineFollowMgr:
                     output = (0, 0)
                     self._app.performance_mode = False  # disable performance mode if we are not actively following the line
 
-            # limit rate of change of motor output to maximum acceleration
-            max_delta = self.acceleration # maximum change in motor output per update
-            output = (self.motor_output[0] + _clamp(output[0] - self.motor_output[0], -max_delta, max_delta),
-                      self.motor_output[1] + _clamp(output[1] - self.motor_output[1], -max_delta, max_delta))
             self.motor_output = output
         else:
             output = self.motor_output
@@ -462,7 +456,7 @@ class LineFollowMgr:
             line_power = self.line_power
 
         # Combine correction with base forward power to get output for each motor & limit output to max power
-        max_power = self.max_pwr
+        max_power = self._app.max_power
         output = (_clamp(line_power + correction, -max_power, max_power), _clamp(line_power - correction, -max_power, max_power))
 
         if self._logging:
@@ -559,7 +553,7 @@ class LineFollowMgr:
         confirm_label = "Start" if not self._enable_movement else "Stop" # was "\u25C0"
 
         button_labels(ctx, cancel_label="Back", confirm_label=confirm_label,
-                      up_label="+" + sel_label, down_label="-" + sel_label,
+                      up_label=f"+{sel_label}", down_label=f"-{sel_label}",
                       left_label="Direction", right_label="\u25B6")
 
         return True
