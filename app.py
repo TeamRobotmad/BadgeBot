@@ -530,12 +530,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
 
     @property
-    def front_face(self):
-        """Convenience property to access front_face setting representing the forward direction for movement."""
-        return self._front_face
-
-
-    @property
     def sensor_test_mgr(self):
         """Public access to the SensorTestMgr, used by LineFollowMgr & AutoDriveMgr to share the sensor manager."""
         return self._sensor_test_mgr
@@ -735,7 +729,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if self._logging:
             print("B:Updating fast access settings")
         self._logging: bool = self.settings['logging'].v
-        self._front_face: bool = self.settings['front_face'].v
+        self._front_face: int = self.settings['front_face'].v
         self._motor_deadband: int = self.settings['mtr_deadband'].v * MOTOR_POWER_SCALE_FACTOR
         self._motor1_reversed: bool = self.settings['mtr1_dir'].v != 0
         self._motor2_reversed: bool = self.settings['mtr2_dir'].v != 0
@@ -1128,7 +1122,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         """LED positions rotate based on 'front_face' (0-11, each step = 30° CW).
         Each position p maps to LED pair: (p if p>0 else 12) and (p+1).
         """
-        f = self.front_face
+        f = self._front_face
         if direction == BUTTON_TYPES["UP"]:
             pos = f % 12
             colour = (0, 255, 255)   # Cyan = forward

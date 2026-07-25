@@ -2,7 +2,6 @@
 
 import struct
 import sys
-import app
 import bluetooth
 from events.input import BUTTON_TYPES
 from app_components.tokens import label_font_size, button_labels
@@ -295,8 +294,8 @@ class BluetoothMgr:
     """
     __slots__ = ("_app", "_logging", "_ble", "_ble_controller", "_is_connected", "_name")
 
-    def __init__(self, app, logging=True):
-        self._app = app
+    def __init__(self, main_app, logging=True):
+        self._app = main_app
         self._logging: bool = logging
         self._ble = bluetooth.BLE()
         self._ble_controller: RobotBLE | None = None
