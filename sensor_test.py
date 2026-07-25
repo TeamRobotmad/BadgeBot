@@ -519,6 +519,11 @@ class SensorTestMgr:
         set_flood_led = getattr(hexdrive_app, "set_flood_led", None)
         if set_flood_led is not None:
             set_flood_led(True)
+        try:
+            colour_enable(True, events=events, interrupts=interrupts)
+        except (TypeError, RuntimeError) as e:
+            print(f"B:Error enabling colour sensor: {e}")
+            return False
         set_colour_period = getattr(hexdrive_app, "set_colour_period", None)
         if set_colour_period is not None and period is not None:
             try:
@@ -526,11 +531,7 @@ class SensorTestMgr:
             except (TypeError, RuntimeError) as e:
                 print(f"B:Error setting colour period={period}ms: {e}")
                 return False
-        try:
-            colour_enable(True, events=events, interrupts=interrupts)
-        except (TypeError, RuntimeError) as e:
-            print(f"B:Error enabling colour sensor: {e}")
-            return False
+
         print("B:Colour Enabled")
         return True
 

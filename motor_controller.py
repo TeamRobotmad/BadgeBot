@@ -658,6 +658,7 @@ class MotorController:
         if self._settings.get('accel_scale') is not None:
             scale_pct = max(1, int(self._settings['accel_scale'].v))
         target_m = abs(distance_mm) / 1000.0 * (100.0 / scale_pct)
+        target_mm = target_m * 1000
 
         # If the requested distance is zero or negative after scaling,
         # there is nothing to do. Early-return to avoid division by zero
@@ -675,7 +676,7 @@ class MotorController:
         self._busy = True
         # wait a moment to let any previous motion settle, then calibrate the accelerometer bias
         await asyncio.sleep_ms(250)
-        self._calibrate_accel()
+        await self._calibrate_accel()
         self._reset_distance()
         elapsed = 0
         last_time = time.ticks_ms()
@@ -683,7 +684,6 @@ class MotorController:
 
         # --- DIAGNOSTICS: start ---
         if self._logging:
-            target_mm = target_m * 1000
             print("[MC-DIAG] === distance_drive START ===")
             print("[MC-DIAG]   requested   = %.1f mm" % distance_mm)
             print("[MC-DIAG]   accel_scale = %d%%" % scale_pct)

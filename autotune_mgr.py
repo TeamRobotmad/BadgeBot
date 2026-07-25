@@ -24,7 +24,6 @@ from app_components.notification import Notification
 from system.hexpansion.config import HexpansionConfig
 
 from .autotune import PIDAutoTuner, METHOD_ZIEGLER_NICHOLS
-from .line_follow import create_line_sensors
 from .app import (STATE_AUTOTUNE, STATE_COUNTDOWN, MOTOR_PWM_FREQ, MOTOR_POWER_SCALE_FACTOR)
 
 AUTOTUNER_UPDATE_PERIOD = 10  # ms between updates while tuning
@@ -80,18 +79,11 @@ class AutotuneMgr:
     def start(self) -> bool:
         """Enter PID Auto Tune mode from the main menu."""
         app = self._app
-        if self.follower.line_sensors is None and app.hexsense_port is not None:
-            config = HexpansionConfig(app.hexsense_port)
-            self.follower.line_sensors = create_line_sensors(config, app.num_line_sensors)
 
-        if self.follower.line_sensors is None:
-            # Line sensors are not available; inform the user and abort autotune.
-            app.notification = Notification("Line sensors not available")
-            return False
         if len(app.hexdrive_apps) > 0:
-            app.hexdrive_apps[0].set_logging(False)
-            if app.hexdrive_apps[0].initialise() and app.hexdrive_apps[0].set_power(True) and app.hexdrive_apps[0].set_freq(MOTOR_PWM_FREQ):
-                #self.follower.line_sensors.enable() # using blocking_read which does not require enabling.
+            hexdrive_app = app.hexdrive_apps[0]
+            hexdrive_app.set_logging(False)
+            if hexdrive_app.initialise() and hexdrive_app.set_power(True) and hexdrive_app.set_freq(MOTOR_PWM_FREQ):
                 app.set_menu(None)
                 app.button_states.clear()
                 self.autotuner = None
@@ -138,14 +130,14 @@ class AutotuneMgr:
     def update(self, delta) -> bool:        # pylint: disable=unused-argument
         """Handle Autotune UI.  Returns True if handled."""
         app = self._app
-        self.follower.sample_time += delta
+        #self.follower.sample_time += delta
 
         if app.button_states.get(BUTTON_TYPES["CANCEL"]):
             app.button_states.clear()
             if len(app.hexdrive_apps) > 0:
                 app.hexdrive_apps[0].set_motors((0, 0))
                 app.hexdrive_apps[0].set_power(False)
-            self.follower.line_sensors.disable()
+            #self.follower.line_sensors.disable()
             self.autotuner = None
             app.return_to_menu()
             if self._logging:
@@ -160,11 +152,11 @@ class AutotuneMgr:
                 app.current_state = STATE_COUNTDOWN
                 app.refresh = True
 
-        if self.follower.sample_time > 1000:
-            sample_count = self.follower.line_sensors.sample_count_and_reset()
-            self.follower.sensor_rate = int(((self.follower.sample_time / self.follower.line_sensors.num_sensors) * sample_count) // self.follower.sample_time)
-            self.follower.sample_time = 0
-            app.refresh = True
+        #if self.follower.sample_time > 1000:
+        #    sample_count = self.follower.line_sensors.sample_count_and_reset()
+        #    self.follower.sensor_rate = int(((self.follower.sample_time / self.follower.line_sensors.num_sensors) * sample_count) // self.follower.sample_time)
+        #    self.follower.sample_time = 0
+        #    app.refresh = True
 
         return True
 
@@ -178,10 +170,11 @@ class AutotuneMgr:
         Returns motor output tuple, or None if not active."""
         if self.autotuner is not None and self.autotuner.is_running:
             #self.follower.line_sensors.read()
-            self.follower.line_sensors.read_blocking()    # wait for sensor reading
-            left_raw  = self.follower.line_sensors.raw_value(0)
-            right_raw = self.follower.line_sensors.raw_value(1)
-            error = self.follower.compute_error(left_raw, right_raw)
+            #self.follower.line_sensors.read_blocking()    # wait for sensor reading
+            #left_raw  = self.follower.line_sensors.raw_value(0)
+            #right_raw = self.follower.line_sensors.raw_value(1)
+            #error = self.follower.compute_error(left_raw, right_raw)
+            error = 0  # Placeholder error value since line sensors are disabled
             output = self.autotuner.update(error, delta)
             if self.autotuner.is_running:
                 return output
@@ -199,9 +192,9 @@ class AutotuneMgr:
             if self.autotuner.is_complete:
                 gains = self.autotuner.get_gains()
                 if gains is not None:
-                    app.settings['pid_kp'].v = int(1000 * gains[0])
-                    app.settings['pid_ki'].v = int(1000 * gains[1])
-                    app.settings['pid_kd'].v = int(1000 * gains[2])
+                    app.settings['pid_kp'].v = int(10 * gains[0])
+                    app.settings['pid_ki'].v = int(10 * gains[1])
+                    app.settings['pid_kd'].v = int(10 * gains[2])
                     app.settings['pid_kp'].persist()
                     app.settings['pid_ki'].persist()
                     app.settings['pid_kd'].persist()
@@ -231,7 +224,7 @@ class AutotuneMgr:
                 ["PID Auto Tune:", status,
                  f"Cross: {diag['crossings']}/{diag['target']}",
                  f"T={int(diag['elapsed'])//1000}s",
-                 f"Rate: {self.follower.sensor_rate} sps"],
+                 f"Rate: ? sps"],
                 [(1, 1, 0), (1, 1, 0), (0, 1, 1), (0.7, 0.7, 0.7), (1, 0, 1)], label_font_size)
             button_labels(ctx, cancel_label="Stop")
         elif self.autotuner.is_complete:
@@ -241,9 +234,9 @@ class AutotuneMgr:
             app.draw_message(ctx,
                 ["Tune Complete",
                  f"Q={q:.0f}%",
-                 f"Kp={diag['Kp']:.2f}",
-                 f"Ki={diag['Ki']:.4f}",
-                 f"Kd={diag['Kd']:.2f}"],
+                 f"Kp={diag['Kp']:.1f}",
+                 f"Ki={diag['Ki']:.1f}",
+                 f"Kd={diag['Kd']:.1f}"],
                 [(0, 1, 0), q_colour, (1, 1, 0), (1, 1, 0), (1, 1, 0)], label_font_size)
             button_labels(ctx, confirm_label="Retry", cancel_label="Accept")
         else:

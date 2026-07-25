@@ -2,10 +2,12 @@
 
 import struct
 import sys
+import app
 import bluetooth
-from micropython import schedule
+from events.input import BUTTON_TYPES
 from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
+from micropython import schedule
 
 try:
     from micropython import const
@@ -35,18 +37,35 @@ _UART_SERVICE = (_UART_UUID, (_UART_TX, _UART_RX))
 
 def init_settings(s, MySetting: type):  #pylint: disable=invalid-name
     """Register motor-moves-specific settings in the shared settings dict."""
-
+    _ = s
+    _ = MySetting
 
 class RobotBLE:
     """Handles BLE communication with the Bluefruit Connect app on a phone."""
-    def __init__(self, ble, name="Robot-Control"):
+    __slots__ = ("_ble", "_connections", "_write_callback", "_payload", "_handle_tx", "_handle_rx", "_name", "_logging")
+
+    def __init__(self, ble, name="Robot", logging: bool = False):
         self._ble = ble
+        self._connections = set()
+        self._write_callback = None
+        self._payload = None
+        self._handle_tx = None
+        self._handle_rx = None
+        self._name = name
+        self._logging = logging
+        self.init()
+
+
+    def init(self):
+        """Re-initialize the BLE controller if it was deinitialized."""
         self._ble.active(True)
         self._ble.irq(self._irq)
         ((self._handle_tx, self._handle_rx),) = self._ble.gatts_register_services((_UART_SERVICE,))
-        self._connections = set()
+        self._connections.clear()
         self._write_callback = None
-        self._payload = self._advertising_payload(name=name, services=[_UART_UUID])
+        self._payload = self._advertising_payload(name=self._name, services=[_UART_UUID])
+        # Override the internal firmware name string - This stops the phone app from falling back to "MPY ESP32" upon connection
+        self._ble.config(gap_name=self._name)
         self._advertise()
 
 
@@ -64,25 +83,32 @@ class RobotBLE:
         if event == 1:  # _IRQ_CENTRAL_CONNECT
             conn_handle, _, _ = data
             self._connections.add(conn_handle)
-            print("B:BLE:Connected")
+            if self._logging:
+                print("B:BLE:Connected")
 
         elif event == 2:  # _IRQ_CENTRAL_DISCONNECT
             conn_handle, _, _ = data
             if conn_handle in self._connections:
                 self._connections.remove(conn_handle)
             self._advertise()
-            print("B:BLE:Disconnected")
+            if self._logging:
+                print("B:BLE:Disconnected")
 
         elif event == 3:  # _IRQ_GATTS_WRITE
             conn_handle, value_handle = data
             value = self._ble.gatts_read(value_handle)
+            if self._logging:
+                print(f"B:BLE:RX: {value.decode().strip()}")
             if value_handle == self._handle_rx and self._write_callback:
                 self._write_callback(value)
 
 
     def _advertise(self, interval_us=500000):
         print("BLE:Advertising...")
-        self._ble.gap_advertise(interval_us, adv_data=self._payload)
+        try:
+            self._ble.gap_advertise(interval_us, adv_data=self._payload)
+        except OSError as e:
+            print(f"BLE:Advertising failed: {e}")
 
 
     def send_telemetry(self, text):
@@ -127,19 +153,22 @@ class RobotBLE:
 
         return payload
 
+
+# DO NOT USE WITHOUT CARE AND SOME DEBUGGING - seems to cause crashes
     def deinit(self):
         """Deinitializes the BLE controller and stops advertising."""
         self._ble.active(False)
         self._connections.clear()
         self._write_callback = None
-        print("BLE:Deinitialized")
+        if self._logging:
+            print("B:BLE:Deinitialized")
 
 
 # --- Robot Logic ---
 
 # Direction buttons that can override motor output from the current state.
-# '4' = stop, '5' = forward, '6' = backward, '7' = left, '8' = right.
-_DRIVE_BUTTONS = frozenset('45678')
+# '5' = forward, '6' = backward, '7' = left, '8' = right.
+_DRIVE_BUTTONS = frozenset('45678') # 5/6/7/8 form a control keypad, but 4 is used as emergency stop which will override other apps trying to drive the robot.
 _CONTROL_BUTTONS = frozenset('0123')
 
 # Currently-held BLE drive button, or None when no button is pressed.
@@ -167,26 +196,27 @@ def ble_process_command(data):
         if action == '1':
             if button == '0':
                 # toggle Flood LED state
-                print("BLE:Toggle Flood LED")
+                #print("BLE:Toggle Flood LED")
+                pass
         return
 
     if button in _DRIVE_BUTTONS:
         if action == '1': # Button pressed
             _ble_active_button = button
-            if button == '4':
-                print("BLE: Stop")
-            elif button == '5':
-                print("BLE: Forward")
-            elif button == '6':
-                print("BLE: Backward")
-            elif button == '7':
-                print("BLE: Left")
-            elif button == '8':
-                print("BLE: Right")
+            #if button == '4':
+            #    print("BLE:Stop")
+            #elif button == '5':
+            #    print("BLE: Forward")
+            #elif button == '6':
+            #    print("BLE: Backward")
+            #elif button == '7':
+            #    print("BLE: Left")
+            #elif button == '8':
+            #    print("BLE: Right")
         else: # Button released — clear override only if it's the button we're tracking
             if _ble_active_button == button:
                 _ble_active_button = None
-                print("BLE: Release")
+                #print("BLE: Release")
 
 
 
@@ -263,14 +293,15 @@ class BluetoothMgr:
     app : BadgeBotApp
         Reference to the main application instance.
     """
-    __slots__ = ("_app", "_logging", "_ble", "_ble_controller", "_is_connected")
+    __slots__ = ("_app", "_logging", "_ble", "_ble_controller", "_is_connected", "_name")
 
-    def __init__(self, app, logging=False):
+    def __init__(self, app, logging=True):
         self._app = app
         self._logging: bool = logging
         self._ble = bluetooth.BLE()
-        self._ble_controller = None
-        self._is_connected = False
+        self._ble_controller: RobotBLE | None = None
+        self._is_connected: bool = False
+        self._name: str | None = None
 
 
     @property
@@ -306,49 +337,73 @@ class BluetoothMgr:
         return None
 
 
-    def start(self, name: str = "RobotXXX"):
-        print(f"B:Initialising Bluetooth LE with name = {name}")
+    def start(self, name: str = "RobotXXX") -> bool:
+        """Start the Bluetooth manager and begin advertising."""
+        self._name = name
+        app = self._app
 
-        # If the BLE controller is already initialized, deinitialize it first
-        if self._ble_controller is not None:
-            print("B:Deinitializing existing BLE controller...")
-            self._ble_controller.deinit()
-            self._ble_controller = None
+        if self._ble_controller is None:
+            if self._logging:
+                print(f"B:Initialising Bluetooth LE with name = {name}")
 
-        # Initialize the BLE controller
-        try:
-            self._ble_controller = RobotBLE(self._ble, name=name)
-            if self.logging:
-                print("B:BLE controller initialized")
-        except Exception as e:
-            print(f"B:Failed to initialize BLE controller: {e}")
-            self._ble_controller = None
+            # BLE doesn't seem to like being deinitisalised - perhpaps somethign wrong in the sequence...
+            # If the BLE controller is already initialized, deinitialize it first
+            #if self._ble_controller is not None:
+            #    print("B:Deinitializing existing BLE controller...")
+            #    self._ble_controller.deinit()
+            #    self._ble_controller = None
 
-        # Register the command processor
-        if self._ble_controller is not None:
+            # Initialize the BLE controller
+            try:
+                self._ble_controller = RobotBLE(self._ble, name=name, logging=self._logging)
+                if self._logging:
+                    print("B:BLE controller initialized")
+            except Exception as e:      # pylint: disable=broad-except
+                print(f"B:Failed to initialize BLE controller: {e}")
+                self._ble_controller = None
+
+            if self._ble_controller is None:
+                print("B:BLE controller is None, cannot start Bluetooth manager")
+                return False
+
+            # Register the command processor
+            if self._logging:
+                print("B:Registering BLE command processor...")
             self._ble_controller.on_write(ble_process_command)
+            if self._logging:
+                print("B:BluetoothMgr initialised")
+        else:
+            if self._logging:
+                print("B:BLE controller already initialized")
 
-        if self.logging:
-            print("B:BluetoothMgr initialised")
+        app.set_menu(None)
+        app.button_states.clear()
+        app.refresh = True
+        app.auto_repeat_clear()
+        return True
 
 
     def update(self, delta: int) -> None:
+        """Update the Bluetooth manager's state.  This should be called in the main loop's update phase."""
+        _ = delta
         app = self._app
 
         if self._ble_controller is not None:
             if self._ble_controller.is_connected() and not self._is_connected:
                 self._is_connected = True
-                app.show_notification(Notification("BLE Connected"))
+                app.notification = Notification("BLE Connected")
+                app.refresh = True
             elif not self._ble_controller.is_connected() and self._is_connected:
                 self._is_connected = False
-                app.show_notification(Notification("BLE Disconnected"))
+                app.notification = Notification("BLE Disconnected")
+                app.refresh = True
 
         if app.button_states.get(BUTTON_TYPES["CANCEL"]):
             app.button_states.clear()
             # return to menu and disconnect from BLE if connected
-            if self._ble_controller is not None:
-                self._ble_controller.deinit()
-                self._ble_controller = None
+            #if self._ble_controller is not None:
+            #    self._ble_controller.deinit()
+            #    self._ble_controller = None
             app.return_to_menu()
         elif app.button_states.get(BUTTON_TYPES["CONFIRM"]):
             app.button_states.clear()
@@ -361,9 +416,9 @@ class BluetoothMgr:
         app = self._app
         # if connected then show a message to the user that they can control the robot with the Bluefruit LE app
         if self._is_connected:
-            app.draw_message(ctx, ["BLE connected", "use Bluefruit LE", "to control"], [(0.5, 1, 0.5), (0.5, 1, 0.5), (0.5, 1, 0.5)], label_font_size)
+            app.draw_message(ctx, ["BLE connected", "use Bluefruit LE", "on Phone","to control"], [(0.5, 1, 0.5), (0.5, 1, 0.5), (0.5, 1, 0.5), (0.5, 1, 0.5)], label_font_size)
         else:
-            app.draw_message(ctx, ["BLE enabled", "use Bluefruit LE", "to connect"], [(1, 1, 0), (1, 1, 0), (1, 1, 0)], label_font_size)
+            app.draw_message(ctx, ["BLE enabled:", "use Bluefruit LE", "on Phone", "to connect to", f"{self._name}"], [(1, 1, 0), (1, 1, 0), (1, 1, 0), (1, 1, 0), (0.5, 1, 1)], label_font_size)
 
         button_labels(ctx, confirm_label="OK", cancel_label="Exit")
         return True

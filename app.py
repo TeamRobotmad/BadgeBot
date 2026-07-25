@@ -186,7 +186,7 @@ emit_diagnostics_output, set_diagnostics_output           = _try_import('diagnos
 class BadgeBotApp(app.App):         # pylint: disable=no-member
     """Main application class for BadgeBot.  Manages overall state, user input, and delegates to functional area managers for specific features."""
     __slots__ = (
-        "_ble_override_active", "button_states", "last_press", "_auto_repeat_intervals",
+        "_logging", "_ble_override_active", "button_states", "last_press", "_auto_repeat_intervals",
         "_auto_repeat", "_auto_repeat_count", "auto_repeat_level", "refresh", "_ring_refresh", "_ring_colour", "rpm",
         "animation_counter", "pattern_status", "qr_code", "app_version", "b_msg", "t_msg", "notification",
         "message",
@@ -210,6 +210,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         "_motor1_min",
         "_motor2_min",
         "_max_pwr",
+        "_front_face",
         "current_state",
         "previous_state",
         "update_period",
@@ -250,10 +251,14 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         "_ble_controller",
     )
 
+    DEFAULT_MAX_POWER = DEFAULT_MAX_POWER
+    DEFAULT_ACCELERATION = DEFAULT_ACCELERATION
+
     def __init__(self):
         super().__init__()
 
         print("B:BadgeBotApp: Initialising...")
+        self._logging = True
 
         # UI Button Controls
         self.button_states = Buttons(self)
@@ -302,6 +307,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self._motor1_min: int = _DEFAULT_MOTOR_MIN * MOTOR_POWER_SCALE_FACTOR # Minimum motor PWM value (0-65535) for motor 1, below which the motor will not move.  This is used to compensate for differences in motors and gearboxes, so that both motors start moving at the same time when given the same power level.
         self._motor2_min: int = _DEFAULT_MOTOR_MIN * MOTOR_POWER_SCALE_FACTOR # Minimum motor PWM value (0-65535) for motor 2, below which the motor will not move.  This is used to compensate for differences in motors and gearboxes, so that both motors start moving at the same time when given the same power level.
         self._max_pwr: int = 65535                  # Maximum motor PWM value (0-65535)
+        self._front_face: int = _DEFAULT_FRONT_FACE  # Front Face is Slot 3 on a standard build BadgeBot, but can be changed in settings to any of the 12 possible directions (0-11) representing the forward direction for movement.
 
         # Overall app state (controls what is displayed and what user inputs are accepted)
         self.current_state = STATE_HEXPANSION
@@ -509,9 +515,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     @property
     def logging(self):
         """Convenience property to access logging setting."""
-        if 'logging' in self.settings:
-            return self.settings['logging'].v
-        return True
+        return self._logging
 
 
     @property
@@ -528,9 +532,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     @property
     def front_face(self):
         """Convenience property to access front_face setting representing the forward direction for movement."""
-        if 'front_face' in self.settings:
-            return self.settings['front_face'].v
-        return _DEFAULT_FRONT_FACE
+        return self._front_face
 
 
     @property
@@ -730,8 +732,10 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
     def fast_settings_update(self):
         """Update fast access settings from the main settings dictionary."""
-        if self.logging:
+        if self._logging:
             print("B:Updating fast access settings")
+        self._logging: bool = self.settings['logging'].v
+        self._front_face: bool = self.settings['front_face'].v
         self._motor_deadband: int = self.settings['mtr_deadband'].v * MOTOR_POWER_SCALE_FACTOR
         self._motor1_reversed: bool = self.settings['mtr1_dir'].v != 0
         self._motor2_reversed: bool = self.settings['mtr2_dir'].v != 0
@@ -815,7 +819,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
         if self.current_state != self.previous_state:
             if self.logging:
-                print(f"State: {self.previous_state} -> {self.current_state}")
+                print(f"B:State: {self.previous_state} -> {self.current_state}")
             self.previous_state = self.current_state
             # manage LED PatternEnable/Disable for all states
             self._pattern_management()
@@ -1294,12 +1298,12 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self._main_menu_position = self.menu.position if self.menu else 0
         if item == MAIN_MENU_ITEMS[MENU_ITEM_BLUETOOTH]: # Bluetooth
             if self._bluetooth_mgr is not None and self._hexpansion_mgr is not None:
-                self._bluetooth_mgr.logging = self.logging
+                self._bluetooth_mgr.logging = self._logging
                 # Make unique Bluetooth Name from HexDrive Unique ID, so that multiple BadgeBots can be used in the same area without confusion:
-                # Name is limited to 8 characters, so we use "BgBot" & a three digit decimal number from the unique ID, which is a 32-bit number, so we take the last three digits of the unique ID modulo 1000
+                # Name is limited to 8 characters, so we use "BBot" & a three digit decimal number from the unique ID, which is a 32-bit number, so we take the last three digits of the unique ID modulo 1000
                 uniqueid = self._hexpansion_mgr.get_active_hexdrive_unique_id()
                 if uniqueid is not None:
-                    name = f"B6t{uniqueid % 1000:03d}"
+                    name = f"BBot{uniqueid % 1000:03d}"
                 else:
                     name = None
                 if self._bluetooth_mgr.start(name = name):
