@@ -268,6 +268,8 @@ class LineFollowMgr:
             if self._new_sample:
                 self._new_sample = False
                 self._display_refresh_time = 0
+                if self._logging:
+                    print(f"B:LF:CS={app.sensor_test_mgr.colour_sensor_stats.rate_str}")
                 app.refresh = True
 
         if app.button_states.get(BUTTON_TYPES["CANCEL"]):
@@ -322,8 +324,12 @@ class LineFollowMgr:
             app.button_states.clear()
             self._enable_movement = not self._enable_movement
             if self._enable_movement:
+                if self._logging:
+                    print("B:LF:Start")
                 self._app.set_ring_colour(None) # Turn off the ring colour to indicate we are actively following the line
             else:
+                if self._logging:
+                    print("B:LF:Stop")
                 self.motor_output = (0, 0)      # Stop
             app.refresh = True
             app.performance_mode = False  # disable performance mode while adjusting settings so we can see the display update
@@ -379,8 +385,9 @@ class LineFollowMgr:
                         print("B:LF:Obstacle detected, auto stop")
                     self._enable_movement = False
                     output = (0, 0)
-                    self._app.performance_mode = False
-                    self._app.notification = Notification("Emergency Stop", self._range_hexdrive.config.port)
+                    app = self._app
+                    app.performance_mode = False
+                    app.notification = Notification("Stop Obstacle", self._range_hexdrive.config.port)
 
         # Poll the shared colour sensor; read_colour also updates the ring colour on change.
         new_sample, hue, name, _raw = sensor_mgr.read_colour(self._colour_hexdrive)
@@ -400,7 +407,9 @@ class LineFollowMgr:
                 self._enable_movement = False
                 self._time_since_line_detected = _MAX_TIME_WITHOUT_LINE
                 output = (0, 0)
-                self._app.performance_mode = False  # stop performance mode if we have lost the line for a while
+                app = self._app
+                app.performance_mode = False  # stop performance mode if we have lost the line for a while
+                app.notification = Notification("Stop On Black", self._colour_hexdrive.config.port)
             elif self._last_colour_name in ("White", "Grey"):
                 # Allow a short period to pick up the line again if the colour is white or grey (i.e. no line detected)
                 self._last_colour_hue = _HUE_COLOUR_UNKNOWN

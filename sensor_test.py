@@ -148,8 +148,8 @@ class SensorTestMgr:
     __slots__ = ("_app", "_sub_state", "_last_sub_state", "_port_selected", "_new_sample", "_use_events", "_update_timer",
                  "_min_update_period_ms", "_hexdrive_app", "_sensor_selected", "_sensor_type", "_sensor_name",
                  "_display_data", "_page_selected", "_page_count", "_test_card", "_logging", "_draw_stats",
-                 "_last_range", "_last_colour", "_last_colour_name", "_last_colour_hue", "_display_colour", "_range_sensor_stats",
-                 "_colour_sensor_stats", "_range_sensor", "_colour_sensor", "_sensor_list",
+                 "_last_range", "_last_colour", "_last_colour_name", "_last_colour_hue", "_display_colour", "range_sensor_stats",
+                 "colour_sensor_stats", "_range_sensor", "_colour_sensor", "_sensor_list",
                  "_last_colour_sequence", "_last_range_sequence")
 
     def __init__(self, app, logging: bool = False):
@@ -180,8 +180,8 @@ class SensorTestMgr:
         self._last_colour_name: str = "unknown"
         self._last_colour_hue: int = 0
         self._display_colour: tuple[float, float, float] = (1.0, 1.0, 0.0)  # default to yellow for non-colour sensors
-        self._range_sensor_stats = SensorStats(_SENSOR_RANGE)
-        self._colour_sensor_stats = SensorStats(_SENSOR_COLOUR)
+        self.range_sensor_stats = SensorStats(_SENSOR_RANGE)
+        self.colour_sensor_stats = SensorStats(_SENSOR_COLOUR)
         self._range_sensor = None
         self._colour_sensor = None
         self._last_range_sequence: int = 0
@@ -189,8 +189,8 @@ class SensorTestMgr:
 
         # Ultimately this list needs to be populated dynamically based on the sensors detected on the selected HexDrive, but for now we hardcode the known sensor types.
         self._sensor_list: list[SensorEntry] = [
-            SensorEntry("VL53L0X", _SENSOR_RANGE, self._range_sensor_stats),
-            SensorEntry("OPT4060", _SENSOR_COLOUR, self._colour_sensor_stats),
+            SensorEntry("VL53L0X", _SENSOR_RANGE, self.range_sensor_stats),
+            SensorEntry("OPT4060", _SENSOR_COLOUR, self.colour_sensor_stats),
         ]
         if self._logging:
             print("SensorTestMgr initialised")
@@ -259,8 +259,8 @@ class SensorTestMgr:
             self._port_selected = self._hexdrive_app.config.port
             self._setup_for_sensor_type()
             self._sub_state = _SUB_READING
-            return True
-        self._sub_state = _SUB_SELECT_PORT
+        else:
+            self._sub_state = _SUB_SELECT_PORT
 
         if not self._use_events:
             # Polling the sensors for new readings in the background (if not using events)
@@ -295,6 +295,7 @@ class SensorTestMgr:
     def update(self, delta: int):
         """Handle Sensor Test states."""
         if self._draw_stats.update(delta):
+            print(f"B:Draw stats updated: {self._draw_stats.rate_str}")
             self._app.refresh = True
         if self._sub_state == _SUB_SELECT_PORT:
             self._update_select_port(delta)
@@ -488,7 +489,7 @@ class SensorTestMgr:
             except (TypeError, RuntimeError) as e:
                 print(f"B:Error disabling range sensor: {e}")
             print("B:Range Disabled")
-        self._range_sensor_stats.reset()
+        self.range_sensor_stats.reset()
 
 
     def read_range(self, hexdrive_app) -> tuple[bool, int | None]:
@@ -505,7 +506,7 @@ class SensorTestMgr:
                 return (False, self._last_range)
             self._last_range_sequence = s
             self._last_range = range_sensor.range
-            self._range_sensor_stats.new_sample(s)
+            self.range_sensor_stats.new_sample(s)
             return (True, self._last_range)
         except Exception as e:
             print(f"B:Error reading range sensor: {e}")
@@ -634,7 +635,7 @@ class SensorTestMgr:
             except (TypeError, RuntimeError) as e:
                 print(f"B:Error disabling colour sensor: {e}")
             print("B:Colour Disabled")
-        self._colour_sensor_stats.reset()
+        self.colour_sensor_stats.reset()
 
 
     def read_colour(self, hexdrive_app, update_ring: bool = True) -> tuple[bool, int, str, tuple[int, int, int, int] | None]:
@@ -657,7 +658,7 @@ class SensorTestMgr:
                 self._last_colour_name = colour_name
                 if update_ring:
                     self._app.set_ring_colour(self.colour_card_rgb(colour_name))
-            self._colour_sensor_stats.new_sample(s)
+            self.colour_sensor_stats.new_sample(s)
             return (True, self._last_colour_hue, self._last_colour_name, self._last_colour)
         except Exception as e:
             print(f"B:Error reading colour sensor: {e}")
@@ -788,20 +789,20 @@ class SensorTestMgr:
 
         if self._page_selected == _PAGE_STATS:
             # get the rate from the stats object for the current sensor and display it
-            rate = self._sensor_list[self._sensor_selected].stats.rate
             #missed = self._sensor_list[self._sensor_selected].stats.missed
-            self._display_data["sample"] = f"{rate//10}.{rate % 10}Hz"
+            self._display_data["sample"] = self._sensor_list[self._sensor_selected].stats.rate_str
             #self._display_data["missed"] = f"{missed}"
             #self._display_data["queue"] = f"{eventbus.event_queue.qsize()}"
-            #draw_rate = self._draw_stats.rate
-            #self._display_data["draw"] = f"{draw_rate // 10}.{draw_rate % 10}Hz"
+            self._display_data["draw"] = self._draw_stats.rate_str
 
 
     def _update_reading(self, delta: int):      # pylint: disable=unused-argument
         app = self._app
+
         # perform update call on all sensor stats
         for sensor in self._sensor_list:
             if sensor.stats.update(delta):
+                print(f"B:Sensor '{sensor.name}' stats updated: {sensor.stats.rate_str}")
                 app.refresh = True
 
         # if the page shows any of the sensor readings, update the display values at a limited rate
@@ -1049,7 +1050,7 @@ class SensorTestMgr:
                 #    if range_event is not None:
                 #        eventbus.remove(range_event, self._handle_range_event, self)
                 #        print("B:Range Event disabled")
-            self._range_sensor_stats.reset()
+            self.range_sensor_stats.reset()
 
         if (sensor is not None and self._sensor_list[sensor].sensor_type is not _SENSOR_COLOUR):
             pass  # Don't disable the colour sensor if the selected sensor is not a colour sensor
@@ -1066,7 +1067,7 @@ class SensorTestMgr:
         """Handle range events from the range sensor."""
         #print(f"B:EventRange:{event.range}mm")
         self._last_range = event.range
-        self._range_sensor_stats.new_sample()
+        self.range_sensor_stats.new_sample()
         if self._sensor_type is _SENSOR_RANGE:
             self._new_sample = True
         elif self._logging:
@@ -1077,7 +1078,7 @@ class SensorTestMgr:
         """Handle colour events from the colour sensor."""
         #print(f"B:EventColour:{event.colour} ({event.colour_name})")
         self._last_colour = event.colour
-        self._colour_sensor_stats.new_sample()
+        self.colour_sensor_stats.new_sample()
         if self._sensor_type is _SENSOR_COLOUR:
             self._new_sample = True
         elif self._logging:
@@ -1662,3 +1663,9 @@ class SensorStats():
     def rate(self) -> int:
         """Return the current sample rate in 0.1Hz units."""
         return self._sample_rate
+
+
+    @property
+    def rate_str(self) -> str:
+        """Return the current sample rate as a string in Hz."""
+        return f"{self._sample_rate // 10}.{self._sample_rate % 10}Hz"

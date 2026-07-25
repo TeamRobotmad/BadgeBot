@@ -125,7 +125,7 @@ class MySetting:
 
 
     def persist(self):
-        """Persist the setting value to platform storage.  If the value is equal to the default, the setting will be removed from storage to save space."""
+        """Persist the setting value to platform storage."""
         index = self._index()
         if index is None:
             return
@@ -204,7 +204,7 @@ class SettingsMgr:
                 app.refresh = True
         else:
             app.auto_repeat_clear()
-            if app.button_states.get(BUTTON_TYPES["RIGHT"]) or app.button_states.get(BUTTON_TYPES["LEFT"]):
+            if app.button_states.get(BUTTON_TYPES["RIGHT"]): # or app.button_states.get(BUTTON_TYPES["LEFT"]):
                 app.button_states.clear()
                 self.edit_setting_value = app.settings[self.edit_setting].d
                 if self._logging:
@@ -223,7 +223,7 @@ class SettingsMgr:
                     print(f"Setting: {self.edit_setting} = {self.edit_setting_value}")
                 app.settings[self.edit_setting].v = self.edit_setting_value
                 app.settings[self.edit_setting].persist()
-                app.notification = Notification(f"  Setting:   {self.edit_setting}={self.edit_setting_value}")
+                app.notification = Notification(f"Setting: {self.edit_setting}={self.edit_setting_value}")
                 app.return_to_menu(MENU_ENTRY_NAME)
         return True
 
