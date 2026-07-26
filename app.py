@@ -670,7 +670,12 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                     output = (0, 0)
                 self._ble_override_active = False
 
+            if output is None and (self._output1 != 0 or self._output2 != 0):
+                # ensure we stop the motors if the current state has no output and the previous output was non-zero
+                output = (0, 0)
+
             if output is not None:
+                # we have to continue to run the motors until the current state returns None and the outputs are both 0, otherwise the motors will keep running at the last output value
                 if not self.hexdrive_apps[0].set_motors(self.apply_motor_calibration(output)):
                     if self.logging:
                         print("Failed to set motor outputs to HexDrive app")
