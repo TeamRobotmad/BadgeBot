@@ -526,7 +526,7 @@ class LineFollowMgr:
 
         #Remind User to calibrate Colour Sensor if this is the first time the Line Follower has been started since the app was launched.
         if not self._calibration_msg_shown:
-            self._app.show_message(["Line Follower:", "For best performance", "ensure Colour", "Sensor calibration", "is recent"], [(0.5,1.0,0.5),(1,1,1),(1,1,1),(1,1,1),(1,1,1)], return_state = STATE_FOLLOWER)
+            self._app.show_message(["Line Follower:", "For best tracking", "ensure Colour", "Sensor calibration", "is recent"], [(0.5,1.0,0.5),(1,1,1),(1,1,1),(1,1,1),(1,1,1)], return_state = STATE_FOLLOWER)
             self._calibration_msg_shown = True
             return True
 
