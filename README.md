@@ -95,12 +95,8 @@ This repo contains lots of files that you don't need on your badge to use a HexD
 + autotune.mpy
 + autotune_mgr.mpy
 + autodrive.mpy
-+ sensor_manager.mpy
 + sensor_test.mpy
-+ sensors/__init__.mpy
-+ sensors/sensor_base.mpy
-+ sensors/vl53l0x.mpy
-+ sensors/opt4060.mpy
+
 
 
 ### Hexpansion Recovery ###

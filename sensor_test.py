@@ -508,7 +508,7 @@ class SensorTestMgr:
             self._last_range = range_sensor.range
             self.range_sensor_stats.new_sample(s)
             return (True, self._last_range)
-        except Exception as e:
+        except Exception as e:          # pylint: disable=broad-except
             print(f"B:Error reading range sensor: {e}")
             return (False, None)
 
@@ -660,7 +660,7 @@ class SensorTestMgr:
                     self._app.set_ring_colour(self.colour_card_rgb(colour_name))
             self.colour_sensor_stats.new_sample(s)
             return (True, self._last_colour_hue, self._last_colour_name, self._last_colour)
-        except Exception as e:
+        except Exception as e:          # pylint: disable=broad-except
             print(f"B:Error reading colour sensor: {e}")
             return (False, self._last_colour_hue, self._last_colour_name, self._last_colour)
 
@@ -789,9 +789,8 @@ class SensorTestMgr:
 
         if self._page_selected == _PAGE_STATS:
             # get the rate from the stats object for the current sensor and display it
-            #missed = self._sensor_list[self._sensor_selected].stats.missed
             self._display_data["sample"] = self._sensor_list[self._sensor_selected].stats.rate_str
-            #self._display_data["missed"] = f"{missed}"
+            #self._display_data["missed"] = f"{self._sensor_list[self._sensor_selected].stats.missed}"
             #self._display_data["queue"] = f"{eventbus.event_queue.qsize()}"
             self._display_data["draw"] = self._draw_stats.rate_str
 
@@ -1007,7 +1006,7 @@ class SensorTestMgr:
                         )
                         print("B:Range Event enabled")
             elif self._logging:
-                print(f"B:Range sensor not available on this HexDrive.")
+                print("B:Range sensor not available on this HexDrive.")
 
         if (sensor is not None and self._sensor_list[sensor].sensor_type is not _SENSOR_COLOUR) or 0 == (capabilities & capability_colour):
             pass  # Don't enable the colour sensor if the selected sensor is not a colour sensor or if the hexdrive_app does not support colour sensors
@@ -1024,7 +1023,7 @@ class SensorTestMgr:
                         )
                         print("B:Colour Event enabled")
             elif self._logging:
-                print(f"B:Colour sensor not available on this HexDrive.")
+                print("B:Colour sensor not available on this HexDrive.")
 
         return num_sensors_enabled > 0
 

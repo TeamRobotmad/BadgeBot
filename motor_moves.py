@@ -25,39 +25,45 @@ from events.input import BUTTON_TYPES, Button
 from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
 from .utils import chain
-from .app import (STATE_COUNTDOWN, STATE_MOTOR_MOVES, STATE_LOGO, DEFAULT_BACKGROUND_UPDATE_PERIOD, MOTOR_PWM_FREQ)
+from .app import (STATE_COUNTDOWN, STATE_MOTOR_MOVES, STATE_LOGO, DEFAULT_BACKGROUND_UPDATE_PERIOD, DEFAULT_ACTIVE_UPDATE_PERIOD, MOTOR_PWM_FREQ)
+
+try:
+    from micropython import const
+except ImportError:
+    # CPython / simulator fallback – const() is just an identity function
+    # on MicroPython; replicate that so module-level const() calls work.
+    const = lambda x: x         #pylint: disable=unnecessary-lambda-assignment
 
 # Screen positioning for movement sequence text
-H_START = -63
-V_START = -58
+H_START = const(-63)
+V_START = const(-58)
 
 # Timings
-_TICK_MS       =  10
-_LONG_PRESS_MS = 750
+_LONG_PRESS_MS = const(750)
 
 # Default user timings for drive and turn steps (can be configured in settings)
-_DEFAULT_USER_DRIVE_MS =  50
-_DEFAULT_USER_TURN_MS  =  20
+_DEFAULT_USER_DRIVE_MS = const(50)
+_DEFAULT_USER_TURN_MS  = const(20)
 
-_MIN_USER_DRIVE_MS     = 10
-_MIN_USER_TURN_MS      = 10
+_MIN_USER_DRIVE_MS     = const(10)
+_MIN_USER_TURN_MS      = const(10)
 
-_MAX_USER_DRIVE_MS     = 10000
-_MAX_USER_TURN_MS      = 10000
+_MAX_USER_DRIVE_MS     = const(10000)
+_MAX_USER_TURN_MS      = const(10000)
 
 
 # Drive modes for TIME and DISTANCE (acceleration-based)
-DRIVE_MODE_TIME     = 0     # exposed for use in autodrive.py
-DRIVE_MODE_DISTANCE = 1     # exposed for use in autodrive.py
+DRIVE_MODE_TIME     = const(0)     # exposed for use in autodrive.py
+DRIVE_MODE_DISTANCE = const(1)     # exposed for use in autodrive.py
 _DEFAULT_DRIVE_MODE  = DRIVE_MODE_DISTANCE
 _DRIVE_MODE_LABELS = ("Time", "Distance")
 
 
 # Local sub-states (internal to Motor Moves)
-_SUB_HELP          = 0
-_SUB_RECEIVE_INSTR = 1
-_SUB_RUN           = 2
-_SUB_DONE          = 3
+_SUB_HELP          = const(0)
+_SUB_RECEIVE_INSTR = const(1)
+_SUB_RUN           = const(2)
+_SUB_DONE          = const(3)
 
 
 # ---- Instruction class -----------------------------------------------------
@@ -128,23 +134,23 @@ class Instruction:
         _d = self._duration * self.directional_duration(mysettings)
         _a = self._app.acceleration
         _m = self._app.max_power
-        max_ramp_up_ticks = (_d // (2 * _TICK_MS)) - 1
+        max_ramp_up_ticks = (_d // (2 * DEFAULT_ACTIVE_UPDATE_PERIOD)) - 1
         for _ in range(max_ramp_up_ticks):
             curr_power += _a
             if curr_power >= _m:
                 curr_power = _m
                 break
             else:
-                ramp_up.append((self.directional_power_tuple(curr_power), _TICK_MS))
+                ramp_up.append((self.directional_power_tuple(curr_power), DEFAULT_ACTIVE_UPDATE_PERIOD))
         power_durations = ramp_up.copy()
         # period of constant power after ramp-up, before ramp-down
-        user_power_duration = _d - (2 * len(ramp_up) * _TICK_MS)
+        user_power_duration = _d - (2 * len(ramp_up) * DEFAULT_ACTIVE_UPDATE_PERIOD)
         if user_power_duration > 0:
             power_durations.append((self.directional_power_tuple(curr_power), user_power_duration))
         ramp_down = ramp_up.copy()
         ramp_down.reverse()
         power_durations.extend(ramp_down)
-        power_durations.append(((0, 0), _TICK_MS))  # ensure we end with motors off
+        power_durations.append(((0, 0), DEFAULT_ACTIVE_UPDATE_PERIOD))  # ensure we end with motors off
         if mysettings['logging'].v:
             print("Power durations:")
             print(power_durations)
@@ -254,7 +260,7 @@ class MotorMovesMgr:
                     self._sub_state = _SUB_DONE
                     return
         self._sub_state = _SUB_RUN
-        app.update_period = _TICK_MS
+        app.update_period = DEFAULT_ACTIVE_UPDATE_PERIOD
         app.refresh = True
 
 
@@ -509,8 +515,6 @@ class MotorMovesMgr:
 
 
     def _get_current_power_level(self, delta: int) -> tuple[int, int] | None:
-        #if delta >= _TICK_MS:
-        #    delta = _TICK_MS - 1
         current_power, current_duration = self.current_power_duration
         updated_duration = current_duration - delta
         if updated_duration <= 0:
@@ -526,7 +530,7 @@ class MotorMovesMgr:
                 self._sub_state = _SUB_DONE
                 return None
             # limit reduction in duration, to avoid large jumps if the background update is delayed for some reason
-            next_duration = max(_TICK_MS, next_duration - updated_duration)
+            next_duration = max(DEFAULT_ACTIVE_UPDATE_PERIOD, next_duration - updated_duration)
             self.current_power_duration = next_power, next_duration
             return next_power
         else:
@@ -560,7 +564,7 @@ class MotorMovesMgr:
 
     def _draw_receive_instr(self, ctx):
         app = self._app
-        button_labels(ctx, confirm_label="Scroll", cancel_label="Exit", up_label="Up", down_label="Down", left_label="Left", right_label="Right")
+        button_labels(ctx, confirm_label="Scroll", cancel_label="Exit", up_label="Fwd", down_label="Rev", left_label="Left", right_label="Right")
         for i_num, instr in enumerate(["START"] + self.instructions + [self.current_instruction, "END"]):
             colour = (1, 1, 1)
             if instr is not None:

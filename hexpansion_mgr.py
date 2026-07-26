@@ -26,6 +26,8 @@ from system.hexpansion.header import HexpansionHeader, write_header
 from system.hexpansion.util import get_hexpansion_block_devices, detect_eeprom_addr
 from system.scheduler import scheduler
 
+from .app import STATE_HEXPANSION
+
 _SLOTS = 6
 
 # HexDrive Hexpansion constants
@@ -414,19 +416,19 @@ class HexpansionMgr:
 
             if app.HEXPANSION_TYPES[self._hexpansion_init_type].app_mpy_name is None:
                 #app.notification = Notification("No App", port=self._upgrade_port)
-                #app.show_message(["No App", "for this", "Hexpansion"], [(1,0,0),(1,0,0),(1,0,0)], "hexpansion")
+                #app.show_message(["No App", "for this", "Hexpansion"], [(1,0,0),(1,0,0),(1,0,0)], return_state = STATE_HEXPANSION)
                 #self._message_being_shown = True
                 self._sub_state = _SUB_CHECK
             else:
                 result = self._update_app_in_eeprom(self._upgrade_port)
                 if result == _APP_EEPROM_RESULT_FAILURE:
                     app.notification = Notification("Failed", port=self._upgrade_port)
-                    app.show_message(["Hexpansion", "programming", "failed", "Protected?"], [(1,0,0),(1,0,0),(1,0,0),(1,0,0)], "warning")
+                    app.show_message(["Hexpansion", "programming", "failed", "Protected?"], [(1,0,0),(1,0,0),(1,0,0),(1,0,0)], "warning", return_state = STATE_HEXPANSION)
                     self._message_being_shown = True
                     self._sub_state = _SUB_CHECK
                 elif result == _APP_EEPROM_RESULT_MISSING:
                     app.notification = Notification("App Missing", port=self._upgrade_port)
-                    app.show_message(["App file", "missing for", "this Hexpansion"], [(1,0,0),(1,0,0),(1,0,0)], "warning")
+                    app.show_message(["App file", "missing for", "this Hexpansion"], [(1,0,0),(1,0,0),(1,0,0)], "warning", return_state = STATE_HEXPANSION)
                     self._message_being_shown = True
                     self._sub_state = _SUB_CHECK
                 else:
@@ -453,7 +455,7 @@ class HexpansionMgr:
                     self._hexpansion_state_by_slot[self._detected_port - 1] = _HEXPANSION_STATE_RECOGNISED
                 else:
                     eventbus.emit(HexpansionInsertionEvent(self._detected_port))
-                    #app.show_message(["No App", "for this", "Hexpansion"], [(1,1,0),(1,1,1),(1,1,1)], "hexpansion")
+                    #app.show_message(["No App", "for this", "Hexpansion"], [(1,1,0),(1,1,1),(1,1,1)], return_state = STATE_HEXPANSION)
                     #self._message_being_shown = True
                     self._sub_state = _SUB_CHECK
                     self._hexpansion_state_by_slot[self._detected_port - 1] = _HEXPANSION_STATE_RECOGNISED_NO_APP
@@ -461,7 +463,7 @@ class HexpansionMgr:
                 app.notification = Notification("Failed", port=self._detected_port)
                 self._hexpansion_type_by_slot[self._detected_port - 1] = None
                 self._hexpansion_state_by_slot[self._detected_port - 1] = _HEXPANSION_STATE_FAULTY
-                app.show_message(["EEPROM", "initialisation", "failed", "Protected?"], [(1,0,0),(1,0,0),(1,0,0),(1,0,0)], "warning")
+                app.show_message(["EEPROM", "initialisation", "failed", "Protected?"], [(1,0,0),(1,0,0),(1,0,0),(1,0,0)], "warning", return_state = STATE_HEXPANSION)
                 self._message_being_shown = True
                 self._sub_state = _SUB_CHECK
             self._detected_port = None
@@ -542,12 +544,12 @@ class HexpansionMgr:
             app.notification = Notification("Erased", port=erase_port)
             self._hexpansion_state_by_slot[erase_port - 1] = _HEXPANSION_STATE_BLANK
             hexpansion_type = self._type_name_for_port(erase_port)
-            app.show_message([hexpansion_type, f"in slot {erase_port}:", "Erased"], [(1,1,0), (1,1,1), (0,1,0)], "hexpansion")
+            app.show_message([hexpansion_type, f"in slot {erase_port}:", "Erased"], [(1,1,0), (1,1,1), (0,1,0)], return_state = STATE_HEXPANSION)
             self._sub_state = _SUB_DETECTED
             self._detected_port = erase_port
         else:
             app.notification = Notification("Failed", port=erase_port)
-            app.show_message(["EEPROM", "erasure", "failed", "Protected?"], [(1,0,0),(1,0,0),(1,0,0),(1,0,0)], "warning")
+            app.show_message(["EEPROM", "erasure", "failed", "Protected?"], [(1,0,0),(1,0,0),(1,0,0),(1,0,0)], "warning", return_state = STATE_HEXPANSION)
             self._message_being_shown = True
             self._sub_state = _SUB_CHECK
 
@@ -637,7 +639,7 @@ class HexpansionMgr:
                 if hexpansion_was_present:
                     if self._logging:
                         print(f"B:{name} moved from port {old_port} to port {new_port}")
-                    #app.show_message([f"{name} moved", f"to port {new_port}"], [(1,1,0),(1,1,1)], "hexpansion")
+                    #app.show_message([f"{name} moved", f"to port {new_port}"], [(1,1,0),(1,1,1)], return_state = STATE_HEXPANSION)
                     #self._message_being_shown = True
                 else:
                     if self._logging:
@@ -652,7 +654,7 @@ class HexpansionMgr:
                 if self._logging:
                     print(f"B:{name} on port {old_port} lost")
                 if self._mode == _MODE_UPDATE:
-                    app.show_message([f"{name}","removed.","Please reinsert"], [(1,1,0),(1,1,1),(1,1,1)], "error")
+                    app.show_message([f"{name}","removed.","Please reinsert"], [(1,1,0),(1,1,1),(1,1,1)], "error", return_state = STATE_HEXPANSION)
                     self._message_being_shown = True
                 assert old_port is not None
                 app.notification = Notification(f"{name} removed", port=old_port)
@@ -748,7 +750,7 @@ class HexpansionMgr:
                 app.show_message(["Please", "reboop"], [(1,1,1),(1,1,1)], "reboop")
                 return # so that you can't get out of this without a reboop
             elif len(app.hexdrive_apps) == 0 and self._mode == _MODE_INIT:
-                app.show_message(_HEXDRIVE_REQUIRED_MESSAGE, _HEXDRIVE_REQUIRED_MESSAGE_COLOURS, "warning")
+                app.show_message(_HEXDRIVE_REQUIRED_MESSAGE, _HEXDRIVE_REQUIRED_MESSAGE_COLOURS, "warning", return_state = STATE_HEXPANSION)
                 self._message_being_shown = True
 
             if self._message_being_shown or self._mode == _MODE_INTERACTIVE:

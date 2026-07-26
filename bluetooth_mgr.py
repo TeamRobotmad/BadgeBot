@@ -7,6 +7,7 @@ from events.input import BUTTON_TYPES
 from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
 from micropython import schedule
+from .app import MOTOR_PWM_FREQ, DEFAULT_ACTIVE_UPDATE_PERIOD, DEFAULT_BACKGROUND_UPDATE_PERIOD
 
 try:
     from micropython import const
@@ -391,10 +392,19 @@ class BluetoothMgr:
             if self._ble_controller.is_connected() and not self._is_connected:
                 self._is_connected = True
                 app.notification = Notification("BLE Connected")
+                # Enable the Motors
+                motor_hexdrive = app.hexdrive_apps[0]
+                if not (motor_hexdrive.initialise() and motor_hexdrive.set_power(True) and motor_hexdrive.set_freq(MOTOR_PWM_FREQ)):
+                    print("B:Failed to enable motors after BLE connection")
                 app.refresh = True
+                app.update_period = DEFAULT_ACTIVE_UPDATE_PERIOD
             elif not self._ble_controller.is_connected() and self._is_connected:
                 self._is_connected = False
                 app.notification = Notification("BLE Disconnected")
+                motor_hexdrive = app.hexdrive_apps[0]
+                if not motor_hexdrive.set_power(False):
+                    print("B:Failed to disable power after BLE disconnection")
+                app.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
                 app.refresh = True
 
         if app.button_states.get(BUTTON_TYPES["CANCEL"]):
@@ -415,9 +425,9 @@ class BluetoothMgr:
         app = self._app
         # if connected then show a message to the user that they can control the robot with the Bluefruit LE app
         if self._is_connected:
-            app.draw_message(ctx, ["BLE connected", "use Bluefruit LE", "on Phone","to control"], [(0.5, 1, 0.5), (0.5, 1, 0.5), (0.5, 1, 0.5), (0.5, 1, 0.5)], label_font_size)
+            app.draw_message(ctx, ["BLE connected", "use Bluefruit", "Connect to", "control"], [(0.5, 1, 0.5), (0.5, 1, 0.5), (0.5, 1, 0.5), (0.5, 1, 0.5)], label_font_size)
         else:
-            app.draw_message(ctx, ["BLE enabled:", "use Bluefruit LE", "on Phone", "to connect to", f"{self._name}"], [(1, 1, 0), (1, 1, 0), (1, 1, 0), (1, 1, 0), (0.5, 1, 1)], label_font_size)
+            app.draw_message(ctx, ["BLE enabled:", "on Phone", "use Bluefruit", "Connect with", f"{self._name}"], [(1, 1, 0), (1, 1, 0), (1, 1, 0), (1, 1, 0), (0.5, 1, 1)], label_font_size)
 
         button_labels(ctx, confirm_label="OK", cancel_label="Exit")
         return True

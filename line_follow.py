@@ -18,7 +18,7 @@ from app_components.notification import Notification
 from app_components.tokens import label_font_size, small_font_size, button_labels
 import micropython
 
-from .app import MOTOR_PWM_FREQ, MOTOR_POWER_SCALE_FACTOR, DEFAULT_MAX_POWER
+from .app import MOTOR_PWM_FREQ, MOTOR_POWER_SCALE_FACTOR, STATE_FOLLOWER, DEFAULT_ACTIVE_UPDATE_PERIOD
 
 try:
     from micropython import const
@@ -29,7 +29,6 @@ except ImportError:
 
 
 # Line Follower constants
-_LINE_SENSOR_BACKGROUND_UPDATE_PERIOD_MS = const(10)
 _MAX_TIME_WITHOUT_LINE = const(500)  # milliseconds to continue moving after losing the line before stopping
 _DEFAULT_DISPLAY_REFRESH_INTERVAL_MS = const(1000)
 _DEFAULT_MIN_OBSTACLE_DISTANCE = const(70)  # minimum distance in mm to an obstacle before stopping
@@ -133,7 +132,7 @@ class LineFollowMgr:
                  "kp", "ki", "kd", "integral_limit", "motor_output",
                  "_last_colour", "_last_colour_hue", "_last_colour_name", "_colour_hexdrive", "_range_hexdrive",
                  "_mid_hue", "_max_hue", "_new_sample", "_display_refresh_time", "_display_refresh_interval", "_signed_steering_gain",
-                 "_time_since_line_detected", "_selected_field", "_enable_movement", "_min_obstacle_distance")
+                 "_time_since_line_detected", "_selected_field", "_enable_movement", "_min_obstacle_distance", "_calibration_msg_shown")
 
     def __init__(self, app, logging: bool = True):
         self._app = app
@@ -163,6 +162,7 @@ class LineFollowMgr:
         self._selected_field: int = 0  # index into _EDIT_FIELDS of the field currently being adjusted
         self._enable_movement: bool = False
         self._min_obstacle_distance: int = _DEFAULT_MIN_OBSTACLE_DISTANCE  # minimum distance in mm to an obstacle before stopping
+        self._calibration_msg_shown: bool = False  # whether the calibration message has been shown
         if self._logging:
             print("B:LineFollowMgr initialised")
 
@@ -192,7 +192,7 @@ class LineFollowMgr:
             return False
 
         motor_hexdrive = app.hexdrive_apps[0]
-        motor_hexdrive.set_logging(True)
+        motor_hexdrive.set_logging(False)
         if not (motor_hexdrive.initialise() and motor_hexdrive.set_power(True) and motor_hexdrive.set_freq(MOTOR_PWM_FREQ)):
             if self._logging:
                 print("HexDrive initialisation failed for Line Follower")
@@ -202,7 +202,7 @@ class LineFollowMgr:
         # Load any persisted colour calibration, then enable the colour sensor for polling
         # (no events, no interrupts).
         if sensor_mgr is not None:
-            if not sensor_mgr.enable_colour_sensor(colour_hexdrive, period=_LINE_SENSOR_BACKGROUND_UPDATE_PERIOD_MS):
+            if not sensor_mgr.enable_colour_sensor(colour_hexdrive, period=DEFAULT_ACTIVE_UPDATE_PERIOD):
                 app.notification = Notification("Colour Sensor not available")
                 return False
             # Load any persisted colour calibration
@@ -211,7 +211,7 @@ class LineFollowMgr:
                 return False
         self._colour_hexdrive = colour_hexdrive
 
-        app.update_period = _LINE_SENSOR_BACKGROUND_UPDATE_PERIOD_MS
+        app.update_period = DEFAULT_ACTIVE_UPDATE_PERIOD
         app.set_menu(None)
         app.button_states.clear()
         app.refresh = True
@@ -228,6 +228,7 @@ class LineFollowMgr:
         self._display_refresh_time = 0
         self._time_since_line_detected = _MAX_TIME_WITHOUT_LINE # start with time since line detected at max so we don't try to continue moving until we see a line.
         self._enable_movement = False
+        #self._calibration_msg_shown = False # don't reset this so we don't keep showing the message if the user has already seen it once.
 
         # Load PID / tuning parameters from settings
         self.kp = app.settings['pid_kp'].v
@@ -262,14 +263,19 @@ class LineFollowMgr:
         """Handle Line Follower UI.  Returns True if handled."""
         app = self._app
 
+        if app.sensor_test_mgr.colour_sensor_stats.update(delta):
+            if self._logging:
+                print(f"B:LF:CS={app.sensor_test_mgr.colour_sensor_stats.rate_str}")
+        if app.sensor_test_mgr.range_sensor_stats.update(delta):
+            if self._logging:
+                print(f"B:LF:RS={app.sensor_test_mgr.range_sensor_stats.rate_str}")
+
         # We don't want to update display every sample, so we use a refresh timer to limit the update rate.
         self._display_refresh_time += delta
         if self._display_refresh_time >= self._display_refresh_interval:
             if self._new_sample:
                 self._new_sample = False
                 self._display_refresh_time = 0
-                if self._logging:
-                    print(f"B:LF:CS={app.sensor_test_mgr.colour_sensor_stats.rate_str}")
                 app.refresh = True
 
         if app.button_states.get(BUTTON_TYPES["CANCEL"]):
@@ -374,12 +380,12 @@ class LineFollowMgr:
             return None
 
         # Poll the shared range sensor if we are allowed to move
-        if self._range_hexdrive is not None and self._enable_movement:
+        if self._range_hexdrive:
             new_sample, range_mm = sensor_mgr.read_range(self._range_hexdrive)
             if new_sample:
-                if self._logging:
-                    print(f"B:LF:Range={range_mm}mm")
-                if range_mm < self._min_obstacle_distance:
+                #if self._logging:
+                #    print(f"B:LF:Range={range_mm}mm")
+                if range_mm < self._min_obstacle_distance and self._enable_movement:
                     # Stop immediately if an obstacle is detected within 100mm
                     if self._logging:
                         print("B:LF:Obstacle detected, auto stop")
@@ -390,10 +396,14 @@ class LineFollowMgr:
                     app.notification = Notification("Stop Obstacle", self._range_hexdrive.config.port)
 
         # Poll the shared colour sensor; read_colour also updates the ring colour on change.
+        # Force a read to ensure we get the latest sample, as the colour sensor is only polled in the background by the HexDrive
+        if self._colour_hexdrive and self._colour_hexdrive.colour_sensor:
+            _ = self._colour_hexdrive.colour_sensor.read()
+
         new_sample, hue, name, _raw = sensor_mgr.read_colour(self._colour_hexdrive)
         if new_sample:
-            if self._logging:
-                print(f"B:LF:Hue={hue//10}.{hue%10}° Name={name}")
+            #if self._logging:
+            #    print(f"B:LF:Hue={hue//10}.{hue%10}° Name={name}")
             self._last_colour_hue = hue
             self._last_colour_name = name
             self._last_colour = _raw
@@ -446,7 +456,7 @@ class LineFollowMgr:
                             self._time_since_line_detected = _MAX_TIME_WITHOUT_LINE  # clamp to max so we don't overflow
                             self._app.performance_mode = False  # stop performance mode if we have lost the line for a while
                             # as we are not moving we don't need to get updates as fast.
-                    print(f"B:LF:hue_diff={hue_difference_from_mid}, Output={output}")
+                    #print(f"B:LF:hue_diff={hue_difference_from_mid}, Output={output}")
                 else:
                     # Unknown follower mode, so stop the motors
                     output = (0, 0)
@@ -513,6 +523,12 @@ class LineFollowMgr:
 
     def draw(self, ctx) -> bool:
         """Render Line Follower UI.  Returns True if handled."""
+
+        #Remind User to calibrate Colour Sensor if this is the first time the Line Follower has been started since the app was launched.
+        if not self._calibration_msg_shown:
+            self._app.show_message(["Line Follower:", "For best performance", "ensure Colour", "Sensor calibration", "is recent"], [(0.5,1.0,0.5),(1,1,1),(1,1,1),(1,1,1),(1,1,1)], return_state = STATE_FOLLOWER)
+            self._calibration_msg_shown = True
+            return True
 
         # ================================================
         # draw a box to show the deviation from mid hue:
