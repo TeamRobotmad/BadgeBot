@@ -568,6 +568,9 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     @update_period.setter
     def update_period(self, value: int):
         """Convenience property to set update_period setting."""
+        # if we have an active Bluetooth Connection then we need to maintain a high update rate so that the motor acceleration is correct
+        if self._bluetooth_mgr is not None and self._bluetooth_mgr.is_connected:
+            value = min(value, DEFAULT_ACTIVE_UPDATE_PERIOD)  # ensure we don't go below the minimum update period when Bluetooth is active
         if self._logging:
             print(f"B:Setting update_period to {value} ms")
         self._update_period = value

@@ -83,28 +83,28 @@ class RobotBLE:
         if event == 1:  # _IRQ_CENTRAL_CONNECT
             conn_handle, _, _ = data
             self._connections.add(conn_handle)
-            if self._logging:
-                print("B:BLE:Connected")
+            #if self._logging:
+            #    print("B:BLE:Connected")
 
         elif event == 2:  # _IRQ_CENTRAL_DISCONNECT
             conn_handle, _, _ = data
             if conn_handle in self._connections:
                 self._connections.remove(conn_handle)
             self._advertise()
-            if self._logging:
-                print("B:BLE:Disconnected")
+            #if self._logging:
+            #    print("B:BLE:Disconnected")
 
         elif event == 3:  # _IRQ_GATTS_WRITE
             conn_handle, value_handle = data
             value = self._ble.gatts_read(value_handle)
-            if self._logging:
-                print(f"B:BLE:RX: {value.decode().strip()}")
+            #if self._logging:
+            #    print(f"B:BLE:RX: {value.decode().strip()}")
             if value_handle == self._handle_rx and self._write_callback:
                 self._write_callback(value)
 
 
     def _advertise(self, interval_us=500000):
-        print("BLE:Advertising...")
+        #print("BLE:Advertising...")
         try:
             self._ble.gap_advertise(interval_us, adv_data=self._payload)
         except OSError as e:
@@ -192,7 +192,7 @@ def ble_process_command(data):
     action = command[3] # '1' for press, '0' for release
 
     if button in _CONTROL_BUTTONS:
-        print(f"BLE:Control Button {button} {'Pressed' if action == '1' else 'Released'}")
+        #print(f"BLE:Control Button {button} {'Pressed' if action == '1' else 'Released'}")
         if action == '1':
             if button == '0':
                 # toggle Flood LED state
@@ -315,6 +315,12 @@ class BluetoothMgr:
         self._logging = value
 
 
+    @property
+    def is_connected(self) -> bool:
+        """Returns True if a BLE central is connected."""
+        return self._is_connected
+
+
     def motor_override(self, max_power: int):
         """Return a (left, right) motor override tuple if a BLE drive button is
         currently held, or None to let the current state control the motors.
@@ -407,14 +413,14 @@ class BluetoothMgr:
                 app.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
                 app.refresh = True
 
-        if app.button_states.get(BUTTON_TYPES["CANCEL"]):
+        if app.button_states.get(BUTTON_TYPES["CANCEL"]): # Exit
             app.button_states.clear()
             # return to menu and disconnect from BLE if connected
             #if self._ble_controller is not None:
             #    self._ble_controller.deinit()
             #    self._ble_controller = None
             app.return_to_menu()
-        elif app.button_states.get(BUTTON_TYPES["CONFIRM"]):
+        elif app.button_states.get(BUTTON_TYPES["CONFIRM"]): # OK
             app.button_states.clear()
             # return to menu leaving the BLE connection active so the user can continue to control the robot from the phone app
             app.return_to_menu()
