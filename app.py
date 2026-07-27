@@ -839,7 +839,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 # in case access to protected member _open() (or _is_closed()) is not allowed, we catch the exception and
                 # to prevent crashes - this means that in this case we won't be able to automatically clear
                 # notifications when they are closed, but at least the app won't crash.
-                if not self.notification._open:  # pylint: disable=protected-access
+                if self.notification._is_closed():  # pylint: disable=protected-access
                     if self._logging:
                         print("B:Notification closed, clearing notification reference")
                     self.notification = None
