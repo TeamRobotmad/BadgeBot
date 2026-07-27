@@ -1061,8 +1061,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if self.current_state in _LED_CONTROL_STATES:
             if self.current_state in [STATE_FOLLOWER]:
                 # For Line Follower, set LEDs based on the line sensor readings
-                # could be optimised to only update LEDs when sensor readings change, rather than every update cycle
-                # nothing while we try to optimise the sensor reading rate
+
                 pass
             else:
                 if self.settings['brightness'].v < 1.0:

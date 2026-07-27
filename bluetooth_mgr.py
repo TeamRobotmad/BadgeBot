@@ -2,6 +2,7 @@
 
 import struct
 import sys
+import asyncio
 import bluetooth
 from events.input import BUTTON_TYPES
 from app_components.tokens import label_font_size, button_labels
@@ -60,16 +61,13 @@ class RobotBLE:
         self._handle_rx = None
         self._name = name
         self._logging = logging
-
-        # Static reference callback to completely avoid function pointer allocation inside IRQ
-        self._schedule_ref = self._safe_irq_handler
         self.init()
 
 
     def init(self):
         """Re-initialize the BLE controller if it was deinitialized."""
         self._ble.active(True)
-        self._ble.irq(self._irq)
+        self._ble.irq(self._raw_hardware_irq)
         ((self._handle_tx, self._handle_rx),) = self._ble.gatts_register_services((_UART_SERVICE,))
         self._connections.clear()
         self._write_callback = None
@@ -79,50 +77,60 @@ class RobotBLE:
         self._advertise()
 
 
-    def _irq(self, event, data):
+    def _raw_hardware_irq(self, event, data):
         """
         PERFECT STATE: Zero memory lookups, zero allocations, zero object referencing.
         """
+        """
+        FIXED INTERRUPT: Correctly parses raw memoryview objects
+        into standard integers before leaving the ISR context.
+        """
         global _BLE_EVENT_FLAG, _BLE_PENDING_EVENT, _BLE_PENDING_HANDLE
-
         _BLE_PENDING_EVENT = event
 
-        if event == 3:  # _IRQ_GATTS_WRITE
-            # Extract only the primitive integer handles out of the data tuple parameter
-            _BLE_PENDING_HANDLE = data[1]
+        if event in (1, 2):  # _IRQ_CENTRAL_CONNECT or _IRQ_CENTRAL_DISCONNECT
+            # data is a tuple/memoryview containing (conn_handle, addr_type, addr)
+            # Pull the first element (conn_handle integer) safely out of the array
+            _BLE_PENDING_HANDLE = int(data[0])
+
+        elif event == 3:  # _IRQ_GATTS_WRITE
+            # data is a tuple containing (conn_handle, value_handle)
+            # We want the value_handle integer to read what was written
+            _BLE_PENDING_HANDLE = int(data[1])
+
         else:
-            _BLE_PENDING_HANDLE = data[0] if data else 0
+            _BLE_PENDING_HANDLE = 0
 
         _BLE_EVENT_FLAG = 1
-        schedule(self._schedule_ref, 0)
 
 
-    def _safe_irq_handler(self, _):
-        """Executes safely on the main thread pool away from the hot BLE radio."""
+    async def run_loop(self):
+        """
+        Register this method as a task alongside your main Tildagon app task list.
+        It safely sweeps for wireless events entirely within the async loop context.
+        """
         global _BLE_EVENT_FLAG
-        if not _BLE_EVENT_FLAG:
-            return
-        _BLE_EVENT_FLAG = 0
+        while True:
+            if _BLE_EVENT_FLAG:
+                _BLE_EVENT_FLAG = 0
+                self._safe_process_event(_BLE_PENDING_EVENT, _BLE_PENDING_HANDLE)
 
-        event = _BLE_PENDING_EVENT
-        handle = _BLE_PENDING_HANDLE
+            # Yield back to the display and focus engine tasks smoothly
+            await asyncio.sleep_ms(20)
 
+
+    def _safe_process_event(self, event, handle):
+        """Processes events on the main thread loop."""
         if event == 1:  # _IRQ_CENTRAL_CONNECT
             self._connections.add(handle)
-            #if self._logging:
-            #    print("B:BLE:Connected")
-
+            print("B:BLE:Connected")
         elif event == 2:  # _IRQ_CENTRAL_DISCONNECT
             if handle in self._connections:
                 self._connections.remove(handle)
             self._advertise()
-            #if self._logging:
-            #    print("B:BLE:Disconnected")
-
+            print("B:BLE:Disconnected")
         elif event == 3:  # _IRQ_GATTS_WRITE
             value = self._ble.gatts_read(handle)
-            #if self._logging:
-            #    print(f"B:BLE:RX: {value.decode().strip()}")
             if handle == self._handle_rx and self._write_callback:
                 self._write_callback(value)
 
@@ -402,7 +410,12 @@ class BluetoothMgr:
 
             # Initialize the BLE controller
             try:
+                # Create a new RobotBLE instance and start advertising
                 self._ble_controller = RobotBLE(self._ble, name=name, logging=self._logging)
+
+                # Add the safe BLE tracking loop to the global scheduler
+                asyncio.get_event_loop().create_task(self._ble_controller.run_loop())
+
                 if self._logging:
                     print("B:BLE controller initialized")
             except Exception as e:      # pylint: disable=broad-except
