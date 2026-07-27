@@ -98,7 +98,7 @@ class RobotBLE:
 
 
     def _safe_irq_handler(self, _):
-         """Executes safely on the main thread pool away from the hot BLE radio."""
+        """Executes safely on the main thread pool away from the hot BLE radio."""
         global _BLE_EVENT_FLAG
         if not _BLE_EVENT_FLAG:
             return
