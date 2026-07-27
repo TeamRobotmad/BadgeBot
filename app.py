@@ -660,18 +660,19 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         bg_fn = self._state_background_dispatch.get(self.current_state)
         output = bg_fn(delta) if bg_fn is not None else None
 
-        if len(self.hexdrive_apps) > 0 and self._bluetooth_mgr:
-            # BLE direction buttons override the state's motor output while held,
-            # regardless of whether the current state produced any output.
-            ble_override = self._bluetooth_mgr.motor_override(self.max_power)
-            if ble_override is not None:
-                self._ble_override_active = True
-                output = ble_override
-            else:
-                if self._ble_override_active and output is None:
-                    # ensure we stop the motors if we were previously overriding them with BLE and now there is no output from the current state
-                    output = (0, 0)
-                self._ble_override_active = False
+        if len(self.hexdrive_apps) > 0:
+            if self._bluetooth_mgr:
+                # BLE direction buttons override the state's motor output while held,
+                # regardless of whether the current state produced any output.
+                ble_override = self._bluetooth_mgr.motor_override(self.max_power)
+                if ble_override is not None:
+                    self._ble_override_active = True
+                    output = ble_override
+                else:
+                    if self._ble_override_active and output is None:
+                        # ensure we stop the motors if we were previously overriding them with BLE and now there is no output from the current state
+                        output = (0, 0)
+                    self._ble_override_active = False
 
             if output is None and (self._output1 != 0 or self._output2 != 0):
                 # ensure we stop the motors if the current state has no output and the previous output was non-zero
