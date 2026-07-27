@@ -228,6 +228,7 @@ class LineFollowMgr:
         self._time_since_line_detected = _MAX_TIME_WITHOUT_LINE # start with time since line detected at max so we don't try to continue moving until we see a line.
         self._enable_movement = False
         #self._calibration_msg_shown = False # don't reset this so we don't keep showing the message if the user has already seen it once.
+        app.reset_hue_history()  # start the LED hue history from black
 
         # Load PID / tuning parameters from settings
         self.kp = app.settings['pid_kp'].v
@@ -351,6 +352,15 @@ class LineFollowMgr:
         self._app.notification = Notification("Direction: Reversed")
         if self._logging:
             print(f"B:LF:Steering gain sign reversed to {self._signed_steering_gain}")
+
+
+    def current_led_hue(self):
+        """Hue data source for the app's LED history buffer.  Returns the hue
+        (0-3600, 0.1-degree units) only while the robot is actively on the line;
+        otherwise returns None so the LED history renders black."""
+        if self._time_since_line_detected == 0:
+            return self._last_colour_hue
+        return None
 
 
     def _adjust_selected_field(self, direction: int):

@@ -99,6 +99,24 @@ _MAX_MAX_POWER         = const(65535) // MOTOR_POWER_SCALE_FACTOR
 _LONG_PRESS_MS = const(750)        # Time for long button press to register, in ms
 _RUN_COUNTDOWN_MS = const(5000)    # Time after running program until drive starts, in ms
 _WARNING_MESSAGE_TIMEOUT_MS = const(10000)  # Default auto-dismiss time for "warning" messages, in ms
+
+# Line-follower LED hue-history visualisation.
+# The 6 LEDs on each side of the ring show the colour-sensor hue over time, newest at
+# the two front-face LEDs and oldest at the rear.  Change _LED_HUE_HISTORY_SPAN_MS to
+# alter how far back in time the rear LEDs reach; the intermediate LEDs re-space
+# automatically.
+_HUE_CIRCLE = const(3600)                 # hue wrap point, in 0.1-degree units
+_LED_HUE_HISTORY_SPAN_MS = const(2000)    # time window from front (newest) to back (oldest) LED
+_LED_HUE_SAMPLE_INTERVAL_MS = const(10)   # history time-resolution: one buffer entry per this many ms
+_LED_HUE_SIDE_COUNT = const(6)            # LEDs per side (front-to-back)
+_LED_HUE_BUFFER_LEN = _LED_HUE_HISTORY_SPAN_MS // _LED_HUE_SAMPLE_INTERVAL_MS + 1
+# Per-side buffer look-back (in samples) for each LED front->back, recomputed if the
+# span / interval / side-count constants change (endpoints inclusive: 0 .. span).
+_LED_HUE_LED_OFFSETS = tuple(
+    round(i * _LED_HUE_HISTORY_SPAN_MS / (_LED_HUE_SIDE_COUNT - 1) / _LED_HUE_SAMPLE_INTERVAL_MS)
+    for i in range(_LED_HUE_SIDE_COUNT)
+)
+
 _AUTO_REPEAT_MS = const(200)       # Time between auto-repeats, in ms
 _AUTO_REPEAT_COUNT_THRES = const(10) # Number of auto-repeats before increasing level
 _AUTO_REPEAT_SPEED_LEVEL_MAX = const(4)  # Maximum level of auto-repeat speed increases
@@ -217,6 +235,28 @@ def _clamp(value: int, lo: int, hi: int) -> int:
     if value > hi:
         return hi
     return value
+
+
+def _hue_to_rgb(hue: int) -> tuple:
+    """Convert a hue in 0.1-degree units (0-3600) to a full-saturation, full-value
+    RGB tuple (0-255 per channel)."""
+    if hue >= _HUE_CIRCLE:
+        hue %= _HUE_CIRCLE
+    sector = hue // 600                       # 0-5 (each 60 degrees == 600 units)
+    ramp = (hue - sector * 600) * 255 // 600  # 0-255 ramp within the sector
+    if sector == 0:
+        return (255, ramp, 0)
+    if sector == 1:
+        return (255 - ramp, 255, 0)
+    if sector == 2:
+        return (0, 255, ramp)
+    if sector == 3:
+        return (0, 255 - ramp, 255)
+    if sector == 4:
+        return (ramp, 0, 255)
+    return (255, 0, 255 - ramp)
+
+
 class BadgeBotApp(app.App):         # pylint: disable=no-member
     """Main application class for BadgeBot.  Manages overall state, user input, and delegates to functional area managers for specific features."""
     __slots__ = (
@@ -289,6 +329,9 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         "_notification_end_time",
         "_motor_enable_mask",
         "_remote_commands",
+        "_hue_hist_buffer",
+        "_hue_hist_head",
+        "_hue_hist_accum",
     )
 
     DEFAULT_MAX_POWER = DEFAULT_MAX_POWER
@@ -496,6 +539,13 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         # Queue of pending remote-control commands (REMOTE_CMD_*) posted by comms
         # transports (BLE now, others in future) and actioned from update().
         self._remote_commands: list = []
+
+        # Line-follower LED hue history (ring buffer of pre-converted RGB tuples,
+        # newest at _hue_hist_head).  Fed via add_hue_sample() and painted onto the
+        # ring LEDs each frame while in line-follower mode.
+        self._hue_hist_buffer: list = [(0, 0, 0)] * _LED_HUE_BUFFER_LEN
+        self._hue_hist_head: int = 0
+        self._hue_hist_accum: int = 0
 
         # Hexpansion event handlers registered directly by hexpansion_mgr
         if self._hexpansion_mgr is not None:
@@ -1059,25 +1109,23 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             self.refresh = True
 
         if self.current_state in _LED_CONTROL_STATES:
-            if self.current_state in [STATE_FOLLOWER]:
-                # For Line Follower, set LEDs based on the line sensor readings
-
-                pass
-            else:
-                if self.settings['brightness'].v < 1.0:
-                    # Scale brightness
-                    for i in range(1,13):
-                        colour = tildagonos.leds[i]
-                        tildagonos.leds[i] = (
-                            int(colour[0] * self.settings['brightness'].v),
-                            int(colour[1] * self.settings['brightness'].v),
-                            int(colour[2] * self.settings['brightness'].v),
-                        )
-                try:
-                    # saw this crash randomly - hence protected by try/except to prevent whole app crashing, and added logging to investigate further
-                    tildagonos.leds.write()
-                except OSError as e:
-                    print(f"Error writing to LEDs: {e}")
+            if self.current_state == STATE_FOLLOWER:
+                # For Line Follower, paint the ring LEDs from the colour-sensor hue history.
+                self._update_line_follow_leds(delta)
+            if self.settings['brightness'].v < 1.0:
+                # Scale brightness
+                for i in range(1,13):
+                    colour = tildagonos.leds[i]
+                    tildagonos.leds[i] = (
+                        int(colour[0] * self.settings['brightness'].v),
+                        int(colour[1] * self.settings['brightness'].v),
+                        int(colour[2] * self.settings['brightness'].v),
+                    )
+            try:
+                # saw this crash randomly - hence protected by try/except to prevent whole app crashing, and added logging to investigate further
+                tildagonos.leds.write()
+            except OSError as e:
+                print(f"Error writing to LEDs: {e}")
         diagnostics_output(1, 0)
 
 
@@ -1380,6 +1428,79 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.clear_leds()
         tildagonos.leds[led_a] = colour
         tildagonos.leds[led_b] = colour
+
+
+    def reset_hue_history(self) -> None:
+        """Clear the line-follower LED hue history to all-black.  Called when line
+        following starts so old colours do not linger on the ring."""
+        buf = self._hue_hist_buffer
+        for i in range(_LED_HUE_BUFFER_LEN):
+            buf[i] = (0, 0, 0)
+        self._hue_hist_head = 0
+        self._hue_hist_accum = 0
+
+
+    def add_hue_sample(self, hue) -> None:
+        """Push one hue sample into the line-follower LED history ring buffer.
+        'hue' is in 0.1-degree units (0-3600); pass None (or a negative value) for
+        'no line', stored as black.  The colour is pre-converted to a full-saturation,
+        full-value RGB tuple so per-frame painting stays cheap.  This is the single
+        input point for the buffer and can be fed from any hue source."""
+        if hue is None or hue < 0:
+            colour = (0, 0, 0)
+        else:
+            colour = _hue_to_rgb(hue)
+        head = self._hue_hist_head + 1
+        if head >= _LED_HUE_BUFFER_LEN:
+            head = 0
+        self._hue_hist_buffer[head] = colour
+        self._hue_hist_head = head
+
+
+    def _update_line_follow_leds(self, delta: int) -> None:
+        """Advance the hue history by the real elapsed time (delta-accumulated, so the
+        displayed time window is independent of frame rate) using the current line
+        follower hue, then paint the ring LEDs from the buffer."""
+        mgr = self._line_follow_mgr
+        hue = mgr.current_led_hue() if mgr is not None else None
+        self._hue_hist_accum += delta
+        count = 0
+        while self._hue_hist_accum >= _LED_HUE_SAMPLE_INTERVAL_MS:
+            self._hue_hist_accum -= _LED_HUE_SAMPLE_INTERVAL_MS
+            self.add_hue_sample(hue)
+            count += 1
+            if count >= _LED_HUE_BUFFER_LEN:
+                # Long stall: the buffer is now entirely this sample; drop any backlog.
+                self._hue_hist_accum = 0
+                break
+        self._paint_hue_history_leds()
+
+
+    def _paint_hue_history_leds(self) -> None:
+        """Paint the 12 ring LEDs from the hue history: both sides mirror the same
+        history with the newest sample on the two front-face LEDs (chosen from
+        'front_face') and progressively older samples toward the rear."""
+        f = self._front_face
+        pos = f % 12
+        led_a = pos if pos > 0 else 12   # left front LED (1-12)
+        led_b = pos + 1                  # right front LED (1-12)
+        buf = self._hue_hist_buffer
+        head = self._hue_hist_head
+        leds = tildagonos.leds
+        offsets = _LED_HUE_LED_OFFSETS
+        for i in range(_LED_HUE_SIDE_COUNT):
+            idx = head - offsets[i]
+            if idx < 0:
+                idx += _LED_HUE_BUFFER_LEN
+            colour = buf[idx]
+            left = led_a - i
+            if left < 1:
+                left += 12
+            right = led_b + i
+            if right > 12:
+                right -= 12
+            leds[left] = colour
+            leds[right] = colour
 
 
     @staticmethod

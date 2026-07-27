@@ -4,10 +4,12 @@ import struct
 import sys
 import asyncio
 import bluetooth
+import micropython
 from events.input import BUTTON_TYPES
 from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
 from micropython import schedule
+
 from .app import REMOTE_CMD_LINE_FOLLOW_TOGGLE, REMOTE_CMD_LINE_FOLLOW_DIRECTION
 
 try:
@@ -39,7 +41,7 @@ _UART_SERVICE = (_UART_UUID, (_UART_TX, _UART_RX))
 # Keeping these outside the class guarantees no complex lookup structures
 _BLE_EVENT_FLAG = 0
 _BLE_PENDING_EVENT = 0
-_BLE_PENDING_HANDLE = 0
+#_BLE_PENDING_DATA = None
 
 # ---- Settings initialisation -----------------------------------------------
 
@@ -50,26 +52,30 @@ def init_settings(s, MySetting: type):  #pylint: disable=invalid-name
 
 class RobotBLE:
     """Handles BLE communication with the Bluefruit Connect app on a phone."""
-    __slots__ = ("_ble", "_connections", "_write_callback", "_payload", "_handle_tx", "_handle_rx", "_name", "_logging", "_schedule_ref")
+    __slots__ = ("_ble", "_connections", "latest_rx_data", "_write_callback", "_payload", "_handle_tx", "_handle_rx", "_name", "_logging", "_schedule_ref", "connected")
 
     def __init__(self, ble, name="Robot", logging: bool = False):
         self._ble = ble
-        self._connections = set()
+        #self._connections = set()
+        self.latest_rx_data = None
         self._write_callback = None
         self._payload = None
         self._handle_tx = None
         self._handle_rx = None
         self._name = name
         self._logging = logging
+        self.connected = False
         self.init()
 
+        # Allocate emergency buffer space for handling raw exceptions safely
+        micropython.alloc_emergency_exception_buf(100)
 
     def init(self):
         """Re-initialize the BLE controller if it was deinitialized."""
         self._ble.active(True)
         self._ble.irq(self._raw_hardware_irq)
         ((self._handle_tx, self._handle_rx),) = self._ble.gatts_register_services((_UART_SERVICE,))
-        self._connections.clear()
+        #self._connections.clear()
         self._write_callback = None
         self._payload = self._advertising_payload(name=self._name, services=[_UART_UUID])
         # Override the internal firmware name string - This stops the phone app from falling back to "MPY ESP32" upon connection
@@ -85,22 +91,9 @@ class RobotBLE:
         FIXED INTERRUPT: Correctly parses raw memoryview objects
         into standard integers before leaving the ISR context.
         """
-        global _BLE_EVENT_FLAG, _BLE_PENDING_EVENT, _BLE_PENDING_HANDLE
+        global _BLE_EVENT_FLAG, _BLE_PENDING_EVENT
         _BLE_PENDING_EVENT = event
-
-        if event in (1, 2):  # _IRQ_CENTRAL_CONNECT or _IRQ_CENTRAL_DISCONNECT
-            # data is a tuple/memoryview containing (conn_handle, addr_type, addr)
-            # Pull the first element (conn_handle integer) safely out of the array
-            _BLE_PENDING_HANDLE = int(data[0])
-
-        elif event == 3:  # _IRQ_GATTS_WRITE
-            # data is a tuple containing (conn_handle, value_handle)
-            # We want the value_handle integer to read what was written
-            _BLE_PENDING_HANDLE = int(data[1])
-
-        else:
-            _BLE_PENDING_HANDLE = 0
-
+        #_BLE_PENDING_DATA = data  # Store reference instantly
         _BLE_EVENT_FLAG = 1
 
 
@@ -113,45 +106,61 @@ class RobotBLE:
         while True:
             if _BLE_EVENT_FLAG:
                 _BLE_EVENT_FLAG = 0
-                self._safe_process_event(_BLE_PENDING_EVENT, _BLE_PENDING_HANDLE)
+                self._safe_process_event(_BLE_PENDING_EVENT)
 
             # Yield back to the display and focus engine tasks smoothly
             await asyncio.sleep_ms(20)
 
 
-    def _safe_process_event(self, event, handle):
-        """Processes events on the main thread loop."""
+    def _safe_process_event(self, event):
+        """Unpacking raw tuple arguments is completely safe here on the main thread loop."""
         if event == 1:  # _IRQ_CENTRAL_CONNECT
-            self._connections.add(handle)
-            print("B:BLE:Connected")
+            # data is a tuple: (conn_handle, addr_type, addr)
+            #conn_handle = data[0]
+            #self._connections.add(conn_handle)
+            self.connected = True
+
         elif event == 2:  # _IRQ_CENTRAL_DISCONNECT
-            if handle in self._connections:
-                self._connections.remove(handle)
+            # data is a tuple: (conn_handle, addr_type, addr)
+            #conn_handle = data[0]
+            #if conn_handle in self._connections:
+            #    self._connections.remove(conn_handle)
+            self.connected = False
             self._advertise()
-            print("B:BLE:Disconnected")
+
         elif event == 3:  # _IRQ_GATTS_WRITE
-            value = self._ble.gatts_read(handle)
-            if handle == self._handle_rx and self._write_callback:
-                self._write_callback(value)
+            # data is a tuple: (conn_handle, value_handle)
+            #conn_handle, value_handle = data
+            # Safely query the internal hardware register direct from silicon memory
+            # without checking the write tuple handle properties
+            value = self._ble.gatts_read(self._handle_rx)
+            if value and value != self.latest_rx_data:
+                self.latest_rx_data = value
+                if self._write_callback:
+                    self._write_callback(value)
 
 
     def _advertise(self, interval_us=500000):
-        #print("BLE:Advertising...")
+        # PRINTING NOT ALLOWED print("BLE:Advertising...")
         try:
             self._ble.gap_advertise(interval_us, adv_data=self._payload)
         except OSError as e:
-            print(f"BLE:Advertising failed: {e}")
-
+            # PRINTING NOT ALLOWED print(f"BLE:Advertising failed: {e}")
+            pass
 
     def send_telemetry(self, text):
         """Sends sensor data or diagnostic logs back to the phone app."""
-        for conn_handle in self._connections:
-            try:
-                # Transmit data via the TX characteristic
-                self._ble.gatts_notify(conn_handle, self._handle_tx, text + "\n")
-            except Exception:  # pylint: disable=broad-except
-                pass
-
+        #for conn_handle in self._connections:
+        #    try:
+        #        # Transmit data via the TX characteristic
+        #        self._ble.gatts_notify(conn_handle, self._handle_tx, text + "\n")
+        #    except Exception:  # pylint: disable=broad-except
+        #        pass
+        # Notify the client interface natively using connection slot index 0
+        try:
+            self._ble.gatts_notify(0, self._handle_tx, text + "\n")
+        except Exception:
+            pass
 
     def on_write(self, callback):
         """Registers a callback function to be called when the phone app sends data."""
@@ -160,7 +169,8 @@ class RobotBLE:
 
     def is_connected(self):
         """Returns True if at least one BLE central is connected."""
-        return len(self._connections) > 0
+        #return len(self._connections) > 0
+        return self.connected
 
 
     def _advertising_payload(self, name=None, services=None):
@@ -190,7 +200,7 @@ class RobotBLE:
     def deinit(self):
         """Deinitializes the BLE controller and stops advertising."""
         self._ble.active(False)
-        self._connections.clear()
+        #self._connections.clear()
         self._write_callback = None
         if self._logging:
             print("B:BLE:Deinitialized")
