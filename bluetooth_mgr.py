@@ -42,7 +42,7 @@ def init_settings(s, MySetting: type):  #pylint: disable=invalid-name
 
 class RobotBLE:
     """Handles BLE communication with the Bluefruit Connect app on a phone."""
-    __slots__ = ("_ble", "_connections", "_write_callback", "_payload", "_handle_tx", "_handle_rx", "_name", "_logging")
+    __slots__ = ("_ble", "_connections", "_write_callback", "_payload", "_handle_tx", "_handle_rx", "_name", "_logging","_ble_event_triggered", "_pending_event", "_pending_data")
 
     def __init__(self, ble, name="Robot", logging: bool = False):
         self._ble = ble
@@ -53,6 +53,12 @@ class RobotBLE:
         self._handle_rx = None
         self._name = name
         self._logging = logging
+
+        # Pre-allocate thread event tracking properties
+        self._ble_event_triggered = False
+        self._pending_event = 0
+        self._pending_data = None
+
         self.init()
 
 
@@ -72,13 +78,26 @@ class RobotBLE:
     def _irq(self, event, data):
         # 1. Catch the hardware event immediately
         # 2. Bounce it out to the main execution thread safely
-        schedule(self._safe_irq_handler, (event, data))
+        # SAFE REWRITE: Performs zero variable copying or block moves.
+        # It stores integers and handles references instantly, bypassing the ROM.
+
+        self._pending_event = event
+        self._pending_data = data
+        self._ble_event_triggered = True
+        schedule(self._safe_irq_handler, None)
 
 
-    def _safe_irq_handler(self, params):
+    def _safe_irq_handler(self, _):
         # This runs safely on the main thread.
         # Printing and memory allocation here will NEVER trigger an Interupt WDT crash.
-        event, data = params
+
+        if not self._ble_event_triggered:
+            return
+
+        # Reset event flag
+        self._ble_event_triggered = False
+        event = self._pending_event
+        data = self._pending_data
 
         if event == 1:  # _IRQ_CENTRAL_CONNECT
             conn_handle, _, _ = data

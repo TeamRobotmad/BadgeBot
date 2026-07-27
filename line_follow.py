@@ -335,7 +335,7 @@ class LineFollowMgr:
         if self._enable_movement:
             if self._logging:
                 print("B:LF:Start")
-            self._app.set_ring_colour(None)  # Turn off the ring colour to indicate we are actively following the line
+            #self._app.set_ring_colour(None)  # Turn off the ring colour to indicate we are actively following the line
         else:
             if self._logging:
                 print("B:LF:Stop")
@@ -521,10 +521,13 @@ class LineFollowMgr:
         abs_error = abs(error)
 
         # scale line power linearly from max to min (25%) based on the error when too far from the line mid point, to avoid overshooting.  When the error is small, use full line power.
-        if abs_error >= (self._max_hue // 2):
-            line_power = self.line_power * ((self._max_hue + (self._max_hue//4)) - abs_error) // self._max_hue
+        if abs_error >= (self._max_hue // 4):
+            line_power = (self.line_power * (self._max_hue + (self._max_hue//4) - abs_error)) // self._max_hue
         else:
             line_power = self.line_power
+
+        correction_limit = (3 * line_power) // 2
+        correction = _clamp(correction, -correction_limit, correction_limit)  # limit correction
 
         # Combine correction with base forward power to get output for each motor & limit output to max power
         max_power = self._app.max_power

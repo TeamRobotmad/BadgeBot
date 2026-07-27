@@ -134,7 +134,7 @@ REMOTE_CMD_LINE_FOLLOW_DIRECTION = const(2)  # toggle Line Follower steering dir
 
 # States from which a remote command may switch the app into Line Follower.
 # Extend this tuple to permit remote activation from additional states.
-_REMOTE_LINE_FOLLOW_STATES = (STATE_BLUETOOTH, STATE_FOLLOWER)
+_REMOTE_LINE_FOLLOW_STATES = (STATE_BLUETOOTH, STATE_FOLLOWER, STATE_MENU)
 
 # App states where user can minimise app (Menu, Message, Logo)
 MINIMISE_VALID_STATES = [STATE_MENU, STATE_MESSAGE, STATE_LOGO]
