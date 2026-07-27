@@ -25,7 +25,7 @@ from events.input import BUTTON_TYPES, Button
 from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
 from .utils import chain
-from .app import (STATE_COUNTDOWN, STATE_MOTOR_MOVES, STATE_LOGO, DEFAULT_BACKGROUND_UPDATE_PERIOD, DEFAULT_ACTIVE_UPDATE_PERIOD, MOTOR_PWM_FREQ)
+from .app import (STATE_COUNTDOWN, STATE_MOTOR_MOVES, STATE_LOGO, DEFAULT_BACKGROUND_UPDATE_PERIOD, DEFAULT_ACTIVE_UPDATE_PERIOD, MOTOR_ENABLE_USER_STATE)
 
 try:
     from micropython import const
@@ -235,7 +235,7 @@ class MotorMovesMgr:
     # begin_moves – called after countdown to start execution
     # ------------------------------------------------------------------
 
-    def begin_moves(self):
+    def begin_moves(self) -> bool:
         """Build the power plan and start running (called after countdown).
         When a MotorController is available, uses it for IMU-aided execution."""
         app = self._app
@@ -250,18 +250,13 @@ class MotorMovesMgr:
             self.power_plan_iter = chain(*(instr.power_plan for instr in self.instructions))
             if self.logging:
                 print(f"M:Beginning motor moves with power plan iterator based on {len(self.instructions)} instructions")
-            if 0 < len(app.hexdrive_apps):
-                if app.hexdrive_apps[0].initialise() and app.hexdrive_apps[0].set_power(True) and app.hexdrive_apps[0].set_freq(MOTOR_PWM_FREQ):
-                    app.hexdrive_apps[0].set_logging(False)
-                else:
-                    if self.logging:
-                        print("H:Failed to initialise HexDrive for motor moves")
-                    app.notification = Notification("HexDrive Init Failed")
-                    self._sub_state = _SUB_DONE
-                    return
+            if not app.enable_motors(True, MOTOR_ENABLE_USER_STATE):
+                if self._logging:
+                    print("Failed to enable motors for Motor Moves")
+                return False
         self._sub_state = _SUB_RUN
-        app.update_period = DEFAULT_ACTIVE_UPDATE_PERIOD
         app.refresh = True
+        return True
 
 
     async def _run_instructions_async(self):
@@ -315,7 +310,6 @@ class MotorMovesMgr:
         #    if self._mc_task.done():
         #        self.reset_robot()
         #        self._sub_state = _SUB_DONE
-        #        self._app.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
         #    return None  # MotorController manages motors directly
         #else:
         # Legacy power-plan path
@@ -324,7 +318,6 @@ class MotorMovesMgr:
             output = self._get_current_power_level(delta)
         else:
             output = None
-            self._app.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
         return output
 
 
@@ -336,6 +329,7 @@ class MotorMovesMgr:
         app = self._app
         if app.button_states.get(BUTTON_TYPES["CANCEL"]):
             app.button_states.clear()
+            app.enable_motors(False, MOTOR_ENABLE_USER_STATE)
             app.return_to_menu()
         elif app.button_states.get(BUTTON_TYPES["CONFIRM"]):
             app.button_states.clear()
@@ -487,10 +481,7 @@ class MotorMovesMgr:
         app.refresh = True
         if self.logging:
             print("Robot reset")
-        if len(app.hexdrive_apps) > 0:
-            hexdrive_app = app.hexdrive_apps[0]
-            hexdrive_app.set_motors((0, 0))
-            hexdrive_app.set_power(False)
+        app.enable_motors(False, MOTOR_ENABLE_USER_STATE)
 
     def reset_instructions(self):
         """Reset the instruction list and related state."""

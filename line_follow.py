@@ -18,7 +18,7 @@ from app_components.notification import Notification
 from app_components.tokens import label_font_size, small_font_size, button_labels
 import micropython
 
-from .app import MOTOR_PWM_FREQ, MOTOR_POWER_SCALE_FACTOR, STATE_FOLLOWER, DEFAULT_ACTIVE_UPDATE_PERIOD
+from .app import MOTOR_POWER_SCALE_FACTOR, STATE_FOLLOWER, DEFAULT_ACTIVE_UPDATE_PERIOD, MOTOR_ENABLE_USER_STATE
 
 try:
     from micropython import const
@@ -31,6 +31,7 @@ except ImportError:
 # Line Follower constants
 _MAX_TIME_WITHOUT_LINE = const(500)  # milliseconds to continue moving after losing the line before stopping
 _DEFAULT_DISPLAY_REFRESH_INTERVAL_MS = const(1000)
+_CALIBRATION_MSG_TIMEOUT_MS = const(4000)  # auto-dismiss the calibration reminder so remote (BLE) activation isn't left stuck on it
 
 # Automatic Stop baesd on Range Sensor
 _DEFAULT_MIN_OBSTACLE_DISTANCE = const(100)  # minimum distance in mm to an obstacle before stopping
@@ -189,34 +190,27 @@ class LineFollowMgr:
             app.notification = Notification("Colour Sensor not available")
             return False
 
-        # A HexDrive is required to drive the motors.
-        if len(app.hexdrive_apps) == 0:
-            if self._logging:
-                print("B:HexDrive not available; Line Follower requires HexDrive to run")
-            app.notification = Notification("HexDrive Init Failed")
-            return False
-
-        motor_hexdrive = app.hexdrive_apps[0]
-        motor_hexdrive.set_logging(False)
-        if not (motor_hexdrive.initialise() and motor_hexdrive.set_power(True) and motor_hexdrive.set_freq(MOTOR_PWM_FREQ)):
-            if self._logging:
-                print("HexDrive initialisation failed for Line Follower")
-            app.notification = Notification("HexDrive Init Failed")
-            return False
 
         # Load any persisted colour calibration, then enable the colour sensor for polling
         # (no events, no interrupts).
         if sensor_mgr is not None:
             if not sensor_mgr.enable_colour_sensor(colour_hexdrive, period=DEFAULT_ACTIVE_UPDATE_PERIOD):
+                app.enable_motors(False, MOTOR_ENABLE_USER_STATE)
                 app.notification = Notification("Colour Sensor not available")
                 return False
             # Load any persisted colour calibration
             if not sensor_mgr.apply_colour_calibration(colour_hexdrive):
+                app.enable_motors(False, MOTOR_ENABLE_USER_STATE)
                 app.notification = Notification("Please Calibrate Colour Sensor")
                 return False
         self._colour_hexdrive = colour_hexdrive
 
-        app.update_period = DEFAULT_ACTIVE_UPDATE_PERIOD
+        if not app.enable_motors(True, MOTOR_ENABLE_USER_STATE):
+            if self._logging:
+                print("HexDrive initialisation failed for Line Follower")
+            app.notification = Notification("HexDrive Init Failed")
+            return False
+
         app.set_menu(None)
         app.button_states.clear()
         app.refresh = True
@@ -287,9 +281,7 @@ class LineFollowMgr:
         if app.button_states.get(BUTTON_TYPES["CANCEL"]):
             app.button_states.clear()
             app.performance_mode = False
-            if len(app.hexdrive_apps) > 0:
-                app.hexdrive_apps[0].set_motors((0, 0))
-                app.hexdrive_apps[0].set_power(False)
+            app.enable_motors(False, MOTOR_ENABLE_USER_STATE)
             sensor_mgr = app.sensor_test_mgr
             if sensor_mgr is not None and self._colour_hexdrive is not None:
                 sensor_mgr.disable_colour_sensor(self._colour_hexdrive)
@@ -317,9 +309,7 @@ class LineFollowMgr:
             app.performance_mode = False  # disable performance mode while adjusting settings so we can see the display update
         elif app.button_states.get(BUTTON_TYPES["LEFT"]):
             app.button_states.clear()
-            self._signed_steering_gain *= -1
-            if self._logging:
-                print(f"B:LF:Steering gain sign reversed to {self._signed_steering_gain}")
+            self.toggle_direction()
             app.performance_mode = False  # disable performance mode while adjusting settings so we can see the display update
         elif app.button_states.get(BUTTON_TYPES["UP"]):
             # Up/Down adjust the value of the currently selected field.
@@ -334,18 +324,33 @@ class LineFollowMgr:
             app.performance_mode = False  # disable performance mode while adjusting settings so we can see the display update
         elif app.button_states.get(BUTTON_TYPES["CONFIRM"]):
             app.button_states.clear()
-            self._enable_movement = not self._enable_movement
-            if self._enable_movement:
-                if self._logging:
-                    print("B:LF:Start")
-                self._app.set_ring_colour(None) # Turn off the ring colour to indicate we are actively following the line
-            else:
-                if self._logging:
-                    print("B:LF:Stop")
-                self.motor_output = (0, 0)      # Stop
-            app.refresh = True
-            app.performance_mode = False  # disable performance mode while adjusting settings so we can see the display update
+            self.toggle_movement()
         return True
+
+
+    def toggle_movement(self):
+        """Toggle the line-follower start/stop movement state (CONFIRM action).
+        Shared by the local CONFIRM button and remote (BLE) control."""
+        self._enable_movement = not self._enable_movement
+        if self._enable_movement:
+            if self._logging:
+                print("B:LF:Start")
+            self._app.set_ring_colour(None)  # Turn off the ring colour to indicate we are actively following the line
+        else:
+            if self._logging:
+                print("B:LF:Stop")
+            self.motor_output = (0, 0)       # Stop
+        self._app.refresh = True
+        self._app.performance_mode = False   # disable performance mode while adjusting settings so we can see the display update
+
+
+    def toggle_direction(self):
+        """Reverse the steering-gain sign (LEFT action).  Shared by the local LEFT
+        button and remote (BLE) control so a remote user can match the line side."""
+        self._signed_steering_gain *= -1
+        self._app.notification = Notification("Direction: Reversed")
+        if self._logging:
+            print(f"B:LF:Steering gain sign reversed to {self._signed_steering_gain}")
 
 
     def _adjust_selected_field(self, direction: int):
@@ -542,7 +547,7 @@ class LineFollowMgr:
 
         #Remind User to calibrate Colour Sensor if this is the first time the Line Follower has been started since the app was launched.
         if not self._calibration_msg_shown:
-            self._app.show_message(["Line Follower:", "For best tracking", "ensure Colour", "Sensor calibration", "is recent"], [(0.5,1.0,0.5),(1,1,1),(1,1,1),(1,1,1),(1,1,1)], return_state = STATE_FOLLOWER)
+            self._app.show_message(["Line Follower:", "For best tracking", "ensure Colour", "Sensor calibration", "is recent"], [(0.5,1.0,0.5),(1,1,1),(1,1,1),(1,1,1),(1,1,1)], return_state = STATE_FOLLOWER, timeout = _CALIBRATION_MSG_TIMEOUT_MS)
             self._calibration_msg_shown = True
             return True
 
@@ -556,7 +561,8 @@ class LineFollowMgr:
         ctx.rgb(0.25,0.25,0.25).rectangle(-half_width, -half_height, 2 * half_width, label_font_size * 2).fill()
 
         # grey highlight behind the currently selected editable field
-        hx, hy, hw, hh = _EDIT_FIELDS[self._selected_field][_EDIT_FIELDS_RECTANGLE_INDEX]
+        selected_field = _EDIT_FIELDS[self._selected_field]
+        hx, hy, hw, hh = selected_field[3]
         ctx.rgb(0.33, 0.33, 0.33).rectangle(hx, hy, hw, hh).fill()
 
         # 'rainbow' like bands to show the hue ranges for the different colours between the minimum and maximum hue deviation, with the neutral hue in the centre

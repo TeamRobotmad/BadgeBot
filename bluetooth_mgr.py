@@ -7,7 +7,7 @@ from events.input import BUTTON_TYPES
 from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
 from micropython import schedule
-from .app import MOTOR_PWM_FREQ, DEFAULT_ACTIVE_UPDATE_PERIOD, DEFAULT_BACKGROUND_UPDATE_PERIOD
+from .app import REMOTE_CMD_LINE_FOLLOW_TOGGLE, REMOTE_CMD_LINE_FOLLOW_DIRECTION
 
 try:
     from micropython import const
@@ -171,8 +171,21 @@ class RobotBLE:
 _DRIVE_BUTTONS = frozenset('45678') # 5/6/7/8 form a control keypad, but 4 is used as emergency stop which will override other apps trying to drive the robot.
 _CONTROL_BUTTONS = frozenset('0123')
 
+# Map phone control-pad buttons to transport-agnostic app remote commands.
+# Button presses are translated to these and posted to the app, which owns all
+# state control.  Add entries here to expose more remote features.
+_CONTROL_BUTTON_COMMANDS = {
+    '1': REMOTE_CMD_LINE_FOLLOW_TOGGLE,     # activate Line Follower / toggle start-stop
+    '2': REMOTE_CMD_LINE_FOLLOW_DIRECTION,  # toggle Line Follower direction
+}
+
 # Currently-held BLE drive button, or None when no button is pressed.
 _ble_active_button = None
+
+# Queue of pending control-button presses ('0'-'3') from the phone.  Appended in
+# ble_process_command (runs on the main thread via schedule) and drained by
+# BluetoothMgr.update() so the app can action them.
+_ble_pending_buttons = []
 
 
 def ble_process_command(data):
@@ -194,10 +207,8 @@ def ble_process_command(data):
     if button in _CONTROL_BUTTONS:
         #print(f"BLE:Control Button {button} {'Pressed' if action == '1' else 'Released'}")
         if action == '1':
-            if button == '0':
-                # toggle Flood LED state
-                #print("BLE:Toggle Flood LED")
-                pass
+            # Queue the press; BluetoothMgr.update() translates and forwards it to the app.
+            _ble_pending_buttons.append(button)
         return
 
     if button in _DRIVE_BUTTONS:
@@ -316,6 +327,12 @@ class BluetoothMgr:
 
 
     @property
+    def is_active(self) -> bool:
+        """Returns True if the Bluetooth manager is currently active (started)."""
+        return self._ble_controller is not None
+
+
+    @property
     def is_connected(self) -> bool:
         """Returns True if a BLE central is connected."""
         return self._is_connected
@@ -398,20 +415,14 @@ class BluetoothMgr:
             if self._ble_controller.is_connected() and not self._is_connected:
                 self._is_connected = True
                 app.notification = Notification("BLE Connected")
-                # Enable the Motors
-                motor_hexdrive = app.hexdrive_apps[0]
-                if not (motor_hexdrive.initialise() and motor_hexdrive.set_power(True) and motor_hexdrive.set_freq(MOTOR_PWM_FREQ)):
-                    print("B:Failed to enable motors after BLE connection")
                 app.refresh = True
-                app.update_period = DEFAULT_ACTIVE_UPDATE_PERIOD
             elif not self._ble_controller.is_connected() and self._is_connected:
                 self._is_connected = False
                 app.notification = Notification("BLE Disconnected")
-                motor_hexdrive = app.hexdrive_apps[0]
-                if not motor_hexdrive.set_power(False):
-                    print("B:Failed to disable power after BLE disconnection")
-                app.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
                 app.refresh = True
+
+        # Forward any queued phone control-button presses to the app as remote commands.
+        self._process_control_buttons()
 
         if app.button_states.get(BUTTON_TYPES["CANCEL"]): # Exit
             app.button_states.clear()
@@ -426,12 +437,22 @@ class BluetoothMgr:
             app.return_to_menu()
 
 
+    def _process_control_buttons(self):
+        """Translate any pending phone control-button presses into transport-agnostic
+        remote commands and post them to the app, which owns all state control."""
+        while _ble_pending_buttons:
+            button = _ble_pending_buttons.pop(0)
+            command = _CONTROL_BUTTON_COMMANDS.get(button)
+            if command is not None:
+                self._app.post_remote_command(command)
+
+
     def draw(self, ctx) -> bool:
         """Draw the Bluetooth manager's UI elements.  This should be called in the main loop's draw phase."""
         app = self._app
         # if connected then show a message to the user that they can control the robot with the Bluefruit LE app
         if self._is_connected:
-            app.draw_message(ctx, ["BLE connected", "use Bluefruit", "Connect to", "control"], [(0.5, 1, 0.5), (0.5, 1, 0.5), (0.5, 1, 0.5), (0.5, 1, 0.5)], label_font_size)
+            app.draw_message(ctx, ["BLE connected", "use Bluefruit", "Connect to", "control."], [(0.5, 1, 0.5), (0.5, 1, 0.5), (0.5, 1, 0.5), (0.5, 1, 0.5)], label_font_size)
         else:
             app.draw_message(ctx, ["BLE enabled:", "on Phone", "use Bluefruit", "Connect with", f"{self._name}"], [(1, 1, 0), (1, 1, 0), (1, 1, 0), (1, 1, 0), (0.5, 1, 1)], label_font_size)
 

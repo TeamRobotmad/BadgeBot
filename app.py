@@ -98,12 +98,13 @@ _MAX_MAX_POWER         = const(65535) // MOTOR_POWER_SCALE_FACTOR
 
 _LONG_PRESS_MS = const(750)        # Time for long button press to register, in ms
 _RUN_COUNTDOWN_MS = const(5000)    # Time after running program until drive starts, in ms
+_WARNING_MESSAGE_TIMEOUT_MS = const(10000)  # Default auto-dismiss time for "warning" messages, in ms
 _AUTO_REPEAT_MS = const(200)       # Time between auto-repeats, in ms
 _AUTO_REPEAT_COUNT_THRES = const(10) # Number of auto-repeats before increasing level
 _AUTO_REPEAT_SPEED_LEVEL_MAX = const(4)  # Maximum level of auto-repeat speed increases
 _AUTO_REPEAT_LEVEL_MAX = const(3)  # Maximum level of auto-repeat digit increases
 DEFAULT_BACKGROUND_UPDATE_PERIOD = const(50)       # mS when not moving
-DEFAULT_ACTIVE_UPDATE_PERIOD     = const(10)       # mS when moving
+DEFAULT_ACTIVE_UPDATE_PERIOD     = const(15)       # mS when moving
 _NOTIFICATION_DISPLAY_DURATION   = const(1000 * 3) # 3 seconds (hard coded in BadgeOS)
 
 # App states
@@ -119,6 +120,21 @@ STATE_SENSOR = const(8)          # Sensor Test
 STATE_AUTODRIVE = const(9)       # Autonomous Drive
 STATE_HEXPANSION = const(10)     # Hexpansion Management (sub-states managed by HexpansionMgr)
 STATE_BLUETOOTH = const(11)      # Bluetooth Control (sub-states managed by BluetoothMgr)
+
+# Motor enable users: each caller that needs motor power owns one user id.
+# Motors are enabled if ANY user is enabled, disabled only when ALL are disabled.
+MOTOR_ENABLE_USER_BLE = const(0)
+MOTOR_ENABLE_USER_STATE = const(1)
+
+# Remote-control commands that can be posted by any comms transport (BLE now,
+# other transports in future) via post_remote_command() and are actioned from
+# update().  Keeping these transport-agnostic lets new input sources reuse them.
+REMOTE_CMD_LINE_FOLLOW_TOGGLE = const(1)     # enter Line Follower / toggle start-stop
+REMOTE_CMD_LINE_FOLLOW_DIRECTION = const(2)  # toggle Line Follower steering direction
+
+# States from which a remote command may switch the app into Line Follower.
+# Extend this tuple to permit remote activation from additional states.
+_REMOTE_LINE_FOLLOW_STATES = (STATE_BLUETOOTH, STATE_FOLLOWER)
 
 # App states where user can minimise app (Menu, Message, Logo)
 MINIMISE_VALID_STATES = [STATE_MENU, STATE_MESSAGE, STATE_LOGO]
@@ -211,6 +227,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         "message_colours",
         "message_type",
         "message_return_state",
+        "message_timeout",
         "current_menu",
         "menu",
         "_main_menu_position",
@@ -270,6 +287,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         "_performance_mode",
         "_ble",
         "_notification_end_time",
+        "_motor_enable_mask",
+        "_remote_commands",
     )
 
     DEFAULT_MAX_POWER = DEFAULT_MAX_POWER
@@ -306,6 +325,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.message_colours: list = []
         self.message_type: str | None = None
         self.message_return_state: int | None = None
+        self.message_timeout: int | None = None  # ms to auto-dismiss the message (None = wait for user)
         self.current_menu: str | None = None
         self.menu: Menu | None = None
         self._main_menu_position: int = 0
@@ -471,6 +491,11 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
         # Bluetooth LE
         self._ble_override_active: bool = False
+        self._motor_enable_mask: int = 0
+
+        # Queue of pending remote-control commands (REMOTE_CMD_*) posted by comms
+        # transports (BLE now, others in future) and actioned from update().
+        self._remote_commands: list = []
 
         # Hexpansion event handlers registered directly by hexpansion_mgr
         if self._hexpansion_mgr is not None:
@@ -484,7 +509,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         # We start with focus on launch, without an event emmited
         # This version is compatible with the simulator
         asyncio.get_event_loop().create_task(self._gain_focus(RequestForegroundPushEvent(self)))
-
 
 
         # Check what version of the Badge s/w we are running on
@@ -576,6 +600,141 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self._update_period = value
 
 
+    def enable_motors(self, enable: bool, user: int) -> bool:
+        """Enable/disable motors for a specific user id.
+
+        Uses a bit-mask of user ownership flags:
+        - hardware turns on when ANY user is enabled
+        - hardware turns off when ALL users are disabled
+        """
+        if user < 0:
+            if self._logging:
+                print(f"B:Invalid motor user id {user}")
+            return False
+
+        bit = 1 << user
+        old_mask = self._motor_enable_mask
+        had_user_enabled = (old_mask & bit) != 0
+
+        # No state change requested for this user.
+        if had_user_enabled == enable:
+            return True
+
+        new_mask = (old_mask | bit) if enable else (old_mask & ~bit)
+        motors_were_enabled = old_mask != 0
+        motors_should_be_enabled = new_mask != 0
+
+        # Record the user-state change first; if hardware transition fails, roll back.
+        self._motor_enable_mask = new_mask
+
+        # If aggregate state did not change, no hardware transition is required.
+        if motors_were_enabled == motors_should_be_enabled:
+            return True
+
+        motor_hexdrive_app = self.hexdrive_apps[0] if len(self.hexdrive_apps) > 0 else None
+        if motor_hexdrive_app is None:
+            if self._logging:
+                print("B:No HexDrive app available for motor power transition")
+            self._motor_enable_mask = 0
+            self.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD  # restore the default update period when motors are disabled
+            return False
+
+        if motors_should_be_enabled:
+            ok = (motor_hexdrive_app.initialise()
+                  and motor_hexdrive_app.set_power(True)
+                  and motor_hexdrive_app.set_freq(MOTOR_PWM_FREQ))
+            if ok:
+                if self._logging:
+                    print(f"B:Motors enabled (user={user}, mask={new_mask})")
+                self.update_period = DEFAULT_ACTIVE_UPDATE_PERIOD  # ensure we have a fast update period when motors are enabled
+                return True
+            self._motor_enable_mask = old_mask
+            if self._logging:
+                print(f"B:Failed to enable motors (user={user})")
+            return False
+
+        self.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD  # restore the default update period when motors are disabled
+        self._output1 = 0
+        self._output2 = 0
+        ok = motor_hexdrive_app.set_motors((0, 0)) and motor_hexdrive_app.set_power(False)
+        if ok:
+            if self._logging:
+                print(f"B:Motors disabled (user={user}, mask={new_mask})")
+            return True
+
+        self._motor_enable_mask = old_mask
+        if self._logging:
+            print(f"B:Failed to disable motors (user={user})")
+        return False
+
+
+
+    ### REMOTE CONTROL (transport-agnostic) ###
+
+    def post_remote_command(self, command: int):
+        """Queue a remote-control command (REMOTE_CMD_*) from an external comms
+        transport (e.g. BLE).  Commands are actioned from update() so all state
+        control stays owned by the app, regardless of the input source."""
+        self._remote_commands.append(command)
+
+
+    def _process_remote_commands(self):
+        """Action any queued remote-control commands.  Runs from update() on the
+        main loop, keeping state transitions in the app rather than in transports."""
+        while self._remote_commands:
+            command = self._remote_commands.pop(0)
+            if command == REMOTE_CMD_LINE_FOLLOW_TOGGLE:
+                self._remote_line_follow_toggle()
+            elif command == REMOTE_CMD_LINE_FOLLOW_DIRECTION:
+                self._remote_line_follow_direction()
+            elif self._logging:
+                print(f"B:Ignoring unknown remote command {command}")
+
+
+    def _remote_line_follow_toggle(self):
+        """Remote 'button 1': enter Line Follower from an allowed state, or toggle
+        start/stop (as per CONFIRM) when already in Line Follower."""
+        if self.current_state == STATE_FOLLOWER:
+            if self._line_follow_mgr is not None:
+                self._line_follow_mgr.toggle_movement()
+            return
+        if self.current_state in _REMOTE_LINE_FOLLOW_STATES:
+            if self._logging:
+                print("B:Remote activating Line Follower")
+            self.start_line_follow()
+        elif self._logging:
+            print(f"B:Remote Line Follower activation ignored in state {self.current_state}")
+
+
+    def _remote_line_follow_direction(self):
+        """Remote 'button 2': toggle Line Follower steering direction (as per LEFT),
+        only while Line Follower is the active feature."""
+        if self.current_state == STATE_FOLLOWER and self._line_follow_mgr is not None:
+            self._line_follow_mgr.toggle_direction()
+        elif self._logging:
+            print(f"B:Remote direction toggle ignored in state {self.current_state}")
+
+
+    def start_line_follow(self) -> bool:
+        """Enter the Line Follower state, checking for the required motor hardware.
+        Centralised so the menu and remote (BLE) control share one entry path.
+        Returns True if the Line Follower state was entered."""
+        if self.num_motors == 0:
+            self.notification = Notification("No Motors")
+            return False
+        if self.num_motors == 1:
+            self.notification = Notification("2 Motors Required")
+            return False
+        if self._line_follow_mgr is None:
+            return False
+        self._line_follow_mgr.logging = self._logging  # sync logging with current app setting
+        if self._line_follow_mgr.start():
+            self.current_state = STATE_FOLLOWER
+            return True
+        return False
+
+
+
     ### ASYNC EVENT HANDLERS ###
 
     async def _handle_stop_app(self, event: RequestStopAppEvent):
@@ -601,6 +760,9 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if event.app is self:
             if self.logging:
                 print(f"B:BadgeBot gained focus in state {self.current_state}")
+            # if Bluetooth is connected - enable motors while we have the focus
+            if self._bluetooth_mgr and self._bluetooth_mgr.is_connected:
+                self.enable_motors(True, MOTOR_ENABLE_USER_BLE)
             if self.current_state in _LED_CONTROL_STATES:
                 eventbus.emit(PatternDisable())
                 self.pattern_status = False
@@ -613,6 +775,9 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if event.app is self:
             if self.logging:
                 print(f"B:BadgeBot lost focus from state {self.current_state}")
+            # if Bluetooth is connected - disable motors while we don't have the focus
+            if self._bluetooth_mgr and self._bluetooth_mgr.is_connected:
+                self.enable_motors(False, MOTOR_ENABLE_USER_BLE)
             if not self.pattern_status:
                 eventbus.emit(PatternEnable())
                 self.pattern_status = True
@@ -869,6 +1034,18 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 # Trigger an update cycle for hexpansion_mgr even though it is not currently active
                 self._hexpansion_mgr.update(delta)
 
+        # if Bluetooth has been Activated, update it even if we are not in the Bluetooth state, to ensure that BLE events are processed and the connection is maintained.
+        if self._bluetooth_mgr is not None and self.current_state != STATE_BLUETOOTH and self._bluetooth_mgr.is_active:
+            self._bluetooth_mgr.update(delta)
+        if self._bluetooth_mgr is not None and (self.current_state == STATE_BLUETOOTH or self._bluetooth_mgr.is_active):
+            if not self.enable_motors(self._bluetooth_mgr.is_connected, MOTOR_ENABLE_USER_BLE):
+                if self._logging:
+                    print("B:Failed BLE motor en/disable update")
+
+        # Action any remote-control commands queued by comms transports (BLE now,
+        # others in future).  State changes happen here, in the app, not in the transport.
+        self._process_remote_commands()
+
         # Update the main application state (menus, countdowns, and delegating to functional area managers)
         self._update_main_application(delta)
 
@@ -959,40 +1136,39 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         ### End of Update ###
 
 
-    def _update_state_message(self, delta: int):      # pylint: disable=unused-argument
+    def _dismiss_message(self):
+        """Dismiss the current message and move on, honouring message_return_state
+        (or the main menu if none).  Shared by the OK button and the message timeout."""
+        if self.message_return_state is not None:
+            self.current_state = self.message_return_state
+        else:
+            # refresh the menu in case available options have changed
+            self.set_menu()
+            self.refresh = True
+            self.current_state = STATE_MENU
+        self.message = []
+        self.message_colours = []
+        self.message_type = None
+        self.message_return_state = None
+        self.message_timeout = None
+
+
+    def _update_state_message(self, delta: int):
         if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
+            self.button_states.clear()
             if self.message_type == "reboop":
-                self.button_states.clear()
                 # Reboot has been acknowledged by the user - unfortunately we can't actually reboot the badge from Python.
                 return # leave the message on screen.
-            elif self.message_return_state is not None:
-                self.button_states.clear()
-                self.current_state = self.message_return_state
-            else:
-                # Message has been acknowledged by the user - allow access to the menu
-                self.button_states.clear()
-                # refresh the menu in case available options have changed
-                self.set_menu()
-                self.refresh = True
-                self.current_state = STATE_MENU
-            self.message = []
-            self.message_colours = []
-            self.message_type = None
-            self.message_return_state = None
+            # Message has been acknowledged by the user
+            self._dismiss_message()
         else:
             # "CANCEL" button is handled in common for all MINIMISE_VALID_STATES so no custom code here
-            # Show the warning screen for 10 seconds
             self.animation_counter += delta
-            if self.message_type == "warning" and self.animation_counter > 10000:
-                # For Warnings, after 10 seconds show the logo
-                self.animation_counter = 0
-                self.current_state = STATE_LOGO
-                self.message = []
-                self.message_colours = []
-                self.message_type = None
-                self.message_return_state = None
-                self.refresh = True
-            elif self.current_state == STATE_LOGO:
+            if self.message_timeout is not None and self.animation_counter >= self.message_timeout:
+                # Auto-dismiss once the timeout expires, exactly as if OK had been pressed.
+                self._dismiss_message()
+                return
+            if self.current_state == STATE_LOGO:
                 # LED management - to match rotating logo:
                 for i in range(1,13):
                     colour = (255, 241, 0)      # custom Robotmad shade of yellow
@@ -1010,6 +1186,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                     tildagonos.leds[i] = (255,0,0) if self.message_type == "error" else (0,255,0)
 
 
+
     def _update_state_countdown(self, delta: int):
         self.clear_leds()
         self.run_countdown_elapsed_ms += delta
@@ -1018,10 +1195,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 # Motor Moves: delegate to begin_moves
                 self.current_state = self.countdown_next_state
                 if self._motor_moves_mgr is not None:
-                    self._motor_moves_mgr.begin_moves()
-                else:
-                    self.return_to_menu()
-            else:
+                    if self._motor_moves_mgr.begin_moves():
+                        return
                 # Generic fallback
                 self.return_to_menu()
         else:
@@ -1235,15 +1410,19 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             print("Returning to menu")
         if menu_name is not None:
             self.set_menu(menu_name)
-        self.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
+        if self._motor_enable_mask == 0:
+            self.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
         self.current_state = STATE_MENU
         self.refresh = True
         self.update_settings()
         self.fast_settings_update()
 
 
-    def show_message(self, msg_content, msg_colours, msg_type = None, return_state: int | None = None):
-        """Utility function to set the current state to the message display, and populate the message content and colours. The message_type can be used to indicate whether this is an 'error' (red) or 'warning' (green) message, which can affect both the display and the behaviour when the user acknowledges the message."""
+    def show_message(self, msg_content, msg_colours, msg_type = None, return_state: int | None = None, timeout: int | None = None):
+        """Utility function to set the current state to the message display, and populate the message content and colours. The message_type can be used to indicate whether this is an 'error' (red) or 'warning' (green) message, which can affect both the display and the behaviour when the user acknowledges the message.
+        timeout (ms) optionally auto-dismisses the message (as if OK were pressed) after the given time; None waits for the user.  "warning" messages default to a 10s auto-dismiss when no explicit timeout is given."""
+        if timeout is None and msg_type == "warning":
+            timeout = _WARNING_MESSAGE_TIMEOUT_MS
         if self._logging:
             print(f"Showing message: '{msg_content}' with type {msg_type}")
         self.animation_counter = 0
@@ -1251,6 +1430,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.message_colours = msg_colours
         self.message_type = msg_type
         self.message_return_state = return_state
+        self.message_timeout = timeout
         self.current_state = STATE_MESSAGE
         self.refresh = True
 
@@ -1365,16 +1545,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 if self._bluetooth_mgr.start(name = name):
                     self.current_state = STATE_BLUETOOTH
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_LINE_FOLLOWER]: # Line Follower
-            # Check for required hardware and show message if not present, otherwise start the line follower manager and switch to follower state
-            if self.num_motors == 0:
-                self.notification = Notification("No Motors")
-            elif self.num_motors == 1:
-                self.notification = Notification("2 Motors Required")
-            else:
-                if self._line_follow_mgr is not None:
-                    self._line_follow_mgr.logging = self._logging # update logging setting in line follow manager based on current app setting, in case it was changed
-                    if self._line_follow_mgr.start():
-                        self.current_state = STATE_FOLLOWER
+            # Check for required hardware and switch to follower state (shared with remote control)
+            self.start_line_follow()
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_MOTOR_MOVES]: # Motor Moves
             # Check for required hardware and show message if not present, otherwise start the motor moves manager and switch to motor moves state
             if self.num_motors == 0:

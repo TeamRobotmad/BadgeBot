@@ -387,7 +387,6 @@ class SensorTestMgr:
                 print("Exiting Sensor Test")
             self._disable_sensors()
             self._hexdrive_app = None
-            app.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
             app.return_to_menu()
 
 
