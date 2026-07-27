@@ -119,6 +119,19 @@ class TestTwoMotorHexDrive:
         for expected in ("Hexpansions", "Settings", "About", "Exit"):
             assert expected in items, f"Missing common menu item: {expected}"
 
+    def test_background_update_applies_motor_output_without_bluetooth(self, badgebot_app_with_hexpansion, monkeypatch):
+        app = badgebot_app_with_hexpansion
+        outputs = []
+
+        monkeypatch.setattr(app, "_bluetooth_mgr", None)
+        monkeypatch.setattr(app, "apply_motor_calibration", lambda output: output)
+        monkeypatch.setattr(app.hexdrive_apps[0], "set_motors", lambda output: outputs.append(output) or True)
+        app._state_background_dispatch[app.current_state] = lambda _delta: (25, -25)
+
+        app.background_update(10)
+
+        assert outputs == [(25, -25)]
+
 
 # =====================================================================
 #  4-Servo HexDrive (PID 0xCBCC)

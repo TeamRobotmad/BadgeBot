@@ -583,8 +583,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if event.app == self:
             if self.logging:
                 print("B:BadgeBot received RequestStopAppEvent, save settings & releasing resources")
-                # Save settings before we exit, so that any changes made during this session are preserved
-                platform_settings.save()
+            # Save settings before we exit, so that any changes made during this session are preserved
+            platform_settings.save()
             if self.pattern_status:
                 eventbus.emit(PatternEnable())
                 self.pattern_status = True
@@ -660,18 +660,19 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         bg_fn = self._state_background_dispatch.get(self.current_state)
         output = bg_fn(delta) if bg_fn is not None else None
 
-        if len(self.hexdrive_apps) > 0 and self._bluetooth_mgr:
-            # BLE direction buttons override the state's motor output while held,
-            # regardless of whether the current state produced any output.
-            ble_override = self._bluetooth_mgr.motor_override(self.max_power)
-            if ble_override is not None:
-                self._ble_override_active = True
-                output = ble_override
-            else:
-                if self._ble_override_active and output is None:
-                    # ensure we stop the motors if we were previously overriding them with BLE and now there is no output from the current state
-                    output = (0, 0)
-                self._ble_override_active = False
+        if len(self.hexdrive_apps) > 0:
+            if self._bluetooth_mgr:
+                # BLE direction buttons override the state's motor output while held,
+                # regardless of whether the current state produced any output.
+                ble_override = self._bluetooth_mgr.motor_override(self.max_power)
+                if ble_override is not None:
+                    self._ble_override_active = True
+                    output = ble_override
+                else:
+                    if self._ble_override_active and output is None:
+                        # ensure we stop the motors if we were previously overriding them with BLE and now there is no output from the current state
+                        output = (0, 0)
+                    self._ble_override_active = False
 
             if output is None and (self._output1 != 0 or self._output2 != 0):
                 # ensure we stop the motors if the current state has no output and the previous output was non-zero
@@ -839,7 +840,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 # in case access to protected member _open() (or _is_closed()) is not allowed, we catch the exception and
                 # to prevent crashes - this means that in this case we won't be able to automatically clear
                 # notifications when they are closed, but at least the app won't crash.
-                if not self.notification._open:  # pylint: disable=protected-access
+                if self.notification._is_closed():  # pylint: disable=protected-access
                     if self._logging:
                         print("B:Notification closed, clearing notification reference")
                     self.notification = None
