@@ -409,7 +409,7 @@ class LineFollowMgr:
             self._last_colour = _raw
             self._new_sample = True
 
-            if self._last_colour_name is "Black":
+            if self._last_colour_name == "Black":
                 # Stop Immediately if the colour is black
                 if self._logging:
                     print("B:LF:Black detected, auto stop")
