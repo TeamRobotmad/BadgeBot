@@ -295,7 +295,8 @@ class SensorTestMgr:
     def update(self, delta: int):
         """Handle Sensor Test states."""
         if self._draw_stats.update(delta):
-            print(f"B:Draw stats updated: {self._draw_stats.rate_str}")
+            if self._logging:
+                print(f"B:Draw stats updated: {self._draw_stats.rate_str}")
             self._app.refresh = True
         if self._sub_state == _SUB_SELECT_PORT:
             self._update_select_port(delta)
