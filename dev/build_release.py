@@ -16,8 +16,6 @@ class ModuleSpec:
 
 RUNTIME_MODULES = {
     "app",
-    "autotune",
-    "autotune_mgr",
     "settings_mgr",
     "hexpansion_mgr",
     "bluetooth_mgr",
@@ -27,7 +25,6 @@ RUNTIME_MODULES = {
     "utils",
     "diagnostics",
     "motor_controller",
-    "sensor_manager",
     "sensor_test",
 }
 

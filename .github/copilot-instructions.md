@@ -30,8 +30,7 @@ Core capabilities:
 - `hexdrive.py`: EEPROM app (`HexDriveApp`) controlling PWM/motors/servos and keep-alive safety.
 - `hexpansion_mgr.py`: Port scanning, EEPROM prep/program/erase, HexDrive lifecycle.
 - `motor_controller.py`: Higher-level movement control and assisted maneuvers.
-- `motor_moves.py`, `servo_test.py`, `line_follow.py`, `autotune_mgr.py`, `sensor_test.py`, `autodrive.py`: Mode managers.
-- `sensor_manager.py` + `sensors/`: Sensor discovery and sensor driver implementations.
+- `motor_moves.py`, `servo_test.py`, `line_follow.py`, `sensor_test.py`, `autodrive.py`: Mode managers.
 - `utils.py`: Shared UI/drawing and helper utilities.
 
 ## Architecture Guidance

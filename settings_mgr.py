@@ -1,3 +1,4 @@
+"""Settings Manager for BadgeBot."""
 # Settings Module for BadgeBot
 #
 # Contains the MySetting class for managing individual settings with
@@ -18,16 +19,33 @@ from .app import SETTINGS_NAME_PREFIX
 MENU_ENTRY_NAME = "Settings"
 
 class MySetting:
-    def __init__(self, container, default, minimum, maximum, labels=None):
+    """A single setting with min/max bounds, persistence, and increment/decrement by level."""
+    __slots__ = ("_container", "d", "v", "_min", "_max", "_wrap", "_labels")
+
+    def __init__(self, container, default, minimum, maximum, wrap=False, labels=None):
         self._container = container
         self.d = default
         self.v = default
         self._min = minimum
         self._max = maximum
+        self._wrap = wrap
         self._labels = labels
 
     def __str__(self):
         return str(self.v)
+
+
+    def clamp(self):
+        """Clamp the setting value to its min/max bounds."""
+        if self.v < self._min:
+            if self._container['logging'].v:
+                print(f"Warning: Setting {self._index()} value {self.v} is below minimum {self._min}, adjusting to minimum")
+            self.v = self._min
+        elif self.v > self._max:
+            if self._container['logging'].v:
+                print(f"Warning: Setting {self._index()} value {self.v} is above maximum {self._max}, adjusting to maximum")
+            self.v = self._max
+
 
     def _index(self):
         for k, v in self._container.items():
@@ -35,7 +53,9 @@ class MySetting:
                 return k
         return None
 
+
     def label(self, index: int | None = None):
+        """Return a string label for the setting value.  If index is provided, return the label for that index instead of the current value."""
         if index is not None:
             if self._labels is not None and index < len(self._labels):
                 return self._labels[int(index)]
@@ -44,14 +64,16 @@ class MySetting:
             return self._labels[int(self.v)]
         return str(self.v)
 
+
     @staticmethod
     def _quantize_tenths(value: float) -> float:
         """Round to 0.1 steps deterministically to avoid float drift artifacts."""
         scaled = int((value * 10) + (0.5 if value >= 0 else -0.5))
         return scaled / 10.0
 
+
     def inc(self, v, l=0):
-        """ Increment the setting value.  If l > 0, increment by the next highest order of magnitude (e.g. 10s place for l=1, 100s place for l=2, etc.)"""
+        """ Increment the setting value.  If l > 0, increment by the next highest order of magnitude (e.g. 10s place for l=1, 100s place for l=2, etc.).  If wrap, roll over to the minimum when the maximum is exceeded."""
         if isinstance(self.v, bool):
             v = not v
         elif isinstance(self.v, int):
@@ -61,9 +83,9 @@ class MySetting:
                 d = 10 ** l
                 v = ((v // d) + 1) * d
             if v > self._max:
-                if self._labels is not None:
-                    # settings that are purely label-based wrap around
-                    v = 0
+                if self._labels is not None or self._wrap:
+                    # label-based (or explicitly wrapping) settings wrap around
+                    v = self._min
                 else:
                     v = self._max
         elif isinstance(self.v, float):
@@ -72,11 +94,12 @@ class MySetting:
                 v = self._max
             v = self._quantize_tenths(v)
         elif self._container['logging'].v:
-            print(f"H:inc type: {type(self.v)}")
+            print(f"B:inc type: {type(self.v)}")
         return v
 
+
     def dec(self, v, l=0):
-        """Decrement the setting value.  If l > 0, decrement by the next highest order of magnitude (e.g. 10s place for l=1, 100s place for l=2, etc.)"""
+        """Decrement the setting value.  If l > 0, decrement by the next highest order of magnitude (e.g. 10s place for l=1, 100s place for l=2, etc.).  If wrap, roll over to the maximum when the minimum is exceeded."""
         if isinstance(self.v, bool):
             v = not v
         elif isinstance(self.v, int):
@@ -86,9 +109,9 @@ class MySetting:
                 d = 10 ** l
                 v = (((v + (9 * (10 ** (l - 1)))) // d) - 1) * d
             if v < self._min:
-                if self._labels is not None:
-                    # settings that are purely label-based wrap around
-                    v = len(self._labels) - 1
+                if self._labels is not None or self._wrap:
+                    # settings that are purely label-based or explicitly wrapping wrap around
+                    v = len(self._labels) - 1 if self._labels is not None else self._max
                 else:
                     v = self._min
         elif isinstance(self.v, float):
@@ -97,11 +120,12 @@ class MySetting:
                 v = self._min
             v = self._quantize_tenths(v)
         elif self._container['logging'].v:
-            print(f"H: dec type: {type(self.v)}")
+            print(f"B: dec type: {type(self.v)}")
         return v
 
+
     def persist(self):
-        """Persist the setting value to platform storage.  If the value is equal to the default, the setting will be removed from storage to save space."""
+        """Persist the setting value to platform storage."""
         index = self._index()
         if index is None:
             return
@@ -109,7 +133,7 @@ class MySetting:
         try:
             platform_settings.set(key, self.v)
         except Exception as e:          # pylint: disable=broad-except
-            print(f"H:Failed to persist setting {key}: {e}")
+            print(f"B:Failed to persist setting {key}: {e}")
 
 
 class SettingsMgr:
@@ -120,6 +144,7 @@ class SettingsMgr:
     app : BadgeBotApp
         Reference to the main application instance.
     """
+    __slots__ = ("_app", "_logging", "edit_setting", "edit_setting_value")
 
     def __init__(self, app, logging: bool = False):
         self._app = app
@@ -128,6 +153,7 @@ class SettingsMgr:
         self.edit_setting_value = None
         if self._logging:
             print("SettingsMgr initialised")
+
 
     # ------------------------------------------------------------------
 
@@ -144,7 +170,7 @@ class SettingsMgr:
     def  start(self, item: str) -> bool:
         """Enter Setting editing mode from the main menu."""
         app = self._app
-        app._settings_menu_position = app.menu.position if app.menu else 0
+        app.settings_menu_position = app.menu.position if app.menu else 0
         app.set_menu(None)
         app.button_states.clear()
         app.refresh = True
@@ -154,6 +180,7 @@ class SettingsMgr:
         self.edit_setting = item
         self.edit_setting_value = app.settings[item].v
         return True
+
 
     # ------------------------------------------------------------------
     # Per-tick update
@@ -177,7 +204,7 @@ class SettingsMgr:
                 app.refresh = True
         else:
             app.auto_repeat_clear()
-            if app.button_states.get(BUTTON_TYPES["RIGHT"]) or app.button_states.get(BUTTON_TYPES["LEFT"]):
+            if app.button_states.get(BUTTON_TYPES["RIGHT"]): # or app.button_states.get(BUTTON_TYPES["LEFT"]):
                 app.button_states.clear()
                 self.edit_setting_value = app.settings[self.edit_setting].d
                 if self._logging:
@@ -188,7 +215,7 @@ class SettingsMgr:
                 app.button_states.clear()
                 if self._logging:
                     print(f"Setting: {self.edit_setting} Cancelled")
-                app.fast_settings_update()  # Update fast access settings which might have been changed
+                # now done in return_to_menu ... app.fast_settings_update()  # Update fast access settings which might have been changed
                 app.return_to_menu(MENU_ENTRY_NAME)
             elif app.button_states.get(BUTTON_TYPES["CONFIRM"]):
                 app.button_states.clear()
@@ -196,7 +223,7 @@ class SettingsMgr:
                     print(f"Setting: {self.edit_setting} = {self.edit_setting_value}")
                 app.settings[self.edit_setting].v = self.edit_setting_value
                 app.settings[self.edit_setting].persist()
-                app.notification = Notification(f"  Setting:   {self.edit_setting}={self.edit_setting_value}")
+                app.notification = Notification(f"Setting: {self.edit_setting}={self.edit_setting_value}")
                 app.return_to_menu(MENU_ENTRY_NAME)
         return True
 

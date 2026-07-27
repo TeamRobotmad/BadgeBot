@@ -2,12 +2,12 @@
 import asyncio
 import sys
 import time
-from math import sin, cos, pi
+from math import cos, pi
 
 import ota
-import settings
+import settings as platform_settings
 from app_components.notification import Notification
-from app_components.tokens import button_labels, label_font_size, twentyfour_pt, clear_background
+from app_components.tokens import button_labels, small_font_size, label_font_size, twentyfour_pt, clear_background
 from app_components import Menu
 from events.input import BUTTON_TYPES, Button, Buttons, ButtonUpEvent
 from frontboards.twentyfour import BUTTONS
@@ -18,9 +18,12 @@ from system.patterndisplay.events import PatternDisable, PatternEnable
 from system.scheduler.events import (RequestForegroundPopEvent,
                                      RequestForegroundPushEvent,
                                      RequestStopAppEvent)
+from system.notification.events import ShowNotificationEvent
+
 from tildagonos import tildagonos
 from machine import Pin
 import app
+import micropython
 
 try:
     from micropython import const
@@ -28,8 +31,6 @@ except ImportError:
     # CPython / simulator fallback – const() is just an identity function
     # on MicroPython; replicate that so module-level const() calls work.
     const = lambda x: x         #pylint: disable=unnecessary-lambda-assignment
-
-from .bluetooth_mgr import bluetooth, RobotBLE, ble_process_command, enable_ble_logging, disable_ble_logging, get_ble_motor_override
 
 # If you could use hard=True in setting up a Pin IRQ hander, which you can't as of BadgeOS V1.10, then it is recommended to
 # allocate the emergency exception buffer to prevent crashes due to OSError: Out of memory when an interrupt occurs and
@@ -40,7 +41,7 @@ from .bluetooth_mgr import bluetooth, RobotBLE, ble_process_command, enable_ble_
 from .utils import draw_logo_animated, parse_version
 
 HEXDRIVE_APP_VERSION = 6
-HEXDRIVE2_APP_VERSION = 2
+HEXDRIVE2_APP_VERSION = 3
 
 SETTINGS_NAME_PREFIX = "badgebot"  # Prefix for settings keys in EEPROM
 APP_VERSION = "2.7" # BadgeBot App Version Number
@@ -75,21 +76,35 @@ _QR_CODE = [
             0x18bbd7f,
 ]
 
-_BRIGHTNESS = 1.0
+_BRIGHTNESS = const(1.0)
 
 # Screen positioning constant for scroll mode display
-H_START = -63
+H_START = const(-63)
 
-# Timings
+# Timings/Settings
 MOTOR_PWM_FREQ = const(20000)      # 20kHz is a good default for motors as it is above the audible range for most people and works with most motors and ESC
+
+ACCELERATION_SCALE_FACTOR = const(512)  # Settings store motor power / acceleration divided by this; multiply back to get 0-65535 PWM values
 MOTOR_POWER_SCALE_FACTOR = const(512)  # Settings store motor power / acceleration divided by this; multiply back to get 0-65535 PWM values
+
+DEFAULT_ACCELERATION   = const(20000) // ACCELERATION_SCALE_FACTOR  # user-friendly acceleration value per 10ms Tick
+DEFAULT_MAX_POWER      = const(55000) // MOTOR_POWER_SCALE_FACTOR   # exposed for use in other modules
+
+_MIN_ACCELERATION      =  const(1024) // ACCELERATION_SCALE_FACTOR
+_MIN_MAX_POWER         = const(10240) // MOTOR_POWER_SCALE_FACTOR
+
+_MAX_ACCELERATION      = const(65535) // ACCELERATION_SCALE_FACTOR
+_MAX_MAX_POWER         = const(65535) // MOTOR_POWER_SCALE_FACTOR
+
 _LONG_PRESS_MS = const(750)        # Time for long button press to register, in ms
 _RUN_COUNTDOWN_MS = const(5000)    # Time after running program until drive starts, in ms
 _AUTO_REPEAT_MS = const(200)       # Time between auto-repeats, in ms
 _AUTO_REPEAT_COUNT_THRES = const(10) # Number of auto-repeats before increasing level
 _AUTO_REPEAT_SPEED_LEVEL_MAX = const(4)  # Maximum level of auto-repeat speed increases
 _AUTO_REPEAT_LEVEL_MAX = const(3)  # Maximum level of auto-repeat digit increases
-DEFAULT_BACKGROUND_UPDATE_PERIOD = const(100)    # mS when not moving
+DEFAULT_BACKGROUND_UPDATE_PERIOD = const(50)       # mS when not moving
+DEFAULT_ACTIVE_UPDATE_PERIOD     = const(10)       # mS when moving
+_NOTIFICATION_DISPLAY_DURATION   = const(1000 * 3) # 3 seconds (hard coded in BadgeOS)
 
 # App states
 STATE_MENU = const(0)
@@ -100,33 +115,35 @@ STATE_SETTINGS = const(4)        # Edit Settings
 STATE_MOTOR_MOVES = const(5)     # Motor Moves (sub-states managed by MotorMovesMgr)
 STATE_SERVO = const(6)           # Servo test
 STATE_FOLLOWER = const(7)        # Line Follower
-STATE_AUTOTUNE = const(8)        # PID Auto Tune
-STATE_SENSOR = const(9)          # Sensor Test
-STATE_AUTODRIVE = const(10)      # Autonomous Drive
-STATE_HEXPANSION = const(11)     # Hexpansion Management (sub-states managed by HexpansionMgr)
+STATE_SENSOR = const(8)          # Sensor Test
+STATE_AUTODRIVE = const(9)       # Autonomous Drive
+STATE_HEXPANSION = const(10)     # Hexpansion Management (sub-states managed by HexpansionMgr)
+STATE_BLUETOOTH = const(11)      # Bluetooth Control (sub-states managed by BluetoothMgr)
 
 # App states where user can minimise app (Menu, Message, Logo)
 MINIMISE_VALID_STATES = [STATE_MENU, STATE_MESSAGE, STATE_LOGO]
 
-# App states where BadgeBot directly controls the badge LEDs (Motor Moves, Countdown, Message, Logo, Line Follower, AutoTune)
-_LED_CONTROL_STATES    = [STATE_MOTOR_MOVES, STATE_COUNTDOWN, STATE_MESSAGE, STATE_LOGO, STATE_FOLLOWER, STATE_AUTOTUNE, STATE_AUTODRIVE, STATE_SENSOR]
+# App states where BadgeBot directly controls the badge LEDs (Motor Moves, Countdown, Message, Logo, Line Follower, AutoTune, AutoDrive, Sensor Test)
+_LED_CONTROL_STATES    = [STATE_MOTOR_MOVES, STATE_COUNTDOWN, STATE_MESSAGE, STATE_LOGO, STATE_FOLLOWER, STATE_AUTODRIVE, STATE_SENSOR]
 
 #Misceallaneous Settings
-_LOGGING = False
-_BLE_LOGGING = False
+_DEFAULT_LOGGING = False
 _IS_SIMULATOR = sys.platform != "esp32"  # True when running in the simulator, not on real badge hardware
-_FWD_DIR_DEFAULT = const(0)
-_FRONT_FACE_DEFAULT = const(0)
-
+_DEFAULT_FWD_DIR = const(0)
+_DEFAULT_FRONT_FACE = const(5)        # Front Face is Slot 3 on a standard build BadgeBot
+_DEFAULT_MOTOR_DEADBAND = const(1)    # Minimum motor demand output value below which we don't try to move the motor. i.e. only if demand is above this do we apply the compensation below...
+_DEFAULT_MOTOR_MIN = const((64 * 65536) // (512 * 100)) # Minimum motor PWM value (0-65535) for each motor, below which the motor will not move.  This is used to compensate for differences in motors and gearboxes, so that both motors start moving at the same time when given the same power level.
+                                                # The figure of 64% of full power comes from measurement and analysis of 200 motors used for BadgeBot, which showed that 64% of full power was the minimum required to get 80% ofmotors moving reliably.
+                                                # this can be customised through settings for each motor.
 
 # Main Menu Items
-MAIN_MENU_ITEMS = ["Line Follower","Motor Moves", "Servo Test", "PID Auto Tune", "Sensor Test", "Auto Drive", "Hexpansions", "Settings", "About","Exit"]
-MENU_ITEM_LINE_FOLLOWER = const(0)
-MENU_ITEM_MOTOR_MOVES = const(1)
-MENU_ITEM_SERVO_TEST = const(2)
-MENU_ITEM_PID_AUTOTUNE = const(3)
+MAIN_MENU_ITEMS = ["Bluetooth", "Line Follower", "Motor Moves", "Auto Drive", "Sensor Test", "Servo Test", "Hexpansions", "Settings", "About", "Exit"]
+MENU_ITEM_BLUETOOTH = const(0)
+MENU_ITEM_LINE_FOLLOWER = const(1)
+MENU_ITEM_MOTOR_MOVES = const(2)
+MENU_ITEM_AUTO_DRIVE = const(3)
 MENU_ITEM_SENSOR_TEST = const(4)
-MENU_ITEM_AUTO_DRIVE = const(5)
+MENU_ITEM_SERVO_TEST = const(5)
 MENU_ITEM_HEXPANSION = const(6)
 MENU_ITEM_SETTINGS = const(7)
 MENU_ITEM_ABOUT = const(8)
@@ -141,7 +158,7 @@ _MOTOR_DIRECTION_LABELS = ("Normal", "Reverse")
 
 _FILE_DEST_LABELS = ("Badge FS", "Hex FS")
 
-_MIN_BADGEOS_VERSION = (2, 0, 0)     # v2.0.0 is required to be able to use the new hexpansion utilite
+_MIN_BADGEOS_VERSION = (2, 2, 0)     # v2.2.0 is required to be able to use the new hexpansion utilite
 
 
 # Import sub-modules after constants are defined so they can safely
@@ -166,24 +183,103 @@ def _try_import(module_name, *attr_names):
         print(f"Error importing {module_name} module ({e})")
     return nones
 
-HexpansionMgr, HexpansionType, _hexpansion_init_settings = _try_import('hexpansion_mgr', 'HexpansionMgr', 'HexpansionType', 'init_settings')
-SettingsMgr, MySetting                                    = _try_import('settings_mgr',  'SettingsMgr', 'MySetting')
+BluetoothMgr, _bluetooth_init_settings                    = _try_import('bluetooth_mgr', 'BluetoothMgr',  'init_settings')
+HexpansionMgr, HexpansionType, _hexpansion_init_settings  = _try_import('hexpansion_mgr','HexpansionMgr', 'HexpansionType', 'init_settings')
+SettingsMgr, MySetting                                    = _try_import('settings_mgr',  'SettingsMgr',   'MySetting')
 MotorMovesMgr, _motor_moves_init_settings                 = _try_import('motor_moves',   'MotorMovesMgr', 'init_settings')
-ServoTestMgr, _servo_test_init_settings                   = _try_import('servo_test',    'ServoTestMgr', 'init_settings')
+ServoTestMgr, _servo_test_init_settings                   = _try_import('servo_test',    'ServoTestMgr',  'init_settings')
 LineFollowMgr, _line_follow_init_settings                 = _try_import('line_follow',   'LineFollowMgr', 'init_settings')
-(AutotuneMgr,)                                            = _try_import('autotune_mgr',  'AutotuneMgr')
 SensorTestMgr, _sensor_test_init_settings                 = _try_import('sensor_test',   'SensorTestMgr', 'init_settings')
-AutoDriveMgr, _autodrive_init_settings                    = _try_import('autodrive',     'AutoDriveMgr', 'init_settings')
-emit_diagnostics_output, set_diagnostics_output           = _try_import('diagnostics',   'output', 'set_output')
+AutoDriveMgr, _autodrive_init_settings                    = _try_import('autodrive',     'AutoDriveMgr',  'init_settings')
+emit_diagnostics_output, set_diagnostics_output           = _try_import('diagnostics',   'output',        'set_output')
 
+
+@micropython.viper
+def _clamp(value: int, lo: int, hi: int) -> int:
+    if value < lo:
+        return lo
+    if value > hi:
+        return hi
+    return value
 class BadgeBotApp(app.App):         # pylint: disable=no-member
     """Main application class for BadgeBot.  Manages overall state, user input, and delegates to functional area managers for specific features."""
+    __slots__ = (
+        "_logging", "_ble_override_active", "button_states", "last_press", "_auto_repeat_intervals",
+        "_auto_repeat", "_auto_repeat_count", "auto_repeat_level", "refresh", "_ring_refresh", "_ring_colour", "rpm",
+        "animation_counter", "pattern_status", "qr_code", "app_version", "b_msg", "t_msg", "notification",
+        "message",
+        "message_colours",
+        "message_type",
+        "message_return_state",
+        "current_menu",
+        "menu",
+        "_main_menu_position",
+        "settings_menu_position",
+        "_last_scroll",
+        "scroll_mode_enabled",
+        "scroll_ignore_next_c_button",
+        "is_scroll",
+        "scroll_offset",
+        "run_countdown_elapsed_ms",
+        "countdown_next_state",
+        "_motor_deadband",
+        "_motor1_reversed",
+        "_motor2_reversed",
+        "_motor1_min",
+        "_motor2_min",
+        "max_power",
+        "acceleration",
+        "_output1",
+        "_output2",
+        "_front_face",
+        "current_state",
+        "previous_state",
+        "_update_period",
+        "settings",
+        "HEXPANSION_TYPES",
+        "HEXDRIVE_HEXPANSION_INDEX",
+        "HEXDRIVE_V2_HEXPANSION_INDEX",
+        "HEXSENSE_HEXPANSION_INDEX",
+        "HEXDIAG_HEXPANSION_INDEX",
+        "HEXAUDIO_HEXPANSION_INDEX",
+        "hexpansion_update_required",
+        "hexdrive_hexpansion_types",
+        "hexdrive_ports",
+        "hexdrive_apps",
+        "num_motors",
+        "num_sensors",
+        "num_line_sensors",
+        "num_servos",
+        "hexaudio_port",
+        "hexsense_port",
+        "hexdiag_port",
+        "_diag_config",
+        "motor_controller",
+        "_hexpansion_mgr",
+        "_motor_moves_mgr",
+        "_servo_test_mgr",
+        "_settings_mgr",
+        "_line_follow_mgr",
+        "_autotune_mgr",
+        "_sensor_test_mgr",
+        "_autodrive_mgr",
+        "_state_update_dispatch",
+        "_state_draw_dispatch",
+        "_state_background_dispatch",
+        "countdown_value",
+        "_performance_mode",
+        "_ble",
+        "_notification_end_time",
+    )
+
+    DEFAULT_MAX_POWER = DEFAULT_MAX_POWER
+    DEFAULT_ACCELERATION = DEFAULT_ACCELERATION
+
     def __init__(self):
         super().__init__()
 
         print("B:BadgeBotApp: Initialising...")
-        self._bluetooth_enabled: bool = True
-        self._ble_override_active: bool = False
+        self._logging = True
 
         # UI Button Controls
         self.button_states = Buttons(self)
@@ -195,9 +291,11 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
         # UI Feature Controls
         self.refresh: bool = True            # True so that we draw initial screen on first loop, then set to True whenever we want to trigger a screen update
+        self._ring_refresh: bool = False      # True when we want to force a refresh on the next loop, even if nothing has changed
+        self._ring_colour: tuple[float, float, float] | None = None  # (r, g, b) each 0.0-1.0 while a ring is shown, or None for no ring
         self.rpm: int = 5                    # logo rotation speed in RPM
         self.animation_counter: int = 0
-        self.pattern_status: bool = True     # True = Pattern Enabled, False = Pattern Disabled
+        self.pattern_status: bool = True     # Badge Controlled LED pattern: True = Pattern Enabled, False = Pattern Disabled
         self.qr_code = _QR_CODE
         self.app_version: str = APP_VERSION
         # strings shown on the Logo screen
@@ -211,7 +309,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.current_menu: str | None = None
         self.menu: Menu | None = None
         self._main_menu_position: int = 0
-        self._settings_menu_position: int = 0
+        self.settings_menu_position: int = 0
+        self._notification_end_time: int | None = None  # Time when a notification is scheduled to end, in milliseconds since boot. Used to determine if we need to redraw the screen frequently to show a notification.
 
         # Member data related to scrolling
         self._last_scroll : int = 0 # The last scroll posoition during non-scroll mode
@@ -224,27 +323,38 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.run_countdown_elapsed_ms: int = 0
         self.countdown_next_state: int | None = None  # which state to go to after countdown
 
-        self._motor1_reversed: bool = False       # 0 or 1 to control direction of motor 1, set based on settings
-        self._motor2_reversed: bool = False       # 0 or 1 to control direction of motor 2, set based on settings
+        self._motor_deadband: int = _DEFAULT_MOTOR_DEADBAND  # Minimum motor PWM value below which we don't try to move the motor.
+        self._motor1_reversed: bool = False         # 0 or 1 to control direction of motor 1, set based on settings
+        self._motor2_reversed: bool = False         # 0 or 1 to control direction of motor 2, set based on settings
+        self._motor1_min:  int = _DEFAULT_MOTOR_MIN * MOTOR_POWER_SCALE_FACTOR     # Minimum motor PWM value (0-65535) for motor 1, below which the motor will not move.  This is used to compensate for differences in motors and gearboxes, so that both motors start moving at the same time when given the same power level.
+        self._motor2_min:  int = _DEFAULT_MOTOR_MIN * MOTOR_POWER_SCALE_FACTOR     # Minimum motor PWM value (0-65535) for motor 2, below which the motor will not move.  This is used to compensate for differences in motors and gearboxes, so that both motors start moving at the same time when given the same power level.
+        self.max_power:    int = DEFAULT_MAX_POWER * MOTOR_POWER_SCALE_FACTOR      # Maximum motor PWM value (0-65535)
+        self.acceleration: int = DEFAULT_ACCELERATION * ACCELERATION_SCALE_FACTOR  # Maximum change in motor output per update, used to limit acceleration and deceleration of the motors to prevent wheel slip and loss of control
+        self._front_face:  int = _DEFAULT_FRONT_FACE  # Front Face is Slot 3 on a standard build BadgeBot, but can be changed in settings to any of the 12 possible directions (0-11) representing the forward direction for movement.
+        self._output1:     int = 0                      # Current motor output for motor 1, after applying acceleration limits
+        self._output2:     int = 0                      # Current motor output for motor 2, after applying acceleration limits
 
         # Overall app state (controls what is displayed and what user inputs are accepted)
         self.current_state = STATE_HEXPANSION
         self.previous_state = self.current_state
-        self.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD   # mS
+        self._update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD   # mS
 
         # Settings - common settings first, then each module registers its own later
         self.settings: dict = {}
         if MySetting is not None:
             # General settings
             self.settings['brightness']    = MySetting(self.settings, _BRIGHTNESS, 0.1, 1.0)
-            self.settings['logging']       = MySetting(self.settings, _LOGGING, False, True)
-            self.settings['path']          = MySetting(self.settings, 0, 0, len(_FILE_DEST_LABELS) - 1, labels=_FILE_DEST_LABELS)
-
-            self.settings['ble_logging']   = MySetting(self.settings, _BLE_LOGGING, False, True)
-            # Direction settings
-            self.settings['motor1_dir']    = MySetting(self.settings, _FWD_DIR_DEFAULT, 0, 1, labels=_MOTOR_DIRECTION_LABELS)
-            self.settings['motor2_dir']    = MySetting(self.settings, _FWD_DIR_DEFAULT, 0, 1, labels=_MOTOR_DIRECTION_LABELS)
-            self.settings['front_face']    = MySetting(self.settings, _FRONT_FACE_DEFAULT, 0, 11, labels=_FRONT_FACE_LABELS)
+            self.settings['logging']       = MySetting(self.settings, _DEFAULT_LOGGING, False, True)
+            #self.settings['path']         = MySetting(self.settings, 0, 0, len(_FILE_DEST_LABELS) - 1, labels=_FILE_DEST_LABELS)
+            # Motor/Drive Direction settings
+            self.settings['acceleration']  = MySetting(self.settings, DEFAULT_ACCELERATION,  _MIN_ACCELERATION,  _MAX_ACCELERATION)
+            self.settings['max_power']     = MySetting(self.settings, DEFAULT_MAX_POWER, _MIN_MAX_POWER, _MAX_MAX_POWER)
+            self.settings['mtr_deadband'] = MySetting(self.settings, _DEFAULT_MOTOR_DEADBAND, 0, 127)
+            self.settings['mtr1_dir']    = MySetting(self.settings, _DEFAULT_FWD_DIR, 0, 1, labels=_MOTOR_DIRECTION_LABELS)
+            self.settings['mtr2_dir']    = MySetting(self.settings, _DEFAULT_FWD_DIR, 0, 1, labels=_MOTOR_DIRECTION_LABELS)
+            self.settings['mtr1_min']    = MySetting(self.settings, _DEFAULT_MOTOR_MIN, 0, 127)
+            self.settings['mtr2_min']    = MySetting(self.settings, _DEFAULT_MOTOR_MIN, 0, 127)
+            self.settings['front_face']    = MySetting(self.settings, _DEFAULT_FRONT_FACE, 0, 11, labels=_FRONT_FACE_LABELS)
 
             # Module-specific settings - only initialise modules which are NOT dependent on specific Hexpansion hardware here, as we want to be able to access settings in the HexpansionMgr before we have detected what hardware is present.  For Hexpansion-dependent modules, we will initialise their settings after we have scanned for hardware and know which modules we will be using.
             if _hexpansion_init_settings is not None:
@@ -305,11 +415,11 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         slots = get_slots_by_vid_pid(0xCBCB, 0x10C8)    # shortcut to initialise HexDrive2 as provided at EMF Camp 2026 BadgeBot Workshop
         if len(slots) > 0:
             self.hexdrive_ports = slots
-            app = get_app_by_slot(slots[0])
-            if app is not None:
+            _app = get_app_by_slot(slots[0])
+            if _app is not None:
                 print(f"B:HexDrive2 (with App) found in slot {slots[0]}")
-                self.hexdrive_apps.append(app)
-            self.calc_num_motors_servos_sensors()
+                self.hexdrive_apps.append(_app)
+            self._calc_num_motors_servos_sensors()
             if self.logging:
                 print(f"B:Num motors={self.num_motors}, servos={self.num_servos}, sensors={self.num_sensors}")
 
@@ -328,62 +438,54 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.motor_controller = None
 
         # Functional area managers
+        self._bluetooth_mgr    = BluetoothMgr(self, logging=self.logging)   if BluetoothMgr is not None else None
         self._hexpansion_mgr   = HexpansionMgr(self, logging=self.logging)  if HexpansionMgr is not None else None
         self._motor_moves_mgr  = MotorMovesMgr(self, logging=self.logging)  if MotorMovesMgr is not None else None
         self._servo_test_mgr   = ServoTestMgr(self, logging=self.logging)   if ServoTestMgr is not None else None
         self._settings_mgr     = SettingsMgr(self, logging=self.logging)    if SettingsMgr is not None else None
         self._line_follow_mgr  = LineFollowMgr(self, logging=self.logging)  if LineFollowMgr is not None else None
-        self._autotune_mgr     = AutotuneMgr(self, self._line_follow_mgr, logging=self.logging) if AutotuneMgr is not None else None
         self._sensor_test_mgr  = SensorTestMgr(self, logging=self.logging)  if SensorTestMgr is not None else None
-        self._autodrive_mgr    = AutoDriveMgr(self, logging=self.logging)   if AutoDriveMgr is not None else None
+        # Auto Tune and Auto Drive are not available.
+        self._autodrive_mgr    = None # AutoDriveMgr(self, logging=self.logging)   if AutoDriveMgr is not None else None
+        self._autotune_mgr     = None # AutotuneMgr(self, self._line_follow_mgr, logging=self.logging) if AutotuneMgr is not None else None
 
         # State -> manager dispatch tables (only include managers that exist)
         self._state_update_dispatch = {}
         self._state_draw_dispatch = {}
         self._state_background_dispatch = {}
 
+        self._register_state_functions(STATE_BLUETOOTH, self._bluetooth_mgr)
         self._register_state_functions(STATE_HEXPANSION, self._hexpansion_mgr)
         self._register_state_functions(STATE_MOTOR_MOVES, self._motor_moves_mgr)
         self._register_state_functions(STATE_FOLLOWER, self._line_follow_mgr)
-        #self._register_state_functions(STATE_AUTOTUNE, self._autotune_mgr)
         self._register_state_functions(STATE_SERVO, self._servo_test_mgr)
         self._register_state_functions(STATE_SETTINGS, self._settings_mgr)
         self._register_state_functions(STATE_SENSOR, self._sensor_test_mgr)
-        #self._register_state_functions(STATE_AUTODRIVE, self._autodrive_mgr)
+        self._register_state_functions(STATE_AUTODRIVE, self._autodrive_mgr)
 
         # Countdown timer value
         self.countdown_value: int = 0
+
+        # Performance mode flag - when True we will try to run the app as fast as possible
+        self._performance_mode: int = 0     # 0 = normal, 1= performance mode requested, 2 = performance mode active
+
+        # Bluetooth LE
+        self._ble_override_active: bool = False
 
         # Hexpansion event handlers registered directly by hexpansion_mgr
         if self._hexpansion_mgr is not None:
             self._hexpansion_mgr.register_events()
 
-        # Event handlers for gaining and losing focus
-        eventbus.on_async(RequestForegroundPushEvent, self._gain_focus, self)
-        eventbus.on_async(RequestForegroundPopEvent, self._lose_focus, self)
+        # Event handlers for gaining and losing focus and being aware of 3rd party Notifications
+        eventbus.on_async(RequestForegroundPushEvent, self._gain_focus,      self)
+        eventbus.on_async(RequestForegroundPopEvent,  self._lose_focus,      self)
+        eventbus.on_async(RequestStopAppEvent,        self._handle_stop_app, self)
 
         # We start with focus on launch, without an event emmited
         # This version is compatible with the simulator
         asyncio.get_event_loop().create_task(self._gain_focus(RequestForegroundPushEvent(self)))
 
-        # BluetoothLE setup
-        if self._bluetooth_enabled and self._hexpansion_mgr is not None:
-            print("B: Initialising Bluetooth LE...")
-            self._ble = bluetooth.BLE()
-            # Make unique Bluetooth Name from HexDrive Unique ID, so that multiple BadgeBots can be used in the same area without confusion:
-            # Name is limited to 8 characters, so we use "BdgBot" & a two digit decimal number from the unique ID, which is a 32-bit number, so we take the last two digits of the unique ID modulo 100
-            name = "BdgBotXX"
-            uniqueid = self._hexpansion_mgr.get_active_hexdrive_unique_id()
-            if uniqueid is not None:
-                name = "BdgBot" + "{:02d}".format(uniqueid % 100)
-                print("B: BluetoothLE Name:", name)
-            self._ble_controller = RobotBLE(self._ble, name=name)
-            # Register the command processor
-            self._ble_controller.on_write(ble_process_command)
 
-            # Apply BLE logging setting now that _ble_controller exists
-            if self.ble_logging:
-                enable_ble_logging(self._ble_controller)
 
         # Check what version of the Badge s/w we are running on
         ver: list[int | str] | None = None
@@ -402,61 +504,23 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         except Exception as e: # pylint: disable=broad-exception-caught
             print(f"B:Ver check failed {e}!")
 
-        # make use of special characters if running on compatible badge s/w version
-        #version_triplet = tuple(part if isinstance(part, int) else 0 for part in (ver[:3] if ver is not None else []))
-        #if len(version_triplet) == 3 and version_triplet >= (2, 0, 0):   # font has not yet been updated...
-            #if self.logging:
-            #    print(f"Using special characters for arrows (font updated in BadgeSW V{version_triplet})")
-            #self.special_chars = { 'up': "\u25B2",        # up arrow
-            #                    # 'down': "\u25BC",     # down arrow - has always existed
-            #                      'left': "\u25C0",     # left arrow
-            #                      'right': "\u25B6" }   # right arrow
-        #else:
-        #    self.special_chars = {'up': "^", 'left': "<", 'right': ">"}
-
-# TESTING I2S START
-        if False:
-            from machine import I2S
-            SR = 44100; F_L = 882; F_R = 441
-            n_l = SR // F_L
-            n_r = SR // F_R
-            # need to generate a buffer that is a multiple of both n_l and n_r to avoid stuttering in the output, so we take the least common multiple which for two integers is (a*b)//gcd(a,b)
-            n = (n_l * n_r) // 1  # gcd is 1 for these frequencies, so this is just n_l * n_r
-            Amplitude = 16000
-            buf = bytearray(n * 4)  # 16-bit stereo
-            for i in range(n):
-                l = int(cos(2 * pi * i / n_l) * Amplitude)
-                r = int(cos(2 * pi * i / n_r) * Amplitude)
-                buf[i*4:i*4+2] = l.to_bytes(2, 'little', True)
-                buf[i*4+2:i*4+4] = r.to_bytes(2, 'little', True)
-
-            i2s = I2S(0, sck=Pin(37), ws=Pin(38), sd=Pin(35),
-                    mode=I2S.TX, bits=16, format=I2S.STEREO,
-                    rate=SR, ibuf=20000)
-            print("Testing I2S output")
-            for _ in range(1000):
-                for _ in range(200):
-                    try:
-                        i2s.write(buf)
-                    except Exception as e:
-                        print(f"I2S write error: {e}")
-            i2s.deinit()
-
-#TESTING I2S END
-
         if self.logging:
             print(f"B:BadgeBot App V{self.app_version} Initialised")
 
-    def calc_num_motors_servos_sensors(self):
+
+    def _calc_num_motors_servos_sensors(self):
+        """Calculate the total number of motors, servos, and sensors based on the detected HexDrive hexpansion types."""
         self.num_motors = 0
         self.num_servos = 0
         self.num_sensors = 0
-        for port in self.hexdrive_ports:
-            hexdrive_type_idx = self.HEXDRIVE_V2_HEXPANSION_INDEX # TODO don't force this type
+        for _ in self.hexdrive_ports:
+            hexdrive_type_idx = self.HEXDRIVE_V2_HEXPANSION_INDEX # don't force this type
+            # when BLE is made a sub-app we won't need to pre-empt hexpansion_mgr and can wait for it to detect the hexpansion types...
             if hexdrive_type_idx is not None and 0 <= hexdrive_type_idx < len(self.HEXPANSION_TYPES):
                 self.num_motors   += self.HEXPANSION_TYPES[hexdrive_type_idx].motors
                 self.num_servos   += self.HEXPANSION_TYPES[hexdrive_type_idx].servos
                 self.num_sensors  += self.HEXPANSION_TYPES[hexdrive_type_idx].sensors
+
 
     def _register_state_functions(self, state: int, manager: object | None):
         """Register the update, draw, and background update functions for each state in the dispatch tables."""
@@ -476,34 +540,62 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     @property
     def logging(self):
         """Convenience property to access logging setting."""
-        if 'logging' in self.settings:
-            return self.settings['logging'].v
-        return True
+        return self._logging
 
 
     @property
-    def ble_logging(self):
-        """Convenience property to access ble_logging setting."""
-        if 'ble_logging' in self.settings:
-            return self.settings['ble_logging'].v
-        return False
+    def performance_mode(self) -> bool:
+        """Convenience property to access performance_mode setting."""
+        return self._performance_mode != 0
 
-
-    @property
-    def front_face(self):
-        """Convenience property to access front_face setting representing the forward direction for movement."""
-        if 'front_face' in self.settings:
-            return self.settings['front_face'].v
-        return _FRONT_FACE_DEFAULT
+    @performance_mode.setter
+    def performance_mode(self, value: bool):
+        """Convenience property to set performance_mode setting."""
+        self._performance_mode = 1 if value else 0
 
 
     @property
     def sensor_test_mgr(self):
-        """Public access to the SensorTestMgr, used by AutoDriveMgr to share the sensor manager."""
+        """Public access to the SensorTestMgr, used by LineFollowMgr & AutoDriveMgr to share the sensor manager."""
         return self._sensor_test_mgr
 
 
+    @property
+    def update_period(self):
+        """Convenience property to access update_period setting."""
+        return self._update_period
+
+    @update_period.setter
+    def update_period(self, value: int):
+        """Convenience property to set update_period setting."""
+        # if we have an active Bluetooth Connection then we need to maintain a high update rate so that the motor acceleration is correct
+        if self._bluetooth_mgr is not None and self._bluetooth_mgr.is_connected:
+            value = min(value, DEFAULT_ACTIVE_UPDATE_PERIOD)  # ensure we don't go below the minimum update period when Bluetooth is active
+        if self._logging:
+            print(f"B:Setting update_period to {value} ms")
+        self._update_period = value
+
+
     ### ASYNC EVENT HANDLERS ###
+
+    async def _handle_stop_app(self, event: RequestStopAppEvent):
+        """ Handle the RequestStopAppEvent so that we can release resources """
+        if event.app == self:
+            if self.logging:
+                print("B:BadgeBot received RequestStopAppEvent, save settings & releasing resources")
+            # Save settings before we exit, so that any changes made during this session are preserved
+            platform_settings.save()
+            if self.pattern_status:
+                eventbus.emit(PatternEnable())
+                self.pattern_status = True
+            if self._hexpansion_mgr is not None:
+                self._hexpansion_mgr.unregister_events()
+            if self.scroll_mode_enabled:
+                eventbus.remove(ButtonUpEvent, self._handle_button_up, self)
+            eventbus.remove(RequestForegroundPushEvent, self._gain_focus, self)
+            eventbus.remove(RequestForegroundPopEvent, self._lose_focus, self)
+            eventbus.remove(RequestStopAppEvent, self._handle_stop_app, self)
+
 
     async def _gain_focus(self, event: RequestForegroundPushEvent):
         if event.app is self:
@@ -511,18 +603,22 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 print(f"B:BadgeBot gained focus in state {self.current_state}")
             if self.current_state in _LED_CONTROL_STATES:
                 eventbus.emit(PatternDisable())
+                self.pattern_status = False
             if self.scroll_mode_enabled:
                 eventbus.on_async(ButtonUpEvent, self._handle_button_up, self)
+            eventbus.on_async(ShowNotificationEvent, self._handle_notification, self)
 
 
     async def _lose_focus(self, event: RequestForegroundPopEvent):
         if event.app is self:
             if self.logging:
                 print(f"B:BadgeBot lost focus from state {self.current_state}")
-            eventbus.emit(PatternEnable())
-            self.pattern_status = True
+            if not self.pattern_status:
+                eventbus.emit(PatternEnable())
+                self.pattern_status = True
             if self.scroll_mode_enabled:
                 eventbus.remove(ButtonUpEvent, self._handle_button_up, self)
+            eventbus.remove(ShowNotificationEvent, self._handle_notification, self)
 
 
     async def _handle_button_up(self, event: ButtonUpEvent):
@@ -532,6 +628,13 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 return
             # Toggle scroll mode on/off when "C" button is released
             self.scroll(not self.is_scroll)
+
+
+    async def _handle_notification(self, event: ShowNotificationEvent):
+        """Handle a ShowNotificationEvent by setting the end time for displaying it in ticks from now."""
+        self._notification_end_time = _NOTIFICATION_DISPLAY_DURATION
+        if self._logging:
+            print(f"B:Received ShowNotificationEvent: '{event.message}' (port={event.port})")
 
 
     async def background_task(self):
@@ -545,7 +648,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             diagnostics_output(0, 1)
             self.background_update(delta_ticks)
             diagnostics_output(0, 0)
-            await asyncio.sleep_ms(max (1, self.update_period - (time.ticks_ms() - cur_time)))  # sleep for the remainder of the update period, accounting for time taken by background_update
+            await asyncio.sleep_ms(max (1, self._update_period - (time.ticks_ms() - cur_time)))  # sleep for the remainder of the update period, accounting for time taken by background_update
             last_time = cur_time
 
 
@@ -558,23 +661,31 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         output = bg_fn(delta) if bg_fn is not None else None
 
         if len(self.hexdrive_apps) > 0:
-            # BLE direction buttons override the state's motor output while held,
-            # regardless of whether the current state produced any output.
-            max_pwr = self.settings['max_power'].v * MOTOR_POWER_SCALE_FACTOR if 'max_power' in self.settings else 49152
-            ble_override = get_ble_motor_override(max_pwr)
-            if ble_override is not None:
-                self._ble_override_active = True
-                output = ble_override
-            elif self._ble_override_active and output is None:
+            if self._bluetooth_mgr:
+                # BLE direction buttons override the state's motor output while held,
+                # regardless of whether the current state produced any output.
+                ble_override = self._bluetooth_mgr.motor_override(self.max_power)
+                if ble_override is not None:
+                    self._ble_override_active = True
+                    output = ble_override
+                else:
+                    if self._ble_override_active and output is None:
+                        # ensure we stop the motors if we were previously overriding them with BLE and now there is no output from the current state
+                        output = (0, 0)
+                    self._ble_override_active = False
+
+            if output is None and (self._output1 != 0 or self._output2 != 0):
+                # ensure we stop the motors if the current state has no output and the previous output was non-zero
                 output = (0, 0)
-                self._ble_override_active = False
-            else:
-                self._ble_override_active = False
+
             if output is not None:
-                if not self.hexdrive_apps[0].set_motors(self.apply_motor_directions(output)):
+                # we have to continue to run the motors until the current state returns None and the outputs are both 0, otherwise the motors will keep running at the last output value
+                if not self.hexdrive_apps[0].set_motors(self.apply_motor_calibration(output)):
                     if self.logging:
                         print("Failed to set motor outputs to HexDrive app")
 
+
+    # Helper properties to determine whether specific features are enabled based on detected hardware and available managers.
 
     @property
     def enable_motor_moves(self):
@@ -593,9 +704,29 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
 
     @property
+    def enable_bluetooth(self):
+        """Whether Bluetooth is enabled, based on whether we have BLE controller available and a hexpansion from which to get a unique id."""
+        return self._bluetooth_mgr is not None and self._hexpansion_mgr is not None
+
+
+    @property
     def enable_line_follow(self):
-        """Whether the Line Follow feature is enabled, based on whether we have detected line sensors and have the manager available."""
-        return self.num_motors > 1 and self.num_line_sensors > 0 and self._line_follow_mgr is not None
+        """Whether the Line Follow feature is enabled.  Requires two motors, the line-follow
+        manager, and a colour sensor (detected and driven via the sensor test manager)."""
+        return (self.num_motors > 1
+                and self._line_follow_mgr is not None
+                and self._sensor_test_mgr is not None
+                and self._sensor_test_mgr.colour_sensor_present())
+
+
+    @property
+    def enable_autotune(self):
+        """Whether the Autotune feature is enabled.  Requires two motors, the line-follow manager, and a colour sensor (detected and driven via the sensor test manager)."""
+        return (self.num_motors > 1
+                and self._line_follow_mgr is not None
+                and self._sensor_test_mgr is not None
+                and self._sensor_test_mgr.colour_sensor_present()
+                and self._autotune_mgr is not None)
 
 
     @property
@@ -622,6 +753,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if MySetting is None:
             return  # Settings system not available, skip initialisation
         # Module-specific settings
+        if self.enable_bluetooth and _bluetooth_init_settings is not None:
+            _bluetooth_init_settings(self.settings, MySetting)
         if self.enable_motor_moves and _motor_moves_init_settings is not None:
             _motor_moves_init_settings(self.settings, MySetting)
         if self.enable_servo_test and _servo_test_init_settings is not None:
@@ -632,32 +765,36 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             _sensor_test_init_settings(self.settings, MySetting)
         if self.enable_autodrive and _autodrive_init_settings is not None:
             _autodrive_init_settings(self.settings, MySetting)
-        self.update_settings()  # Load settings from EEPROM after initialisation
-        self.fast_settings_update()  # Update fast access settings
+        # The below functions get called during return_to_menu anyway
+        #self.update_settings()  # Load settings from EEPROM after initialisation
+        #self.fast_settings_update()  # Update fast access settings
 
 
     def update_settings(self):
         """Update settings from EEPROM."""
         if self.logging:
             print("B:Updating settings from EEPROM")
-        for s in self.settings:
-            self.settings[s].v = settings.get(f"{SETTINGS_NAME_PREFIX}.{s}", self.settings[s].d)
+        for s, setting in self.settings.items():
+            setting.v = platform_settings.get(f"{SETTINGS_NAME_PREFIX}.{s}", setting.d)
+            # check settings against min/max values and adjust if necessary - in case min/max values have changed since the setting was last saved
+            setting.clamp()
             if self.logging:
-                print(f"B:Setting {s} = {self.settings[s].v}")
+                print(f"B:Setting {s} = {setting.v}")
 
 
     def fast_settings_update(self):
         """Update fast access settings from the main settings dictionary."""
-        if self.logging:
+        if self._logging:
             print("B:Updating fast access settings")
-        self._motor1_reversed: bool = self.settings['motor1_dir'].v != 0
-        self._motor2_reversed: bool = self.settings['motor2_dir'].v != 0
-        ble_ctrl = getattr(self, '_ble_controller', None)
-        if ble_ctrl is not None:
-            if self.ble_logging:
-                enable_ble_logging(ble_ctrl)
-            else:
-                disable_ble_logging()
+        self._logging: bool = self.settings['logging'].v
+        self._front_face: int = self.settings['front_face'].v
+        self._motor_deadband: int = self.settings['mtr_deadband'].v * MOTOR_POWER_SCALE_FACTOR
+        self._motor1_reversed: bool = self.settings['mtr1_dir'].v != 0
+        self._motor2_reversed: bool = self.settings['mtr2_dir'].v != 0
+        self._motor1_min: int = self.settings['mtr1_min'].v * MOTOR_POWER_SCALE_FACTOR
+        self._motor2_min: int = self.settings['mtr2_min'].v * MOTOR_POWER_SCALE_FACTOR
+        self.max_power: int = self.settings['max_power'].v * MOTOR_POWER_SCALE_FACTOR
+        self.acceleration: int = self.settings['acceleration'].v * ACCELERATION_SCALE_FACTOR
 
 
     def hexdiag_setup(self):
@@ -700,22 +837,28 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if self.notification:
             self.notification.update(delta)
             try:
-                # in case access to protected member _is_closed() is not allowed, we catch the exception and
+                # in case access to protected member _open() (or _is_closed()) is not allowed, we catch the exception and
                 # to prevent crashes - this means that in this case we won't be able to automatically clear
                 # notifications when they are closed, but at least the app won't crash.
                 if self.notification._is_closed():  # pylint: disable=protected-access
+                    if self._logging:
+                        print("B:Notification closed, clearing notification reference")
                     self.notification = None
             except Exception as e:  # pylint: disable=broad-exception-caught
-                if self.logging:
-                    print(f"Error: checking notification status: {e}")
+                print(f"B:Error: checking notification status: {e}")
+            self.refresh = True  # Ensure we refresh the display while a notification is active
 
-        # Unfortunately, even though we can track if there is an active notification that we have triggered,
-        # we don't have a way to track if there are any other notifications active that we
-        # didn't trigger, so we need to perform extra display refresh cycles in case.
-        # As the draw function is VERY slow, and hence it stalls background updates
-        # we only do extra refresh cycles if the update period is long.
-        #if self.update_period >= DEFAULT_BACKGROUND_UPDATE_PERIOD:
-        #    self.refresh = True
+        # if a 3rd party notification is active, we need to refresh the display more frequently to ensure that the notification is visible and updated.
+        if self._notification_end_time is not None:
+            self._notification_end_time -= delta
+            if self._notification_end_time <= 0:
+                if self._logging:
+                    print("B:Notification expired")
+                self._notification_end_time = None
+            else:
+                if self._logging:
+                    print(f"B:Notification active (remaining {self._notification_end_time} ms)")
+                self.refresh = True
 
         # manage LED PatternEnable/Disable for all states
         #self._pattern_management()
@@ -731,7 +874,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
         if self.current_state != self.previous_state:
             if self.logging:
-                print(f"State: {self.previous_state} -> {self.current_state}")
+                print(f"B:State: {self.previous_state} -> {self.current_state}")
             self.previous_state = self.current_state
             # manage LED PatternEnable/Disable for all states
             self._pattern_management()
@@ -739,8 +882,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             self.refresh = True
 
         if self.current_state in _LED_CONTROL_STATES:
-            if self.current_state in [STATE_FOLLOWER, STATE_AUTOTUNE]:
-                # For Line Follower and AutoTune, set LEDs based on the line sensor readings
+            if self.current_state in [STATE_FOLLOWER]:
+                # For Line Follower, set LEDs based on the line sensor readings
                 # could be optimised to only update LEDs when sensor readings change, rather than every update cycle
                 # nothing while we try to optimise the sensor reading rate
                 pass
@@ -758,13 +901,12 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                     # saw this crash randomly - hence protected by try/except to prevent whole app crashing, and added logging to investigate further
                     tildagonos.leds.write()
                 except OSError as e:
-                    if self.logging:
-                        print(f"Error writing to LEDs: {e}")
+                    print(f"Error writing to LEDs: {e}")
         diagnostics_output(1, 0)
 
 
 
-    def _update_main_application(self, delta: int):
+    def _update_main_application(self, delta: int) -> None:
         if self.current_state == STATE_MENU:
             if self.current_menu is None:
                 self.set_menu()
@@ -777,12 +919,18 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                     return
                 menu.update(delta)
                 if menu.is_animating != "none":
-                    if self.logging:
+                    if self._logging:
                         print("Menu is animating")
                     self.refresh = True
         elif self.button_states.get(BUTTON_TYPES["CANCEL"]) and self.current_state in MINIMISE_VALID_STATES:
-            self.button_states.clear()
-            self.minimise()
+            if self.current_state == STATE_MESSAGE and self.message_type == None:
+                # If we are in the menu, we want to return to the previous state, not minimise the app
+                self.return_to_menu()
+                return
+            else:
+                self.button_states.clear()
+                platform_settings.save()  # Save settings before minimising
+                self.minimise()
 
         ### Shared Countdown Display ###
         elif self.current_state == STATE_COUNTDOWN:
@@ -820,12 +968,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             elif self.message_return_state is not None:
                 self.button_states.clear()
                 self.current_state = self.message_return_state
-            #TODO rework to use the new message_return_state
-            elif self.message_type == "error" or self.message_type == "warning" or self.message_type == "hexpansion":
-                # Message has been acknowledged by the user
-                self.button_states.clear()
-                # Recheck Hexpansions - in case the issue is resolved
-                self.current_state = STATE_HEXPANSION
             else:
                 # Message has been acknowledged by the user - allow access to the menu
                 self.button_states.clear()
@@ -879,13 +1021,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                     self._motor_moves_mgr.begin_moves()
                 else:
                     self.return_to_menu()
-            elif self.countdown_next_state == STATE_AUTOTUNE:
-                # PID AutoTune: start the tuner after countdown
-                self.current_state = self.countdown_next_state
-                if self._autotune_mgr is not None:
-                    self._autotune_mgr.begin_tuning()
-                else:
-                    self.return_to_menu()
             else:
                 # Generic fallback
                 self.return_to_menu()
@@ -918,56 +1053,85 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 self.scroll_offset = self._last_scroll
             # only show notification about scroll mode if the feature is enabled, otherwise it would be confusing to show a notification about a feature that can't be used
             state = "enabled" if enable else "disabled"
-            self.notification = Notification(f"    Scroll    {state}")
+            self.notification = Notification(f"Scroll {state}")
+
+    def set_ring_colour(self, colour: tuple[float, float, float] | None = None):
+        """Set the colour of the ring drawn around the edge of the display.
+           Pass an (r, g, b) tuple (each 0.0-1.0) to show a coloured ring, or None to stop showing the ring (the default).
+           Setting a colour flags a ring refresh so the ring is rendered on the next draw regardless of whether a full display refresh is required."""
+        self._ring_colour = colour
+        self._ring_refresh = True
+
 
     def draw(self, ctx):
         """Main draw function called from the main loop. Handles drawing the current state, including any notifications."""
+        if 2 == self._performance_mode:
+            # drawing the screen takes a VERY long time - so when trying to run robot control algorithms as fast as possible we skip drawing the screen to avoid stalling the background updates
+            return
+
+        # diagnostics output for measuring draw time on a scope - pin 2 is high while draw() is running, low when it is finished
         diagnostics_output(2, 1)
+
+        if 1 == self._performance_mode or self.refresh:
+            # Clear the Screen
+            clear_background(ctx)
+
+        if 1 == self._performance_mode:
+            # Now the Screen is cleared, we can switch to performance mode, which will skip drawing the screen in future frames until a refresh is required.
+            self._performance_mode = 2
+            diagnostics_output(2, 0)
+            return
 
         if self.current_state == STATE_MENU and self.menu is not None:
             # These need to be drawn every frame as they contain animations
-            clear_background(ctx)
             self.menu.draw(ctx)
-        elif self.refresh or self.notification:
-            #if self.logging:
-            #    print(f"Refreshing display {'for Notification' if self.notification else 'for state change'}")
-            self.refresh = False
-            clear_background(ctx)
-            #ctx.save()
-            #if in a mode where rotated display is desirable:
-            #    ctx.rotate(self.front_face * 2.0 * pi / _FRONT_FACE_NUM_ORIENTATIONS)  # Rotate the entire display based on the front_face setting, so that "forward" is always at the top of the display regardless of how the badge is oriented
-            ctx.font_size = label_font_size
-            if ctx.text_align != ctx.LEFT:
-                # See https://github.com/emfcamp/badge-2024-software/issues/181
-                ctx.text_align = ctx.LEFT
-            ctx.text_baseline = ctx.BOTTOM
+        else:
+            if self._ring_refresh or self.refresh:
+                if self._ring_colour is not None:
+                    self._ring_refresh = False
+                    # The ring can be updated without redrawing the entire display
+                    # Draw an 8-pixel colour ring around the edge of the display
+                    ctx.line_width = 8
+                    ctx.rgb(*self._ring_colour).arc(0, 0, 116, 0, pi * 2, 0).stroke()
 
-            if self.current_state == STATE_LOGO:
-                draw_logo_animated(ctx, self.rpm, self.animation_counter, [self.b_msg, self.t_msg], self.qr_code)
-            elif self.scroll_mode_enabled and self.is_scroll:
-                # Scroll mode indicator border
-                ctx.rgb(0,0.2,0).rectangle(     -120,-120, 115+H_START,240).fill()
-                ctx.rgb(0,0  ,0).rectangle(H_START-5,-120,10-2*H_START,240).fill()
-                ctx.rgb(0,0.2,0).rectangle(5-H_START,-120, 115+H_START,240).fill()
-            #else:
-            #    ctx.rgb(0,0,0).rectangle(-120,-120,240,240).fill()
+            if self.refresh:
+                self.refresh = False
 
-            # Common states for messages and errors, which can be triggered by any functional area manager and are displayed in a consistent way
-            if self.current_state == STATE_MESSAGE:
-                if self.message_colours == []:
-                    self.message_colours = [(1,0,0)]*len(self.message)
-                self.draw_message(ctx, self.message, self.message_colours, label_font_size)
-                if self.message_type is None or self.message_type == "warning" or self.message_type == "hexpansion":
-                    button_labels(ctx, confirm_label="OK", cancel_label="Exit")
-            elif self.current_state == STATE_COUNTDOWN:
-                self.draw_message(ctx, [str(self.countdown_value)], [(1,1,0)], twentyfour_pt)
-            else:
-                # Delegate to functional area managers via dispatch table
-                if self.current_state in self._state_draw_dispatch:
-                    draw_fn = self._state_draw_dispatch.get(self.current_state)
-                    if draw_fn is not None:
-                        draw_fn(ctx)
-            #ctx.restore()
+                #ctx.save()
+                #if in a mode where rotated display is desirable:
+                #    ctx.rotate(self.front_face * 2.0 * pi / _FRONT_FACE_NUM_ORIENTATIONS)  # Rotate the entire display based on the front_face setting, so that "forward" is always at the top of the display regardless of how the badge is oriented
+                ctx.font_size = label_font_size
+                if ctx.text_align != ctx.LEFT:
+                    # See https://github.com/emfcamp/badge-2024-software/issues/181
+                    ctx.text_align = ctx.LEFT
+                ctx.text_baseline = ctx.BOTTOM
+
+                if self.current_state == STATE_LOGO:
+                    draw_logo_animated(ctx, self.rpm, self.animation_counter, [self.b_msg, self.t_msg], self.qr_code)
+                elif self.scroll_mode_enabled and self.is_scroll:
+                    # Scroll mode indicator border
+                    ctx.rgb(0,0.2,0).rectangle(     -120,-120, 115+H_START,240).fill()
+                    ctx.rgb(0,0  ,0).rectangle(H_START-5,-120,10-2*H_START,240).fill()
+                    ctx.rgb(0,0.2,0).rectangle(5-H_START,-120, 115+H_START,240).fill()
+                #else:
+                #    ctx.rgb(0,0,0).rectangle(-120,-120,240,240).fill()
+
+                # Common states for messages and errors, which can be triggered by any functional area manager and are displayed in a consistent way
+                if self.current_state == STATE_MESSAGE:
+                    if self.message_colours == []:
+                        self.message_colours = [(1,0,0)]*len(self.message)
+                    self.draw_message(ctx, self.message, self.message_colours, label_font_size if len(self.message) <= 5 else small_font_size)
+                    if self.message_type is None or self.message_type == "warning":
+                        button_labels(ctx, confirm_label="OK", cancel_label="Exit")
+                elif self.current_state == STATE_COUNTDOWN:
+                    self.draw_message(ctx, [str(self.countdown_value)], [(1,1,0)], twentyfour_pt)
+                else:
+                    # Delegate to functional area managers via dispatch table
+                    if self.current_state in self._state_draw_dispatch:
+                        draw_fn = self._state_draw_dispatch.get(self.current_state)
+                        if draw_fn is not None:
+                            draw_fn(ctx)
+                #ctx.restore()
 
         # Notifications are drawn on top of everything else, so that they are visible regardless of the current state.
         # They also contain animations, so need to be drawn every frame when active.
@@ -986,20 +1150,43 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             tildagonos.leds[i] = (0, 0, 0)
 
 
-    def apply_motor_directions(self, output: tuple) -> tuple:
+    def apply_motor_calibration(self, output: tuple) -> tuple:
         """Negate individual motor outputs as per settings."""
         output1, output2 = output
-        output = (-output1 if self._motor1_reversed else output1, -output2 if self._motor2_reversed else output2)
-        #if self.logging:
-        #    print(f"M:{output}")
-        return output
+
+        # Apply deadband correction
+        if abs(output1) < self._motor_deadband:
+            # If the absolute value of output1 is less than the deadband threshold, set it to zero to prevent small motor outputs from being sent to the motors
+            output1 = 0
+        else:
+            # Otherwise apply the motor offset to ensure that the motors start moving when a non-zero output is sent. This compensates for any mechanical resistance or friction in the motor system.
+            if output1 > 0:
+                output1 = self._motor1_min + ((output1 * (65536 - self._motor1_min)) // 65536)
+            else:
+                output1 = -self._motor1_min - ((-output1 * (65536 - self._motor1_min)) // 65536)
+        if abs(output2) < self._motor_deadband:
+            output2 = 0
+        else:
+            if output2 > 0:
+                output2 = self._motor2_min + ((output2 * (65536 - self._motor2_min)) // 65536)
+            else:
+                output2 = -self._motor2_min - ((-output2 * (65536 - self._motor2_min)) // 65536)
+
+        # limit rate of change of motor output to maximum acceleration
+        max_delta = self.acceleration # maximum change in motor output per update
+        output1 = self._output1 + _clamp(output1 - self._output1, -max_delta, max_delta)
+        output2 = self._output2 + _clamp(output2 - self._output2, -max_delta, max_delta)
+        self._output1 = output1
+        self._output2 = output2
+
+        return (-output1 if self._motor1_reversed else output1, -output2 if self._motor2_reversed else output2)
 
 
     def set_direction_leds(self, direction: Button):
         """LED positions rotate based on 'front_face' (0-11, each step = 30° CW).
         Each position p maps to LED pair: (p if p>0 else 12) and (p+1).
         """
-        f = self.front_face
+        f = self._front_face
         if direction == BUTTON_TYPES["UP"]:
             pos = f % 12
             colour = (0, 255, 255)   # Cyan = forward
@@ -1038,26 +1225,26 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             # Font is not central in the height allocated to it due to space for descenders etc...
             # this is most obvious when there is only one line of text
             # # position fine tuned to fit around button labels when showing 5 lines of text
-            y_position = int(0.35 * ctx.font_size) if num_lines == 1 else int((i_num-((num_lines-2)/2)) * ctx.font_size - 12)
+            y_position = int(0.35 * ctx.font_size) if num_lines == 1 else int((i_num-((num_lines-2)/2)) * ctx.font_size - 2)
             ctx.rgb(*colour).move_to(-width//2, y_position).text(text_line)
 
 
     def return_to_menu(self, menu_name: str | None = None):
         """Utility function to return to the main menu from any state. This is used when the user cancels out of a submenu or after acknowledging a warning message."""
-        if self.logging:
+        if self._logging:
             print("Returning to menu")
         if menu_name is not None:
             self.set_menu(menu_name)
         self.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
         self.current_state = STATE_MENU
         self.refresh = True
-
         self.update_settings()
         self.fast_settings_update()
 
+
     def show_message(self, msg_content, msg_colours, msg_type = None, return_state: int | None = None):
         """Utility function to set the current state to the message display, and populate the message content and colours. The message_type can be used to indicate whether this is an 'error' (red) or 'warning' (green) message, which can affect both the display and the behaviour when the user acknowledges the message."""
-        if self.logging:
+        if self._logging:
             print(f"Showing message: '{msg_content}' with type {msg_type}")
         self.animation_counter = 0
         self.message = msg_content
@@ -1086,7 +1273,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 self._auto_repeat_count = 0
                 if self.auto_repeat_level < (_AUTO_REPEAT_SPEED_LEVEL_MAX if speed_up else _AUTO_REPEAT_LEVEL_MAX):
                     self.auto_repeat_level += 1
-                    if self.logging:
+                    if self._logging:
                         print(f"Auto Repeat Level: {self.auto_repeat_level}")
 
             return True
@@ -1109,7 +1296,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         """Set the current menu to the specified menu name, and construct the menu if necessary.
            If menu_name is None, it will clear the current menu and return to the previous state
            (e.g. from a submenu back to the main menu)."""
-        if self.logging:
+        if self._logging:
             print(f"B:Set Menu {menu_name}")
         if self.menu is not None:
             try:
@@ -1123,14 +1310,14 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if menu_name == "main":
             # construct the main menu based on template
             menu_items = MAIN_MENU_ITEMS.copy()
+            if not self.enable_bluetooth and MAIN_MENU_ITEMS[MENU_ITEM_BLUETOOTH] in menu_items:
+                menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_BLUETOOTH])
             if not self.enable_servo_test and MAIN_MENU_ITEMS[MENU_ITEM_SERVO_TEST] in menu_items:
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_SERVO_TEST])
             if not self.enable_motor_moves and MAIN_MENU_ITEMS[MENU_ITEM_MOTOR_MOVES] in menu_items:
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_MOTOR_MOVES])
             if not self.enable_line_follow and MAIN_MENU_ITEMS[MENU_ITEM_LINE_FOLLOWER] in menu_items:
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_LINE_FOLLOWER])
-            if not self.enable_line_follow and MAIN_MENU_ITEMS[MENU_ITEM_PID_AUTOTUNE] in menu_items:
-                menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_PID_AUTOTUNE])
             if not self.enable_sensor_test and MAIN_MENU_ITEMS[MENU_ITEM_SENSOR_TEST] in menu_items:
                 menu_items.remove(MAIN_MENU_ITEMS[MENU_ITEM_SENSOR_TEST])
             if not self.enable_autodrive and MAIN_MENU_ITEMS[MENU_ITEM_AUTO_DRIVE] in menu_items:
@@ -1148,7 +1335,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 )
         elif menu_name == MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS] and self._settings_mgr is not None: # "Settings"
             # construct the settings menu
-            _settings_menu_items = ["SAVE ALL", "DEFAULT ALL"]
+            _settings_menu_items = ["Default All"]
             for _, setting in enumerate(self.settings):
                 _settings_menu_items.append(f"{setting}")
             self.menu = Menu(
@@ -1156,24 +1343,36 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 _settings_menu_items,
                 select_handler=self._settings_menu_select_handler,
                 back_handler=self._menu_back_handler,
-                position=self._settings_menu_position,
+                position=self.settings_menu_position,
                 )
 
 
     # this appears to be able to be called at any time
     def _main_menu_select_handler(self, item: str, idx: int):
-        if self.logging:
+        if self._logging:
             print(f"H:Main Menu {item} at index {idx} position {self.menu.position if self.menu else 'N/A'}")
         self._main_menu_position = self.menu.position if self.menu else 0
-        if   item == MAIN_MENU_ITEMS[MENU_ITEM_LINE_FOLLOWER]: # Line Follower
+        if item == MAIN_MENU_ITEMS[MENU_ITEM_BLUETOOTH]: # Bluetooth
+            if self._bluetooth_mgr is not None and self._hexpansion_mgr is not None:
+                self._bluetooth_mgr.logging = self._logging
+                # Make unique Bluetooth Name from HexDrive Unique ID, so that multiple BadgeBots can be used in the same area without confusion:
+                # Name is limited to 8 characters, so we use "BBot" & a three digit decimal number from the unique ID, which is a 32-bit number, so we take the last three digits of the unique ID modulo 1000
+                uniqueid = self._hexpansion_mgr.get_active_hexdrive_unique_id()
+                if uniqueid is not None:
+                    name = f"BBot{uniqueid % 1000:03d}"
+                else:
+                    name = None
+                if self._bluetooth_mgr.start(name = name):
+                    self.current_state = STATE_BLUETOOTH
+        elif item == MAIN_MENU_ITEMS[MENU_ITEM_LINE_FOLLOWER]: # Line Follower
             # Check for required hardware and show message if not present, otherwise start the line follower manager and switch to follower state
             if self.num_motors == 0:
                 self.notification = Notification("No Motors")
             elif self.num_motors == 1:
-                self.notification = Notification(" 2 Motors  Required")
+                self.notification = Notification("2 Motors Required")
             else:
                 if self._line_follow_mgr is not None:
-                    self._line_follow_mgr.logging = self.logging # update logging setting in line follow manager based on current app setting, in case it was changed
+                    self._line_follow_mgr.logging = self._logging # update logging setting in line follow manager based on current app setting, in case it was changed
                     if self._line_follow_mgr.start():
                         self.current_state = STATE_FOLLOWER
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_MOTOR_MOVES]: # Motor Moves
@@ -1181,45 +1380,34 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             if self.num_motors == 0:
                 self.notification = Notification("No Motors")
             elif self.num_motors == 1:
-                self.notification = Notification(" 2 Motors  Required")
+                self.notification = Notification("2 Motors Required")
             else:
                 if self._motor_moves_mgr is not None:
-                    self._motor_moves_mgr.logging = self.logging # update logging setting in motor moves manager based on current app setting, in case it was changed
+                    self._motor_moves_mgr.logging = self._logging # update logging setting in motor moves manager based on current app setting, in case it was changed
                     if self._motor_moves_mgr.start():
                         self.current_state = STATE_MOTOR_MOVES
-        elif item == MAIN_MENU_ITEMS[MENU_ITEM_PID_AUTOTUNE]: # PID Auto Tune
-            # Check for required hardware and show message if not present, otherwise start the autotune manager and switch to autotune state
-            if self.num_motors == 0:
-                self.notification = Notification("No Motors")
-            elif self.num_motors == 1:
-                self.notification = Notification(" 2 Motors  Required")
-            else:
-                if self._autotune_mgr is not None:
-                    self._autotune_mgr.logging = self.logging # update logging setting in autotune manager based on current app setting, in case it was changed
-                    if self._autotune_mgr.start():
-                        self.current_state = STATE_AUTOTUNE
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_SERVO_TEST]: # Servo Test
             # Check for required hardware and show message if not present, otherwise start the servo test manager and switch to servo test state
             if self.num_servos == 0:
                 self.notification = Notification("No Servos")
             else:
                 if self._servo_test_mgr is not None:
-                    self._servo_test_mgr.logging = self.logging # update logging setting in servo test manager based on current app setting, in case it was changed
+                    self._servo_test_mgr.logging = self._logging # update logging setting in servo test manager based on current app setting, in case it was changed
                     if self._servo_test_mgr.start():
                         self.current_state = STATE_SERVO
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_SENSOR_TEST]: # Sensor Test
             if self._sensor_test_mgr is not None:
-                self._sensor_test_mgr.logging = self.logging # update logging setting in sensor test manager based on current app setting, in case it was changed
+                self._sensor_test_mgr.logging = self._logging # update logging setting in sensor test manager based on current app setting, in case it was changed
                 if self._sensor_test_mgr.start():
                     self.current_state = STATE_SENSOR
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_AUTO_DRIVE]: # Auto Drive
             if self._autodrive_mgr is not None:
-                self._autodrive_mgr.logging = self.logging # update logging setting in autodrive manager based on current app setting, in case it was changed
+                self._autodrive_mgr.logging = self._logging # update logging setting in autodrive manager based on current app setting, in case it was changed
                 if self._autodrive_mgr.start():
                     self.current_state = STATE_AUTODRIVE
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_HEXPANSION]: # Hexpansion Management
             if self._hexpansion_mgr is not None:
-                self._hexpansion_mgr.logging = self.logging # update logging setting in hexpansion manager based on current app setting, in case it was changed
+                self._hexpansion_mgr.logging = self._logging # update logging setting in hexpansion manager based on current app setting, in case it was changed
                 if self._hexpansion_mgr.start():
                     self.current_state = STATE_HEXPANSION
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS]:   # Settings
@@ -1231,29 +1419,23 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             self.current_state = STATE_LOGO
             self.refresh = True
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_EXIT]:       # Exit
-            if self._hexpansion_mgr is not None:
-                self._hexpansion_mgr.unregister_events()
-            eventbus.remove(RequestForegroundPushEvent, self._gain_focus, self)
-            eventbus.remove(RequestForegroundPopEvent, self._lose_focus, self)
+            #if self._hexpansion_mgr is not None:
+            #    self._hexpansion_mgr.unregister_events()
+            #eventbus.remove(RequestForegroundPushEvent, self._gain_focus, self)
+            #eventbus.remove(RequestForegroundPopEvent, self._lose_focus, self)
             eventbus.emit(RequestStopAppEvent(self))
 
 
     def _settings_menu_select_handler(self, item: str, idx: int):
-        if self.logging:
+        if self._logging:
             print(f"B:Setting {item} @ {idx}")
-        if idx == 0: #Save
-            if self.logging:
-                print("B:Settings Save All")
-            settings.save()
-            self.notification = Notification("  Settings  Saved")
-            self.set_menu()
-        elif idx == 1: #Default
-            if self.logging:
+        if idx == 0: #Default
+            if self._logging:
                 print("B:Settings Default All")
             for s in self.settings:
                 self.settings[s].v = self.settings[s].d
                 self.settings[s].persist()
-            self.notification = Notification("  Settings Defaulted")
+            self.notification = Notification("Settings Defaulted")
             self.set_menu()
         elif self._settings_mgr is not None and self._settings_mgr.start(item):
             self.current_state = STATE_SETTINGS
@@ -1262,10 +1444,13 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     def _menu_back_handler(self):
         if self.current_menu == "main":
             self._main_menu_position = self.menu.position if self.menu else 0
+            if self._logging:
+                print("B:Save Settings")
+            platform_settings.save()         # Save settings before minimising
             self.minimise()
         # for submenus, just return to the main menu
         if self.current_menu == MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS]:
-            self._settings_menu_position = self.menu.position if self.menu else 0
+            self.settings_menu_position = self.menu.position if self.menu else 0
         self.set_menu()
 
 
