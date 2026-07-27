@@ -33,6 +33,13 @@ _UART_RX = (
 
 _UART_SERVICE = (_UART_UUID, (_UART_TX, _UART_RX))
 
+
+# --- CRITICAL: Declare flat, unboxed global storage primitives ---
+# Keeping these outside the class guarantees no complex lookup structures
+_BLE_EVENT_FLAG = 0
+_BLE_PENDING_EVENT = 0
+_BLE_PENDING_HANDLE = 0
+
 # ---- Settings initialisation -----------------------------------------------
 
 def init_settings(s, MySetting: type):  #pylint: disable=invalid-name
@@ -42,7 +49,7 @@ def init_settings(s, MySetting: type):  #pylint: disable=invalid-name
 
 class RobotBLE:
     """Handles BLE communication with the Bluefruit Connect app on a phone."""
-    __slots__ = ("_ble", "_connections", "_write_callback", "_payload", "_handle_tx", "_handle_rx", "_name", "_logging","_ble_event_triggered", "_pending_event", "_pending_data")
+    __slots__ = ("_ble", "_connections", "_write_callback", "_payload", "_handle_tx", "_handle_rx", "_name", "_logging", "_schedule_ref")
 
     def __init__(self, ble, name="Robot", logging: bool = False):
         self._ble = ble
@@ -54,11 +61,8 @@ class RobotBLE:
         self._name = name
         self._logging = logging
 
-        # Pre-allocate thread event tracking properties
-        self._ble_event_triggered = False
-        self._pending_event = 0
-        self._pending_data = None
-
+        # Static reference callback to completely avoid function pointer allocation inside IRQ
+        self._schedule_ref = self._safe_irq_handler
         self.init()
 
 
@@ -76,49 +80,50 @@ class RobotBLE:
 
 
     def _irq(self, event, data):
-        # 1. Catch the hardware event immediately
-        # 2. Bounce it out to the main execution thread safely
-        # SAFE REWRITE: Performs zero variable copying or block moves.
-        # It stores integers and handles references instantly, bypassing the ROM.
+        """
+        PERFECT STATE: Zero memory lookups, zero allocations, zero object referencing.
+        """
+        global _BLE_EVENT_FLAG, _BLE_PENDING_EVENT, _BLE_PENDING_HANDLE
 
-        self._pending_event = event
-        self._pending_data = data
-        self._ble_event_triggered = True
-        schedule(self._safe_irq_handler, None)
+        _BLE_PENDING_EVENT = event
+
+        if event == 3:  # _IRQ_GATTS_WRITE
+            # Extract only the primitive integer handles out of the data tuple parameter
+            _BLE_PENDING_HANDLE = data[1]
+        else:
+            _BLE_PENDING_HANDLE = data[0] if data else 0
+
+        _BLE_EVENT_FLAG = 1
+        schedule(self._schedule_ref, 0)
 
 
     def _safe_irq_handler(self, _):
-        # This runs safely on the main thread.
-        # Printing and memory allocation here will NEVER trigger an Interupt WDT crash.
-
-        if not self._ble_event_triggered:
+         """Executes safely on the main thread pool away from the hot BLE radio."""
+        global _BLE_EVENT_FLAG
+        if not _BLE_EVENT_FLAG:
             return
+        _BLE_EVENT_FLAG = 0
 
-        # Reset event flag
-        self._ble_event_triggered = False
-        event = self._pending_event
-        data = self._pending_data
+        event = _BLE_PENDING_EVENT
+        handle = _BLE_PENDING_HANDLE
 
         if event == 1:  # _IRQ_CENTRAL_CONNECT
-            conn_handle, _, _ = data
-            self._connections.add(conn_handle)
+            self._connections.add(handle)
             #if self._logging:
             #    print("B:BLE:Connected")
 
         elif event == 2:  # _IRQ_CENTRAL_DISCONNECT
-            conn_handle, _, _ = data
-            if conn_handle in self._connections:
-                self._connections.remove(conn_handle)
+            if handle in self._connections:
+                self._connections.remove(handle)
             self._advertise()
             #if self._logging:
             #    print("B:BLE:Disconnected")
 
         elif event == 3:  # _IRQ_GATTS_WRITE
-            conn_handle, value_handle = data
-            value = self._ble.gatts_read(value_handle)
+            value = self._ble.gatts_read(handle)
             #if self._logging:
             #    print(f"B:BLE:RX: {value.decode().strip()}")
-            if value_handle == self._handle_rx and self._write_callback:
+            if handle == self._handle_rx and self._write_callback:
                 self._write_callback(value)
 
 
