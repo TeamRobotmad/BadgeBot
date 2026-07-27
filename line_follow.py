@@ -31,7 +31,11 @@ except ImportError:
 # Line Follower constants
 _MAX_TIME_WITHOUT_LINE = const(500)  # milliseconds to continue moving after losing the line before stopping
 _DEFAULT_DISPLAY_REFRESH_INTERVAL_MS = const(1000)
-_DEFAULT_MIN_OBSTACLE_DISTANCE = const(70)  # minimum distance in mm to an obstacle before stopping
+
+# Automatic Stop baesd on Range Sensor
+_DEFAULT_MIN_OBSTACLE_DISTANCE = const(100)  # minimum distance in mm to an obstacle before stopping
+_MIN_MIN_OBSTACLE_DISTANCE_MM = const(20)       # Minimum allowed value for the minimum range setting
+_MIN_MAX_OBSTACLE_DISTANCE_MM = const(500)      # Maximum allowed value for the minimum range setting
 
 # For integer Hue values we use 0.1-degree units, so 360 degrees = 3600 units.
 _DEFAULT_MID_HUE = const(300)      # Default 'mid hue' for colour sensor, midway between red and blue (300 = 300.0 degrees)
@@ -114,7 +118,7 @@ def init_settings(s, MySetting: type):      #pylint: disable=invalid-name
     s['pid_kp']         = MySetting(s, _DEFAULT_FOLLOWER_PID_KP, 0, 65536)
     s['pid_ki']         = MySetting(s, _DEFAULT_FOLLOWER_PID_KI, 0, 65535)
     s['pid_kd']         = MySetting(s, _DEFAULT_FOLLOWER_PID_KD, 0, 65535)
-    s['min_range']      = MySetting(s, _DEFAULT_MIN_OBSTACLE_DISTANCE, 0, 1000)  # minimum distance in mm to an obstacle before stopping
+    s['min_range']      = MySetting(s, _DEFAULT_MIN_OBSTACLE_DISTANCE, _MIN_MIN_OBSTACLE_DISTANCE_MM, _MIN_MAX_OBSTACLE_DISTANCE_MM)  # minimum distance in mm to an obstacle before stopping
 
 
 # ---- Line Follower Manager -------------------------------------------------
@@ -132,7 +136,7 @@ class LineFollowMgr:
                  "kp", "ki", "kd", "integral_limit", "motor_output",
                  "_last_colour", "_last_colour_hue", "_last_colour_name", "_colour_hexdrive", "_range_hexdrive",
                  "_mid_hue", "_max_hue", "_new_sample", "_display_refresh_time", "_display_refresh_interval", "_signed_steering_gain",
-                 "_time_since_line_detected", "_selected_field", "_enable_movement", "_min_obstacle_distance", "_calibration_msg_shown")
+                 "_time_since_line_detected", "_selected_field", "_enable_movement", "_min_obstacle_distance", "_obstacle_detection_count", "_calibration_msg_shown")
 
     def __init__(self, app, logging: bool = True):
         self._app = app
@@ -162,6 +166,7 @@ class LineFollowMgr:
         self._selected_field: int = 0  # index into _EDIT_FIELDS of the field currently being adjusted
         self._enable_movement: bool = False
         self._min_obstacle_distance: int = _DEFAULT_MIN_OBSTACLE_DISTANCE  # minimum distance in mm to an obstacle before stopping
+        self._obstacle_detection_count: int = 0
         self._calibration_msg_shown: bool = False  # whether the calibration message has been shown
         if self._logging:
             print("B:LineFollowMgr initialised")
@@ -237,7 +242,6 @@ class LineFollowMgr:
         self._mid_hue = _HUE_SCALE_FACTOR * (app.settings['mid_hue'].v if 'mid_hue' in app.settings else _DEFAULT_MID_HUE)
         self._max_hue = _HUE_SCALE_FACTOR * (app.settings['max_hue'].v if 'max_hue' in app.settings else _DEFAULT_MAX_HUE)
         self.line_power = MOTOR_POWER_SCALE_FACTOR * (app.settings['line_power'].v if 'line_power' in app.settings else _DEFAULT_FOLLOWER_POWER)
-        self._min_obstacle_distance = app.settings['min_range'].v if 'min_range' in app.settings else _DEFAULT_MIN_OBSTACLE_DISTANCE
 
         if self.ki > 0:
             self.integral_limit = self._app.max_power // self.ki
@@ -249,6 +253,8 @@ class LineFollowMgr:
         if range_hexdrive is not None and sensor_mgr is not None:
             if sensor_mgr.enable_range_sensor(range_hexdrive):
                 self._range_hexdrive = range_hexdrive
+                self._min_obstacle_distance = app.settings['min_range'].v if 'min_range' in app.settings else _DEFAULT_MIN_OBSTACLE_DISTANCE
+                self._obstacle_detection_count = 0
 
         if self._logging:
             print("B:Line Follower mode started")
@@ -380,20 +386,30 @@ class LineFollowMgr:
             return None
 
         # Poll the shared range sensor if we are allowed to move
-        if self._range_hexdrive:
+        if self._range_hexdrive and self._enable_movement:
             new_sample, range_mm = sensor_mgr.read_range(self._range_hexdrive)
             if new_sample:
                 #if self._logging:
                 #    print(f"B:LF:Range={range_mm}mm")
                 if range_mm < self._min_obstacle_distance and self._enable_movement:
                     # Stop immediately if an obstacle is detected within 100mm
-                    if self._logging:
-                        print("B:LF:Obstacle detected, auto stop")
-                    self._enable_movement = False
+                    self._obstacle_detection_count += 1
+                    if self._obstacle_detection_count > 2:  # require 3 consecutive detections to avoid false positives
+                        if self._logging:
+                            print(f"B:LF:Obstacle detected @{range_mm}mm, auto stop")
+                        self._enable_movement = False
+                        app = self._app
+                        app.performance_mode = False
+                        app.notification = Notification("Stop Obstacle", self._range_hexdrive.config.port)
+                    else:
+                        # start to slow down while we wait for the next sample to confirm the obstacle is still there
+                        if self._logging:
+                            print(f"B:LF:Obstacle detected @{range_mm}mm, slowing down ({self._obstacle_detection_count})")
                     output = (0, 0)
-                    app = self._app
-                    app.performance_mode = False
-                    app.notification = Notification("Stop Obstacle", self._range_hexdrive.config.port)
+                    self.motor_output = output
+                    return output
+                else:
+                    self._obstacle_detection_count = 0
 
         # Poll the shared colour sensor; read_colour also updates the ring colour on change.
         # Force a read to ensure we get the latest sample, as the colour sensor is only polled in the background by the HexDrive
