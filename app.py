@@ -45,6 +45,7 @@ HEXDRIVE2_APP_VERSION = 3
 
 SETTINGS_NAME_PREFIX = "badgebot"  # Prefix for settings keys in EEPROM
 APP_VERSION = "2.7" # BadgeBot App Version Number
+_BLUETOOTH_NAME_PREFIX = "B"  # Prefix for Bluetooth device name, followed by a 3-digit number from the unique ID
 
 # If you change the URL then you will need to regenerate the QR code
 # using the generate_qr_code.py script, and update the _QR_CODE constant below with the new code generated for your URL
@@ -876,7 +877,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         output = bg_fn(delta) if bg_fn is not None else None
 
         if len(self.hexdrive_apps) > 0:
-            if self._bluetooth_mgr:
+            if self._bluetooth_mgr and self._bluetooth_mgr.is_connected:
                 # BLE direction buttons override the state's motor output while held,
                 # regardless of whether the current state produced any output.
                 ble_override = self._bluetooth_mgr.motor_override(self.max_power)
@@ -888,6 +889,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                         # ensure we stop the motors if we were previously overriding them with BLE and now there is no output from the current state
                         output = (0, 0)
                     self._ble_override_active = False
+            else:
+                self._ble_override_active = False
 
             if output is None and (self._output1 != 0 or self._output2 != 0):
                 # ensure we stop the motors if the current state has no output and the previous output was non-zero
@@ -1659,7 +1662,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 # Name is limited to 8 characters, so we use "BBot" & a three digit decimal number from the unique ID, which is a 32-bit number, so we take the last three digits of the unique ID modulo 1000
                 uniqueid = self._hexpansion_mgr.get_active_hexdrive_unique_id()
                 if uniqueid is not None:
-                    name = f"BBot{uniqueid % 1000:03d}"
+                    name = f"{_BLUETOOTH_NAME_PREFIX}{uniqueid % 1000:03d}"
                 else:
                     name = None
                 if self._bluetooth_mgr.start(name = name):

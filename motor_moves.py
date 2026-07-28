@@ -25,7 +25,7 @@ from events.input import BUTTON_TYPES, Button
 from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
 from .utils import chain
-from .app import (STATE_COUNTDOWN, STATE_MOTOR_MOVES, STATE_LOGO, DEFAULT_BACKGROUND_UPDATE_PERIOD, DEFAULT_ACTIVE_UPDATE_PERIOD, MOTOR_ENABLE_USER_STATE)
+from .app import (STATE_COUNTDOWN, STATE_MOTOR_MOVES, STATE_LOGO, DEFAULT_ACTIVE_UPDATE_PERIOD, MOTOR_ENABLE_USER_STATE)
 
 try:
     from micropython import const
@@ -71,6 +71,9 @@ _SUB_DONE          = const(3)
 class Instruction:
     """Represents a single movement instruction, consisting of a direction (button press) and duration (number of ticks).
     Also contains the power plan for this instruction, which is a list of (power_tuple)"""
+
+    __slots__ = "_app", "_press_type", "_duration", "power_plan"
+
     def __init__(self, app, press_type: Button) -> None:
         self._app = app
         self._press_type = press_type
@@ -176,6 +179,7 @@ class MotorMovesMgr:
     app : BadgeBotApp
         Reference to the main application instance.
     """
+    __slots__ = "_app", "_logging", "_sub_state", "_prev_state", "instructions", "current_instruction", "current_power_duration", "power_plan_iter", "long_press_delta", "_mc_task"
 
     def __init__(self, app, logging: bool = False):
         self._app = app

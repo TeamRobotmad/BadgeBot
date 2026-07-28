@@ -1,16 +1,14 @@
 """MicroPython BLE Robot Control"""
-
-import struct
-import sys
 import asyncio
+import sys
+import time
+import aioble  # Built-in async wrapper module for MicroPython BLE
 import bluetooth
-import micropython
 from events.input import BUTTON_TYPES
 from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
-from micropython import schedule
 
-from .app import REMOTE_CMD_LINE_FOLLOW_TOGGLE, REMOTE_CMD_LINE_FOLLOW_DIRECTION
+from .app import REMOTE_CMD_LINE_FOLLOW_TOGGLE, REMOTE_CMD_LINE_FOLLOW_DIRECTION, STATE_BLUETOOTH
 
 try:
     from micropython import const
@@ -19,29 +17,13 @@ except ImportError:
     # on MicroPython; replicate that so module-level const() calls work.
     const = lambda x: x         #pylint: disable=unnecessary-lambda-assignment
 
+
 # --- BLE Constants for Nordic UART Service (NUS) ---
 _ADV_TYPE_FLAGS = const(0x01)
-_ADV_TYPE_NAME = const(0x09)
-_ADV_TYPE_UUID128_COMPLETE = const(0x07)
-
 _UART_UUID = bluetooth.UUID("6E400001-B5A3-F393-E0A9-E50E24DCCA9E")
-_UART_TX = (
-    bluetooth.UUID("6E400003-B5A3-F393-E0A9-E50E24DCCA9E"),
-    bluetooth.FLAG_NOTIFY,
-)
-_UART_RX = (
-    bluetooth.UUID("6E400002-B5A3-F393-E0A9-E50E24DCCA9E"),
-    bluetooth.FLAG_WRITE | bluetooth.FLAG_WRITE_NO_RESPONSE,
-)
+_TX_UUID   = bluetooth.UUID("6E400003-B5A3-F393-E0A9-E50E24DCCA9E")
+_RX_UUID   = bluetooth.UUID("6E400002-B5A3-F393-E0A9-E50E24DCCA9E")
 
-_UART_SERVICE = (_UART_UUID, (_UART_TX, _UART_RX))
-
-
-# --- CRITICAL: Declare flat, unboxed global storage primitives ---
-# Keeping these outside the class guarantees no complex lookup structures
-_BLE_EVENT_FLAG = 0
-_BLE_PENDING_EVENT = 0
-#_BLE_PENDING_DATA = None
 
 # ---- Settings initialisation -----------------------------------------------
 
@@ -52,158 +34,207 @@ def init_settings(s, MySetting: type):  #pylint: disable=invalid-name
 
 class RobotBLE:
     """Handles BLE communication with the Bluefruit Connect app on a phone."""
-    __slots__ = ("_ble", "_connections", "latest_rx_data", "_write_callback", "_payload", "_handle_tx", "_handle_rx", "_name", "_logging", "_schedule_ref", "connected")
+
+    __slots__ = "_ble", "_write_callback", "_name", "_logging", "_is_enabled", "_active_connection", "_uart_service", "_rx_characteristic", "_tx_characteristic"
 
     def __init__(self, ble, name="Robot", logging: bool = False):
         self._ble = ble
-        #self._connections = set()
-        self.latest_rx_data = None
         self._write_callback = None
-        self._payload = None
-        self._handle_tx = None
-        self._handle_rx = None
-        self._name = name
+        self._name: str = name
         self._logging = logging
-        self.connected = False
+        self._is_enabled = False  # Master control flag for the hardware loop
+        self._active_connection = None
+        self._uart_service = None
+        self._rx_characteristic = None
+        self._tx_characteristic = None
         self.init()
 
-        # Allocate emergency buffer space for handling raw exceptions safely
-        micropython.alloc_emergency_exception_buf(100)
 
     def init(self):
-        """Re-initialize the BLE controller if it was deinitialized."""
-        self._ble.active(True)
-        self._ble.irq(self._raw_hardware_irq)
-        ((self._handle_tx, self._handle_rx),) = self._ble.gatts_register_services((_UART_SERVICE,))
-        #self._connections.clear()
-        self._write_callback = None
-        self._payload = self._advertising_payload(name=self._name, services=[_UART_UUID])
-        # Override the internal firmware name string - This stops the phone app from falling back to "MPY ESP32" upon connection
-        self._ble.config(gap_name=self._name)
-        self._advertise()
+        """ Register service nodes using safe async declarations """
+        self._ble.active(True)  # Ensure the hardware radio is awake before registering services
+        self._uart_service = aioble.Service(_UART_UUID)
+        self._tx_characteristic = aioble.Characteristic(
+            self._uart_service, _TX_UUID, notify=True
+        )
+        self._rx_characteristic = aioble.Characteristic(
+            self._uart_service, _RX_UUID, write=True, write_no_response=True, capture=True
+        )
 
-
-    def _raw_hardware_irq(self, event, data):
-        """
-        PERFECT STATE: Zero memory lookups, zero allocations, zero object referencing.
-        """
-        """
-        FIXED INTERRUPT: Correctly parses raw memoryview objects
-        into standard integers before leaving the ISR context.
-        """
-        global _BLE_EVENT_FLAG, _BLE_PENDING_EVENT
-        _BLE_PENDING_EVENT = event
-        #_BLE_PENDING_DATA = data  # Store reference instantly
-        _BLE_EVENT_FLAG = 1
+        aioble.register_services(self._uart_service)
+        print("B:BLE:Services registered, tx handle:", self._tx_characteristic._value_handle)
+        print("B:BLE:Services registered, rx handle:", self._rx_characteristic._value_handle)
 
 
     async def run_loop(self):
         """
-        Register this method as a task alongside your main Tildagon app task list.
-        It safely sweeps for wireless events entirely within the async loop context.
+        Main application task loop.
+        Spawns background routines completely within the asyncio framework.
         """
-        global _BLE_EVENT_FLAG
+        # Set the Bluetooth Device Name cleanly
+        self._ble.config(gap_name=self._name)
+
+        self._is_enabled = True  # Enable the BLE loop
+
+        # Concurrent processing structures: manages advertising and read tasks simultaneously
+        await asyncio.gather(
+            self._advertising_task(),
+            self._read_handler_task()
+        )
+
+
+    async def _advertising_task(self):
+        """Safely cycles advertising without blocking hardware registers."""
+
         while True:
-            if _BLE_EVENT_FLAG:
-                _BLE_EVENT_FLAG = 0
-                self._safe_process_event(_BLE_PENDING_EVENT)
+            if not self._is_enabled:
+                await asyncio.sleep_ms(500)
+                continue
+            try:
+                print(f"B:BLE:Advertising {self._name}")
 
-            # Yield back to the display and focus engine tasks smoothly
-            await asyncio.sleep_ms(20)
+                # Pass raw bytearrays directly to override aioble's layout picker
+                connection = await aioble.advertise(
+                    500000,
+                    name=self._name,
+                    services=[_UART_UUID] # High-level binding required by discovery
+                )
+
+                if connection is None:
+                    print("B:BLE:Advertising timed out, restarting...")
+                else:
+                    print("B:BLE:Connected to central device")
+                    # Code blocks here until a smartphone connects
+                    self._active_connection = connection
+
+                    # Wait until the phone disconnects
+                    await connection.disconnected()
+                    print("B:BLE:Central device disconnected")
+
+            except Exception as e:   # pylint: disable=broad-except
+                print(f"B:BLE:Advertising error: {e}")
+                await asyncio.sleep_ms(2000) # Breathing room before restarting
+            finally:
+                # Clean up connection flags if a disconnection event occurs
+                self._active_connection = None
+                await asyncio.sleep_ms(500) # Breathing room before restarting
 
 
-    def _safe_process_event(self, event):
-        """Unpacking raw tuple arguments is completely safe here on the main thread loop."""
-        if event == 1:  # _IRQ_CENTRAL_CONNECT
-            # data is a tuple: (conn_handle, addr_type, addr)
-            #conn_handle = data[0]
-            #self._connections.add(conn_handle)
-            self.connected = True
+    async def _read_handler_task(self):
+        """Safely processes incoming data streams using async queues."""
+        while True:
+            if not self._is_enabled or self._active_connection is None:
+                # nothing to try to receive as no connection is active
+                await asyncio.sleep_ms(500)
+                continue
 
-        elif event == 2:  # _IRQ_CENTRAL_DISCONNECT
-            # data is a tuple: (conn_handle, addr_type, addr)
-            #conn_handle = data[0]
-            #if conn_handle in self._connections:
-            #    self._connections.remove(conn_handle)
-            self.connected = False
-            self._advertise()
-
-        elif event == 3:  # _IRQ_GATTS_WRITE
-            # data is a tuple: (conn_handle, value_handle)
-            #conn_handle, value_handle = data
-            # Safely query the internal hardware register direct from silicon memory
-            # without checking the write tuple handle properties
-            value = self._ble.gatts_read(self._handle_rx)
-            if value and value != self.latest_rx_data:
-                self.latest_rx_data = value
-                if self._write_callback:
+            # Code pauses here cleanly until data arrives in the RX register
+            # written by a central application (like Bluefruit Connect)
+            try:
+                _, value = await self._rx_characteristic.written(timeout_ms=1000)
+                print(f"B:BLE:RX characteristic written: {value}")
+                if value and self._write_callback:
                     self._write_callback(value)
+            except asyncio.TimeoutError:
+                if self._active_connection is None:
+                    # Connection was dropped while waiting for data
+                    print("B:BLE:Connection lost while waiting for RX data")
+                pass  # No data received in this interval, loop back to check connection state
+            except Exception as e:   # pylint: disable=broad-except
+                print(f"B:BLE:Error reading RX characteristic data: {e}")
+                await asyncio.sleep_ms(50)
 
-
-    def _advertise(self, interval_us=500000):
-        # PRINTING NOT ALLOWED print("BLE:Advertising...")
-        try:
-            self._ble.gap_advertise(interval_us, adv_data=self._payload)
-        except OSError as e:
-            # PRINTING NOT ALLOWED print(f"BLE:Advertising failed: {e}")
-            pass
 
     def send_telemetry(self, text):
-        """Sends sensor data or diagnostic logs back to the phone app."""
-        #for conn_handle in self._connections:
-        #    try:
-        #        # Transmit data via the TX characteristic
-        #        self._ble.gatts_notify(conn_handle, self._handle_tx, text + "\n")
-        #    except Exception:  # pylint: disable=broad-except
-        #        pass
-        # Notify the client interface natively using connection slot index 0
+        """Sends data out via Bluetooth"""
+        if not self._active_connection:
+            return
         try:
-            self._ble.gatts_notify(0, self._handle_tx, text + "\n")
-        except Exception:
-            pass
+            # Writes data directly into the notification register structure
+            self._tx_characteristic.notify(self._active_connection, (text + "\n").encode())
+        except Exception as e:       # pylint: disable=broad-except
+            print(f"B:BLE:Error sending telemetry: {e}")
+
 
     def on_write(self, callback):
         """Registers a callback function to be called when the phone app sends data."""
         self._write_callback = callback
 
 
-    def is_connected(self):
+    @property
+    def name(self) -> str:
+        """Returns the current Bluetooth device name."""
+        return self._name
+
+# NB to change name you need to shutdown and restart the BLE controller with the new name, which will update the advertising name.
+
+    @property
+    def is_connected(self) -> bool:
         """Returns True if at least one BLE central is connected."""
-        #return len(self._connections) > 0
-        return self.connected
+        return self._active_connection is not None
 
 
-    def _advertising_payload(self, name=None, services=None):
-        # name is limited to 8 characters as the total packet is only 31 bytes.
-        # services is a list of UUID objects.
-        payload = bytearray()
-
-        def _append(adv_type, value):
-            nonlocal payload
-            payload.append(len(value) + 1)
-            payload.append(adv_type)
-            payload.extend(value)
-
-        _append(_ADV_TYPE_FLAGS, struct.pack("B", 0x06))
-
-        if name:
-            _append(_ADV_TYPE_NAME, name.encode('utf-8'))
-
-        if services:
-            for s in services:
-                _append(_ADV_TYPE_UUID128_COMPLETE, bytes(s))
-
-        return payload
+    @property
+    def is_enabled(self) -> bool:
+        """Returns True if the BLE hardware is currently enabled and advertising or connected."""
+        return self._is_enabled
 
 
-# DO NOT USE WITHOUT CARE AND SOME DEBUGGING - seems to cause crashes
-    def deinit(self):
-        """Deinitializes the BLE controller and stops advertising."""
+    async def disconnect_client(self):
+        """
+        Forces the badge to sever the link with the smartphone application.
+        """
+        if self._active_connection:
+            try:
+                print("B:BLE:Soft disconnect triggered...")
+                # Instruct the hardware radio stack to drop the central device
+                await self._active_connection.disconnect()
+            except Exception as e:          # pylint: disable=broad-except
+                print(f"B:BLE:Error during disconnect execution: {e}")
+            finally:
+                # Clear references immediately in case the hardware link takes a moment to drop
+                self._active_connection = None
+
+
+    # --- DISABLING & ENABLING METHODS ---
+
+    def shutdown_ble(self):
+        """
+        Completely powers down the physical Bluetooth hardware antenna
+        and halts the internal processing tasks.
+        """
+        print("B:BLE:Global shutdown triggered. Terminating capability...")
+        self._is_enabled = False
+
+        # 1. Pull the physical power down from the hardware layer
+        # This completely frees the internal transceiver peripheral and radio stack.
         self._ble.active(False)
-        #self._connections.clear()
-        self._write_callback = None
-        if self._logging:
-            print("B:BLE:Deinitialized")
+
+        # 2. Reclaim state registers
+        self._active_connection = None
+
+
+    def restart_ble(self, name: str | None = None):
+        """
+        Powers up the physical Bluetooth radio and automatically
+        resumes background broadcasting.
+        """
+        if self._is_enabled:
+            print("B:BLE:Bluetooth is already running.")
+            return
+
+        print("B:BLE:Global restart triggered. Initialising hardware stack...")
+
+        # 1. Re-initialize the low-level silicon transceiver registers
+        self.init() # re-register services and characteristics
+
+        if name is not None:
+            self._name = name
+        self._ble.config(gap_name=self._name)
+
+        # 2. Release the async loops from their sleep states
+        self._is_enabled = True
+
 
 
 # --- Robot Logic ---
@@ -238,8 +269,10 @@ def ble_process_command(data):
     """
     global _ble_active_button
 
+    print(f"B:BLE:Processing command: {data}")
     command = data.decode().strip()
     if not command.startswith("!B"):
+        print(f"B:BLE:Invalid command format: {command}")
         return
 
     # Check button number and press state
@@ -346,7 +379,7 @@ class BluetoothMgr:
     app : BadgeBotApp
         Reference to the main application instance.
     """
-    __slots__ = ("_app", "_logging", "_ble", "_ble_controller", "_is_connected", "_name")
+    __slots__ = ("_app", "_logging", "_ble", "_ble_controller", "_is_connected", "_is_enabled", "_name")
 
     def __init__(self, main_app, logging=True):
         self._app = main_app
@@ -354,6 +387,7 @@ class BluetoothMgr:
         self._ble = bluetooth.BLE()
         self._ble_controller: RobotBLE | None = None
         self._is_connected: bool = False
+        self._is_enabled: bool = False
         self._name: str | None = None
 
 
@@ -371,7 +405,7 @@ class BluetoothMgr:
     @property
     def is_active(self) -> bool:
         """Returns True if the Bluetooth manager is currently active (started)."""
-        return self._ble_controller is not None
+        return self._ble_controller is not None and self._ble_controller.is_enabled
 
 
     @property
@@ -402,49 +436,48 @@ class BluetoothMgr:
         return None
 
 
-    def start(self, name: str = "RobotXXX") -> bool:
+    def start(self, name: str = "BBot") -> bool:
         """Start the Bluetooth manager and begin advertising."""
-        self._name = name
         app = self._app
+        self._name: str = name
 
-        if self._ble_controller is None:
-            if self._logging:
-                print(f"B:Initialising Bluetooth LE with name = {name}")
+        if self._logging:
+            print(f"B:Initialising Bluetooth LE with name = {name}")
 
-            # BLE doesn't seem to like being deinitisalised - perhpaps somethign wrong in the sequence...
-            # If the BLE controller is already initialized, deinitialize it first
-            #if self._ble_controller is not None:
-            #    print("B:Deinitializing existing BLE controller...")
-            #    self._ble_controller.deinit()
-            #    self._ble_controller = None
+        if self._ble_controller is not None:
+            if self._name != self._ble_controller.name:
+                # Name has changed, so we need to restart the BLE controller to update the advertising name.
+                if self._ble_controller.is_connected:
+                    # Create it as a task on the running loop context
+                    asyncio.get_event_loop().create_task(self._ble_controller.disconnect_client())
+                    time.sleep_ms(20)  # Give the disconnect time to propagate before powering down the radio
+                    self._is_connected = False
 
+                # Disable the BLE hardware and stop advertising
+                self._ble_controller.shutdown_ble()
+
+                if self._is_enabled:
+                    # Re-enable the BLE hardware and resume advertising - IF it was previously enabled
+                    self._ble_controller.restart_ble(name=self._name)
+        else:
             # Initialize the BLE controller
             try:
                 # Create a new RobotBLE instance and start advertising
-                self._ble_controller = RobotBLE(self._ble, name=name, logging=self._logging)
+                self._ble_controller = RobotBLE(self._ble, name=self._name, logging=self._logging)
 
                 # Add the safe BLE tracking loop to the global scheduler
                 asyncio.get_event_loop().create_task(self._ble_controller.run_loop())
 
-                if self._logging:
-                    print("B:BLE controller initialized")
             except Exception as e:      # pylint: disable=broad-except
                 print(f"B:Failed to initialize BLE controller: {e}")
                 self._ble_controller = None
-
-            if self._ble_controller is None:
-                print("B:BLE controller is None, cannot start Bluetooth manager")
                 return False
 
             # Register the command processor
-            if self._logging:
-                print("B:Registering BLE command processor...")
             self._ble_controller.on_write(ble_process_command)
+
             if self._logging:
                 print("B:BluetoothMgr initialised")
-        else:
-            if self._logging:
-                print("B:BLE controller already initialized")
 
         app.set_menu(None)
         app.button_states.clear()
@@ -459,11 +492,17 @@ class BluetoothMgr:
         app = self._app
 
         if self._ble_controller is not None:
-            if self._ble_controller.is_connected() and not self._is_connected:
+            if self._ble_controller.is_enabled and not self._is_enabled:
+                self._is_enabled = True
+                app.refresh = True
+            elif not self._ble_controller.is_enabled and self._is_enabled:
+                self._is_enabled = False
+                app.refresh = True
+            if self._ble_controller.is_connected and not self._is_connected:
                 self._is_connected = True
                 app.notification = Notification("BLE Connected")
                 app.refresh = True
-            elif not self._ble_controller.is_connected() and self._is_connected:
+            elif not self._ble_controller.is_connected and self._is_connected:
                 self._is_connected = False
                 app.notification = Notification("BLE Disconnected")
                 app.refresh = True
@@ -471,17 +510,32 @@ class BluetoothMgr:
         # Forward any queued phone control-button presses to the app as remote commands.
         self._process_control_buttons()
 
-        if app.button_states.get(BUTTON_TYPES["CANCEL"]): # Exit
+        # only process button presses if the app is in the Bluetooth State
+        if app.current_state != STATE_BLUETOOTH:
+            return
+
+        # Attempts to have a "Disconnect" button - caused issues, Bluefruit would immediately reconnect, but the messages were not received by the app until it was forced to disconnect and reconnect again.
+        
+        if app.button_states.get(BUTTON_TYPES["CANCEL"]): # Back
             app.button_states.clear()
-            # return to menu and disconnect from BLE if connected
-            #if self._ble_controller is not None:
-            #    self._ble_controller.deinit()
-            #    self._ble_controller = None
+            # Return to menu - leaving BLE connection state as is (i.e. currently the same as "OK" button)
             app.return_to_menu()
-        elif app.button_states.get(BUTTON_TYPES["CONFIRM"]): # OK
+        elif app.button_states.get(BUTTON_TYPES["LEFT"]): # "BLE Off"
             app.button_states.clear()
-            # return to menu leaving the BLE connection active so the user can continue to control the robot from the phone app
-            app.return_to_menu()
+            if self._ble_controller is not None and self._ble_controller.is_enabled:
+                # Create it as a task on the running loop context
+                asyncio.get_event_loop().create_task(self._ble_controller.disconnect_client())
+                time.sleep_ms(20)  # Give the disconnect time to propagate before powering down the radio
+                # Disable the BLE hardware and stop advertising
+                self._ble_controller.shutdown_ble()
+        elif app.button_states.get(BUTTON_TYPES["CONFIRM"]): # "BLE On" / "OK"
+            app.button_states.clear()
+            if self._ble_controller is not None and not self._ble_controller.is_enabled:
+                # Enable the BLE hardware and resume advertising
+                self._ble_controller.restart_ble(name=self._name)
+            else: # "OK"
+                # return to menu leaving the BLE connection active so the user can continue to control the robot from the phone app
+                app.return_to_menu()
 
 
     def _process_control_buttons(self):
@@ -499,12 +553,17 @@ class BluetoothMgr:
         app = self._app
         # if connected then show a message to the user that they can control the robot with the Bluefruit LE app
         if self._is_connected:
-            app.draw_message(ctx, ["BLE connected", "use Bluefruit", "Connect to", "control."], [(0.5, 1, 0.5), (0.5, 1, 0.5), (0.5, 1, 0.5), (0.5, 1, 0.5)], label_font_size)
+            app.draw_message(ctx, ["BLE connected", "use Bluefruit", "Connect to", "control."], [(0.5, 0.5, 1), (0.5, 1, 0.5), (0.5, 1, 0.5), (0.5, 1, 0.5)], label_font_size)
+        elif self._ble_controller is not None and self._ble_controller.is_enabled:
+            app.draw_message(ctx, ["BLE enabled:", "On Phone", "use Bluefruit", "Connect with", f"{self._name}"], [(0.5, 0.5, 1), (1, 1, 0), (1, 1, 0), (1, 1, 0), (0.5, 1, 1)], label_font_size)
         else:
-            app.draw_message(ctx, ["BLE enabled:", "on Phone", "use Bluefruit", "Connect with", f"{self._name}"], [(1, 1, 0), (1, 1, 0), (1, 1, 0), (1, 1, 0), (0.5, 1, 1)], label_font_size)
+            app.draw_message(ctx, ["BLE disabled"], [(1, 0.5, 0.5)], label_font_size)
 
-        button_labels(ctx, confirm_label="OK", cancel_label="Exit")
+        if self._ble_controller is not None and self._ble_controller.is_enabled:
+            left_label = "BLE Off"
+            confirm_label = "OK"
+        else:
+            left_label = ""
+            confirm_label = "BLE On"
+        button_labels(ctx, confirm_label=confirm_label, cancel_label="Back", left_label=left_label)
         return True
-
-
-# TODO - some sort of pairing / bonding / security mechanism to prevent random phones from controlling the robot.

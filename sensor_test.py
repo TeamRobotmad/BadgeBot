@@ -18,7 +18,7 @@ from app_components.notification import Notification
 import settings as platform_settings
 import micropython
 
-from .app import (SETTINGS_NAME_PREFIX, DEFAULT_BACKGROUND_UPDATE_PERIOD)
+from .app import SETTINGS_NAME_PREFIX
 #from .diagnostics import output as diagnostics_output
 
 try:
@@ -45,7 +45,6 @@ except ImportError:
         # No-op in simulator fallback.
         _ = _state
         return None
-
 
 try:
     from micropython import const
