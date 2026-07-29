@@ -19,6 +19,7 @@ from app_components.tokens import label_font_size, small_font_size, button_label
 import micropython
 
 from .app import MOTOR_POWER_SCALE_FACTOR, STATE_FOLLOWER, DEFAULT_ACTIVE_UPDATE_PERIOD, MOTOR_ENABLE_USER_STATE
+from .sensor_test import COLOUR_LIST
 
 try:
     from micropython import const
@@ -32,6 +33,9 @@ except ImportError:
 _MAX_TIME_WITHOUT_LINE = const(500)  # milliseconds to continue moving after losing the line before stopping
 _DEFAULT_DISPLAY_REFRESH_INTERVAL_MS = const(1000)
 _CALIBRATION_MSG_TIMEOUT_MS = const(4000)  # auto-dismiss the calibration reminder so remote (BLE) activation isn't left stuck on it
+
+# Automatic Stop based on Colour Sensor (from COLOUR_LIST)
+_DEFAULT_COLOUR_STOP = const(0)  # default colour index to stop on ("Black")
 
 # Automatic Stop baesd on Range Sensor
 _DEFAULT_MIN_OBSTACLE_DISTANCE = const(100)  # minimum distance in mm to an obstacle before stopping
@@ -120,6 +124,7 @@ def init_settings(s, MySetting: type):      #pylint: disable=invalid-name
     s['pid_ki']         = MySetting(s, _DEFAULT_FOLLOWER_PID_KI, 0, 65535)
     s['pid_kd']         = MySetting(s, _DEFAULT_FOLLOWER_PID_KD, 0, 65535)
     s['min_range']      = MySetting(s, _DEFAULT_MIN_OBSTACLE_DISTANCE, _MIN_MIN_OBSTACLE_DISTANCE_MM, _MIN_MAX_OBSTACLE_DISTANCE_MM)  # minimum distance in mm to an obstacle before stopping
+    s['colour_stop']    = MySetting(s, _DEFAULT_COLOUR_STOP, 0, 9, labels=COLOUR_LIST)
 
 
 # ---- Line Follower Manager -------------------------------------------------
@@ -136,7 +141,7 @@ class LineFollowMgr:
                  "line_power", "pid_integral", "pid_previous_error",
                  "kp", "ki", "kd", "integral_limit", "motor_output",
                  "_last_colour", "_last_colour_hue", "_last_colour_name", "_colour_hexdrive", "_range_hexdrive",
-                 "_mid_hue", "_max_hue", "_new_sample", "_display_refresh_time", "_display_refresh_interval", "_signed_steering_gain",
+                 "_colour_stop", "_mid_hue", "_max_hue", "_new_sample", "_display_refresh_time", "_display_refresh_interval", "_signed_steering_gain",
                  "_time_since_line_detected", "_selected_field", "_enable_movement", "_min_obstacle_distance", "_obstacle_detection_count", "_calibration_msg_shown")
 
     def __init__(self, app, logging: bool = True):
@@ -166,6 +171,7 @@ class LineFollowMgr:
         self._time_since_line_detected: int = _MAX_TIME_WITHOUT_LINE  # time since a line was last detected, in milliseconds
         self._selected_field: int = 0  # index into _EDIT_FIELDS of the field currently being adjusted
         self._enable_movement: bool = False
+        self._colour_stop: str = COLOUR_LIST[_DEFAULT_COLOUR_STOP]  # default colour to stop on ("Black")
         self._min_obstacle_distance: int = _DEFAULT_MIN_OBSTACLE_DISTANCE  # minimum distance in mm to an obstacle before stopping
         self._obstacle_detection_count: int = 0
         self._calibration_msg_shown: bool = False  # whether the calibration message has been shown
@@ -237,6 +243,9 @@ class LineFollowMgr:
         self._mid_hue = _HUE_SCALE_FACTOR * (app.settings['mid_hue'].v if 'mid_hue' in app.settings else _DEFAULT_MID_HUE)
         self._max_hue = _HUE_SCALE_FACTOR * (app.settings['max_hue'].v if 'max_hue' in app.settings else _DEFAULT_MAX_HUE)
         self.line_power = MOTOR_POWER_SCALE_FACTOR * (app.settings['line_power'].v if 'line_power' in app.settings else _DEFAULT_FOLLOWER_POWER)
+        self._colour_stop = COLOUR_LIST[app.settings['colour_stop'].v if 'colour_stop' in app.settings else _DEFAULT_COLOUR_STOP]
+        if self._logging:
+            print(f"B:LF:line_power={self.line_power}, colour_stop='{self._colour_stop}'")
 
         if self.ki > 0:
             self.integral_limit = self._app.max_power // self.ki
@@ -336,7 +345,6 @@ class LineFollowMgr:
         if self._enable_movement:
             if self._logging:
                 print("B:LF:Start")
-            #self._app.set_ring_colour(None)  # Turn off the ring colour to indicate we are actively following the line
         else:
             if self._logging:
                 print("B:LF:Stop")
@@ -400,6 +408,8 @@ class LineFollowMgr:
         if sensor_mgr is None or self._colour_hexdrive is None:
             return None
 
+        output = (0, 0)
+
         # Poll the shared range sensor if we are allowed to move
         if self._range_hexdrive and self._enable_movement:
             new_sample, range_mm = sensor_mgr.read_range(self._range_hexdrive)
@@ -420,7 +430,6 @@ class LineFollowMgr:
                         # start to slow down while we wait for the next sample to confirm the obstacle is still there
                         if self._logging:
                             print(f"B:LF:Obstacle detected @{range_mm}mm, slowing down ({self._obstacle_detection_count})")
-                    output = (0, 0)
                     self.motor_output = output
                     return output
                 else:
@@ -431,7 +440,7 @@ class LineFollowMgr:
         if self._colour_hexdrive and self._colour_hexdrive.colour_sensor:
             _ = self._colour_hexdrive.colour_sensor.read()
 
-        new_sample, hue, name, _raw = sensor_mgr.read_colour(self._colour_hexdrive)
+        new_sample, hue, _, name, _raw = sensor_mgr.read_colour(self._colour_hexdrive)
         if new_sample:
             #if self._logging:
             #    print(f"B:LF:Hue={hue//10}.{hue%10}° Name={name}")
@@ -440,33 +449,33 @@ class LineFollowMgr:
             self._last_colour = _raw
             self._new_sample = True
 
-            if self._last_colour_name == "Black":
-                # Stop Immediately if the colour is black
-                if self._logging:
-                    print("B:LF:Black detected, auto stop")
+            if self._last_colour_name == self._colour_stop:
+                if self._enable_movement:
+                    # Stop Immediately if the colour is the stop colour (e.g. black)
+                    if self._logging:
+                        print(f"B:LF:{self._colour_stop} detected, auto stop")
+                    self._enable_movement = False
+                    self._time_since_line_detected = _MAX_TIME_WITHOUT_LINE
+                    app = self._app
+                    app.performance_mode = False  # stop performance mode if we have lost the line for a while
+                    app.notification = Notification(f"Stop On {self._colour_stop}", self._colour_hexdrive.config.port)
+            if self._last_colour_name in ("White", "Grey", "Black"):
                 self._last_colour_hue = _HUE_COLOUR_UNKNOWN
-                self._enable_movement = False
-                self._time_since_line_detected = _MAX_TIME_WITHOUT_LINE
-                output = (0, 0)
-                app = self._app
-                app.performance_mode = False  # stop performance mode if we have lost the line for a while
-                app.notification = Notification("Stop On Black", self._colour_hexdrive.config.port)
-            elif self._last_colour_name in ("White", "Grey"):
-                # Allow a short period to pick up the line again if the colour is white or grey (i.e. no line detected)
-                self._last_colour_hue = _HUE_COLOUR_UNKNOWN
-                self._time_since_line_detected += delta
-                if self._time_since_line_detected < _MAX_TIME_WITHOUT_LINE:
-                    output = self.motor_output
-                else:
-                    self._time_since_line_detected = _MAX_TIME_WITHOUT_LINE  # clamp to max so we don't overflow
-                    output = (0, 0)
-                    self._app.performance_mode = False  # stop performance mode if we have lost the line for a while
+                # Colours with no hue (achromatic) are treated as "no line detected" and we allow a short period to pick up the line again.
+                if self._enable_movement:
+                    # Allow a short period to pick up the line again if the colour is white or grey (i.e. no line detected)
+                    self._time_since_line_detected += delta
+                    if self._time_since_line_detected < _MAX_TIME_WITHOUT_LINE:
+                        output = self.motor_output
+                    else:
+                        self._time_since_line_detected = _MAX_TIME_WITHOUT_LINE  # clamp to max so we don't overflow
+                        self._app.performance_mode = False  # stop performance mode if we have lost the line for a while
             else:
+                # We are actually seeing a colour that is not black, white or grey, so we can potentially use it to steer the robot.
                 hue_difference_from_mid = _signed_hue_delta(self._last_colour_hue, self._mid_hue)
-                if self.follower_mode == _FOLLOWER_MODE_BINARY:
-                    # place holder for another algorithm that uses a binary on/off approach to steering, rather than a PID controller.
-                    output = (0, 0)
-                elif self.follower_mode == _FOLLOWER_MODE_DIFFERENTIAL:
+                #if self.follower_mode == _FOLLOWER_MODE_BINARY:
+                #    # place holder for another algorithm that uses a binary on/off approach to steering, rather than a PID controller.
+                if self.follower_mode == _FOLLOWER_MODE_DIFFERENTIAL:
                     # Use circular hue distance so values near 0/3600 wrap correctly.
                     # need setting to flip the sign of the steering input to reverse the direction of the turn if needed
                     if abs(hue_difference_from_mid) < self._max_hue:
@@ -475,7 +484,6 @@ class LineFollowMgr:
                             output = self.compute_differential_output(steering_input)
                             self._app.performance_mode = True  # enable performance mode while we are actively following the line
                         else:
-                            output = (0, 0)
                             self._app.performance_mode = False  # disable performance mode if we are not actively following the line
                         self._time_since_line_detected = 0
                     else:
@@ -483,14 +491,12 @@ class LineFollowMgr:
                         if self._time_since_line_detected < _MAX_TIME_WITHOUT_LINE:
                             output = self.motor_output  # continue with last output while we see a colour that is too far from the mid hue, to allow the robot to continue on its path until it finds the line again.
                         else:
-                            output = (0, 0)
                             self._time_since_line_detected = _MAX_TIME_WITHOUT_LINE  # clamp to max so we don't overflow
                             self._app.performance_mode = False  # stop performance mode if we have lost the line for a while
                             # as we are not moving we don't need to get updates as fast.
                     #print(f"B:LF:hue_diff={hue_difference_from_mid}, Output={output}")
                 else:
                     # Unknown follower mode, so stop the motors
-                    output = (0, 0)
                     self._app.performance_mode = False  # disable performance mode if we are not actively following the line
 
             self.motor_output = output

@@ -34,6 +34,7 @@ ignored-modules = [
     "imu",
     "egpio",
     "bluetooth",
+    "aioble",
 ]
 disable = [
     "import-outside-toplevel",  # Allow imports inside functions for lazy imports and to avoid circular dependencies.

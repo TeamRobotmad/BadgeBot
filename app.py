@@ -108,7 +108,7 @@ _WARNING_MESSAGE_TIMEOUT_MS = const(10000)  # Default auto-dismiss time for "war
 # automatically.
 _HUE_CIRCLE = const(3600)                 # hue wrap point, in 0.1-degree units
 _LED_HUE_HISTORY_SPAN_MS = const(2000)    # time window from front (newest) to back (oldest) LED
-_LED_HUE_SAMPLE_INTERVAL_MS = const(10)   # history time-resolution: one buffer entry per this many ms
+_LED_HUE_SAMPLE_INTERVAL_MS = const(20)   # history time-resolution: one buffer entry per this many ms
 _LED_HUE_SIDE_COUNT = const(6)            # LEDs per side (front-to-back)
 _LED_HUE_BUFFER_LEN = _LED_HUE_HISTORY_SPAN_MS // _LED_HUE_SAMPLE_INTERVAL_MS + 1
 # Per-side buffer look-back (in samples) for each LED front->back, recomputed if the
@@ -123,7 +123,7 @@ _AUTO_REPEAT_COUNT_THRES = const(10) # Number of auto-repeats before increasing 
 _AUTO_REPEAT_SPEED_LEVEL_MAX = const(4)  # Maximum level of auto-repeat speed increases
 _AUTO_REPEAT_LEVEL_MAX = const(3)  # Maximum level of auto-repeat digit increases
 DEFAULT_BACKGROUND_UPDATE_PERIOD = const(50)       # mS when not moving
-DEFAULT_ACTIVE_UPDATE_PERIOD     = const(15)       # mS when moving
+DEFAULT_ACTIVE_UPDATE_PERIOD     = const(20)       # mS when moving
 _NOTIFICATION_DISPLAY_DURATION   = const(1000 * 3) # 3 seconds (hard coded in BadgeOS)
 
 # App states
@@ -413,11 +413,11 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             # Motor/Drive Direction settings
             self.settings['acceleration']  = MySetting(self.settings, DEFAULT_ACCELERATION,  _MIN_ACCELERATION,  _MAX_ACCELERATION)
             self.settings['max_power']     = MySetting(self.settings, DEFAULT_MAX_POWER, _MIN_MAX_POWER, _MAX_MAX_POWER)
-            self.settings['mtr_deadband'] = MySetting(self.settings, _DEFAULT_MOTOR_DEADBAND, 0, 127)
-            self.settings['mtr1_dir']    = MySetting(self.settings, _DEFAULT_FWD_DIR, 0, 1, labels=_MOTOR_DIRECTION_LABELS)
-            self.settings['mtr2_dir']    = MySetting(self.settings, _DEFAULT_FWD_DIR, 0, 1, labels=_MOTOR_DIRECTION_LABELS)
-            self.settings['mtr1_min']    = MySetting(self.settings, _DEFAULT_MOTOR_MIN, 0, 127)
-            self.settings['mtr2_min']    = MySetting(self.settings, _DEFAULT_MOTOR_MIN, 0, 127)
+            self.settings['mtr_deadband']  = MySetting(self.settings, _DEFAULT_MOTOR_DEADBAND, 0, 127)
+            self.settings['mtr1_dir']      = MySetting(self.settings, _DEFAULT_FWD_DIR, 0, 1, labels=_MOTOR_DIRECTION_LABELS)
+            self.settings['mtr2_dir']      = MySetting(self.settings, _DEFAULT_FWD_DIR, 0, 1, labels=_MOTOR_DIRECTION_LABELS)
+            self.settings['mtr1_min']      = MySetting(self.settings, _DEFAULT_MOTOR_MIN, 0, 127)
+            self.settings['mtr2_min']      = MySetting(self.settings, _DEFAULT_MOTOR_MIN, 0, 127)
             self.settings['front_face']    = MySetting(self.settings, _DEFAULT_FRONT_FACE, 0, 11, labels=_FRONT_FACE_LABELS)
 
             # Module-specific settings - only initialise modules which are NOT dependent on specific Hexpansion hardware here, as we want to be able to access settings in the HexpansionMgr before we have detected what hardware is present.  For Hexpansion-dependent modules, we will initialise their settings after we have scanned for hardware and know which modules we will be using.
@@ -695,6 +695,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                   and motor_hexdrive_app.set_power(True)
                   and motor_hexdrive_app.set_freq(MOTOR_PWM_FREQ))
             if ok:
+                motor_hexdrive_app.set_logging(False)
                 if self._logging:
                     print(f"B:Motors enabled (user={user}, mask={new_mask})")
                 self.update_period = DEFAULT_ACTIVE_UPDATE_PERIOD  # ensure we have a fast update period when motors are enabled
@@ -1050,7 +1051,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
     def update(self, delta: int):
         """Main update function called from the main loop. Handles state transitions, user input, and delegates to functional area managers."""
-        diagnostics_output(1, 1)
+        #diagnostics_output(1, 1)
 
         if self.notification:
             self.notification.update(delta)
@@ -1129,7 +1130,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 tildagonos.leds.write()
             except OSError as e:
                 print(f"Error writing to LEDs: {e}")
-        diagnostics_output(1, 0)
+        #diagnostics_output(1, 0)
 
 
 
@@ -1295,7 +1296,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             return
 
         # diagnostics output for measuring draw time on a scope - pin 2 is high while draw() is running, low when it is finished
-        diagnostics_output(2, 1)
+        #diagnostics_output(2, 1)
 
         if 1 == self._performance_mode or self.refresh:
             # Clear the Screen
@@ -1304,7 +1305,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if 1 == self._performance_mode:
             # Now the Screen is cleared, we can switch to performance mode, which will skip drawing the screen in future frames until a refresh is required.
             self._performance_mode = 2
-            diagnostics_output(2, 0)
+            #diagnostics_output(2, 0)
             return
 
         if self.current_state == STATE_MENU and self.menu is not None:
@@ -1364,7 +1365,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if self.notification:
             self.notification.draw(ctx)
 
-        diagnostics_output(2, 0)
+        #diagnostics_output(2, 0)
 
 
 
