@@ -133,7 +133,7 @@ def init_settings(s, MySetting: type):      #pylint: disable=invalid-name
     s['pid_kd']         = MySetting(s, _DEFAULT_FOLLOWER_PID_KD, 0, 65535)
     s['min_range']      = MySetting(s, _DEFAULT_MIN_OBSTACLE_DISTANCE, _MIN_MIN_OBSTACLE_DISTANCE_MM, _MIN_MAX_OBSTACLE_DISTANCE_MM)  # minimum distance in mm to an obstacle before stopping
     s['colour_stop']    = MySetting(s, _DEFAULT_COLOUR_STOP, 0, 9, labels=COLOUR_LIST)
-    s['plot_type']      = MySetting(s, _PLOT_SELECTION_RANGE, _PLOT_SELECTION_NONE, _PLOT_SELECTION_POWER, labels=_PLOT_SELECTION_LABELS)
+    s['plot_type']      = MySetting(s, _PLOT_SELECTION_NONE, _PLOT_SELECTION_NONE, _PLOT_SELECTION_POWER, labels=_PLOT_SELECTION_LABELS)
 
 
 # ---- Line Follower Manager -------------------------------------------------
@@ -192,6 +192,17 @@ class LineFollowMgr:
         self._last_d_term: int = 0
         if self._logging:
             print("B:LineFollowMgr initialised")
+
+
+    @property
+    def logging(self) -> bool:
+        """Whether to print debug logs to the console."""
+        return self._logging
+
+    @logging.setter
+    def logging(self, value: bool):
+        """Enable or disable logging for the Line Follower Manager."""
+        self._logging = value
 
 
     # ------------------------------------------------------------------
@@ -398,7 +409,7 @@ class LineFollowMgr:
         if self._time_since_line_detected == 0:
             return self._last_colour_hue
         return None
-    
+
 
     def clear_pid(self):
         """Clear the PID controller state (integral and previous error)."""
@@ -467,7 +478,7 @@ class LineFollowMgr:
                     if self._obstacle_detection_count > 2:  # require 3 consecutive detections to avoid false positives
                         if self._logging:
                             print(f"B:LF:Obstacle detected @{range_mm}mm, auto stop")
-                            self.stop_movement()
+                        self.stop_movement()
                         self._app.notification = Notification("Stop Obstacle", self._range_hexdrive.config.port)
                     else:
                         # start to slow down while we wait for the next sample to confirm the obstacle is still there
@@ -605,7 +616,7 @@ class LineFollowMgr:
     # ------------------------------------------------------------------
 
     def draw_tracker(self, ctx):
-        """"""
+        """Draw the line follower tracker UI element."""
         # ================================================
         # draw a box to show the deviation from mid hue:
         # ================================================

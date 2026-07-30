@@ -703,7 +703,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                   and motor_hexdrive_app.set_power(True)
                   and motor_hexdrive_app.set_freq(MOTOR_PWM_FREQ))
             if ok:
-                #motor_hexdrive_app.set_logging(False)
+                motor_hexdrive_app.set_logging(self._logging)
                 if self._logging:
                     print(f"B:Motors enabled (user={user}, mask={new_mask})")
                 self.update_period = DEFAULT_ACTIVE_UPDATE_PERIOD  # ensure we have a fast update period when motors are enabled

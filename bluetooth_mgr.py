@@ -37,7 +37,7 @@ class RobotBLE:
     # All use of print commented out in attempt to avoid crashes.
     __slots__ = "_ble", "_write_callback", "_name", "_logging", "_is_enabled", "_active_connection", "_uart_service", "_rx_characteristic", "_tx_characteristic"
 
-    def __init__(self, ble, name="Robot", logging: bool = False):
+    def __init__(self, ble, name="BBot", logging: bool = False):
         self._ble = ble
         self._write_callback = None
         self._name: str = name
@@ -390,7 +390,7 @@ class BluetoothMgr:
         self._ble_controller: RobotBLE | None = None
         self._is_connected: bool = False
         self._is_enabled: bool = False
-        self._name: str | None = None
+        self._name: str = ""
 
 
     @property
@@ -441,7 +441,7 @@ class BluetoothMgr:
     def start(self, name: str = "BBot") -> bool:
         """Start the Bluetooth manager and begin advertising."""
         app = self._app
-        self._name: str = name
+        self._name = name
 
         if self._logging:
             print(f"B:Initialising Bluetooth LE with name = {name}")
