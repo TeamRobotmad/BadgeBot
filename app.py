@@ -626,13 +626,21 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     @performance_mode.setter
     def performance_mode(self, value: bool):
         """Convenience property to set performance_mode setting."""
+        if value and 0 == self._performance_mode:
+            self.refresh = True  # force a refresh when we enter performance mode to ensure the screen is cleared
         self._performance_mode = 1 if value else 0
 
 
     @property
     def sensor_test_mgr(self):
-        """Public access to the SensorTestMgr, used by LineFollowMgr & AutoDriveMgr to share the sensor manager."""
+        """Public access to the SensorTestMgr, used by LineFollowMgr to access sensors that sensor_test_mgr manages."""
         return self._sensor_test_mgr
+
+
+    @property
+    def bluetooth_mgr(self):
+        """Public access to the BluetoothMgr, used by LineFollowMgr to send plotter data."""
+        return self._bluetooth_mgr
 
 
     @property
@@ -685,7 +693,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         motor_hexdrive_app = self.hexdrive_apps[0] if len(self.hexdrive_apps) > 0 else None
         if motor_hexdrive_app is None:
             if self._logging:
-                print("B:No HexDrive app available for motor power transition")
+                print("B:No HexDrive app available for motors")
             self._motor_enable_mask = 0
             self.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD  # restore the default update period when motors are disabled
             return False
@@ -695,7 +703,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                   and motor_hexdrive_app.set_power(True)
                   and motor_hexdrive_app.set_freq(MOTOR_PWM_FREQ))
             if ok:
-                motor_hexdrive_app.set_logging(False)
+                #motor_hexdrive_app.set_logging(False)
                 if self._logging:
                     print(f"B:Motors enabled (user={user}, mask={new_mask})")
                 self.update_period = DEFAULT_ACTIVE_UPDATE_PERIOD  # ensure we have a fast update period when motors are enabled
@@ -1079,9 +1087,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                     print(f"B:Notification active (remaining {self._notification_end_time} ms)")
                 self.refresh = True
 
-        # manage LED PatternEnable/Disable for all states
-        #self._pattern_management()
-
         # Update Hexpansion management if something 'hexpansion' related has changed
         if self.hexpansion_update_required:
             if self.current_state != STATE_HEXPANSION and self._hexpansion_mgr is not None:
@@ -1285,79 +1290,77 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         """Set the colour of the ring drawn around the edge of the display.
            Pass an (r, g, b) tuple (each 0.0-1.0) to show a coloured ring, or None to stop showing the ring (the default).
            Setting a colour flags a ring refresh so the ring is rendered on the next draw regardless of whether a full display refresh is required."""
-        self._ring_colour = colour
-        self._ring_refresh = True
+        if colour != self._ring_colour:
+            self._ring_colour = colour
+            self._ring_refresh = True
 
 
     def draw(self, ctx):
         """Main draw function called from the main loop. Handles drawing the current state, including any notifications."""
-        if 2 == self._performance_mode:
-            # drawing the screen takes a VERY long time - so when trying to run robot control algorithms as fast as possible we skip drawing the screen to avoid stalling the background updates
-            return
 
         # diagnostics output for measuring draw time on a scope - pin 2 is high while draw() is running, low when it is finished
-        #diagnostics_output(2, 1)
+        diagnostics_output(2, 1)
 
-        if 1 == self._performance_mode or self.refresh:
-            # Clear the Screen
+        if 2 != self._performance_mode and self.refresh:
+            # Clear the Screen - before drawing on it
             clear_background(ctx)
 
-        if 1 == self._performance_mode:
-            # Now the Screen is cleared, we can switch to performance mode, which will skip drawing the screen in future frames until a refresh is required.
-            self._performance_mode = 2
-            #diagnostics_output(2, 0)
+        if 2 == self._performance_mode:
+            # Drawing the screen takes a VERY long time - so when trying to run robot control algorithms as fast as possible
+            # we skip drawing the screen to avoid stalling the background updates
+            diagnostics_output(2, 0)
             return
+        elif 1 == self._performance_mode:
+            # Allow this refresh cycle then stop updating the screen
+            self._performance_mode = 2
+
+        if self._ring_refresh or self.refresh:
+            if self._ring_colour is not None and 0 == self._performance_mode:
+                self._ring_refresh = False
+                # The ring can be updated without redrawing the entire display
+                # Draw an 8-pixel colour ring around the edge of the display
+                ctx.line_width = 8
+                ctx.rgb(*self._ring_colour).arc(0, 0, 116, 0, pi * 2, 0).stroke()
 
         if self.current_state == STATE_MENU and self.menu is not None:
             # These need to be drawn every frame as they contain animations
             self.menu.draw(ctx)
-        else:
-            if self._ring_refresh or self.refresh:
-                if self._ring_colour is not None:
-                    self._ring_refresh = False
-                    # The ring can be updated without redrawing the entire display
-                    # Draw an 8-pixel colour ring around the edge of the display
-                    ctx.line_width = 8
-                    ctx.rgb(*self._ring_colour).arc(0, 0, 116, 0, pi * 2, 0).stroke()
+        elif self.refresh:
+            self.refresh = False
 
-            if self.refresh:
-                self.refresh = False
+            #ctx.save()
+            #if in a mode where rotated display is desirable:
+            #    ctx.rotate(self.front_face * 2.0 * pi / _FRONT_FACE_NUM_ORIENTATIONS)  # Rotate the entire display based on the front_face setting, so that "forward" is always at the top of the display regardless of how the badge is oriented
+            ctx.font_size = label_font_size
+            ctx.text_align = ctx.LEFT
+            ctx.text_baseline = ctx.BOTTOM
 
-                #ctx.save()
-                #if in a mode where rotated display is desirable:
-                #    ctx.rotate(self.front_face * 2.0 * pi / _FRONT_FACE_NUM_ORIENTATIONS)  # Rotate the entire display based on the front_face setting, so that "forward" is always at the top of the display regardless of how the badge is oriented
-                ctx.font_size = label_font_size
-                if ctx.text_align != ctx.LEFT:
-                    # See https://github.com/emfcamp/badge-2024-software/issues/181
-                    ctx.text_align = ctx.LEFT
-                ctx.text_baseline = ctx.BOTTOM
+            if self.current_state == STATE_LOGO:
+                draw_logo_animated(ctx, self.rpm, self.animation_counter, [self.b_msg, self.t_msg], self.qr_code)
+            elif self.scroll_mode_enabled and self.is_scroll and self._performance_mode != 2:
+                # Scroll mode indicator border
+                ctx.rgb(0,0.2,0).rectangle(     -120,-120, 115+H_START,240).fill()
+                ctx.rgb(0,0  ,0).rectangle(H_START-5,-120,10-2*H_START,240).fill()
+                ctx.rgb(0,0.2,0).rectangle(5-H_START,-120, 115+H_START,240).fill()
+            #else:
+            #    ctx.rgb(0,0,0).rectangle(-120,-120,240,240).fill()
 
-                if self.current_state == STATE_LOGO:
-                    draw_logo_animated(ctx, self.rpm, self.animation_counter, [self.b_msg, self.t_msg], self.qr_code)
-                elif self.scroll_mode_enabled and self.is_scroll:
-                    # Scroll mode indicator border
-                    ctx.rgb(0,0.2,0).rectangle(     -120,-120, 115+H_START,240).fill()
-                    ctx.rgb(0,0  ,0).rectangle(H_START-5,-120,10-2*H_START,240).fill()
-                    ctx.rgb(0,0.2,0).rectangle(5-H_START,-120, 115+H_START,240).fill()
-                #else:
-                #    ctx.rgb(0,0,0).rectangle(-120,-120,240,240).fill()
-
-                # Common states for messages and errors, which can be triggered by any functional area manager and are displayed in a consistent way
-                if self.current_state == STATE_MESSAGE:
-                    if self.message_colours == []:
-                        self.message_colours = [(1,0,0)]*len(self.message)
-                    self.draw_message(ctx, self.message, self.message_colours, label_font_size if len(self.message) <= 5 else small_font_size)
-                    if self.message_type is None or self.message_type == "warning":
-                        button_labels(ctx, confirm_label="OK", cancel_label="Exit")
-                elif self.current_state == STATE_COUNTDOWN:
-                    self.draw_message(ctx, [str(self.countdown_value)], [(1,1,0)], twentyfour_pt)
-                else:
-                    # Delegate to functional area managers via dispatch table
-                    if self.current_state in self._state_draw_dispatch:
-                        draw_fn = self._state_draw_dispatch.get(self.current_state)
-                        if draw_fn is not None:
-                            draw_fn(ctx)
-                #ctx.restore()
+            # Common states for messages and errors, which can be triggered by any functional area manager and are displayed in a consistent way
+            if self.current_state == STATE_MESSAGE:
+                if self.message_colours == []:
+                    self.message_colours = [(1,0,0)]*len(self.message)
+                self.draw_message(ctx, self.message, self.message_colours, label_font_size if len(self.message) <= 5 else small_font_size)
+                if self.message_type is None or self.message_type == "warning":
+                    button_labels(ctx, confirm_label="OK", cancel_label="Exit")
+            elif self.current_state == STATE_COUNTDOWN:
+                self.draw_message(ctx, [str(self.countdown_value)], [(1,1,0)], twentyfour_pt)
+            else:
+                # Delegate to functional area managers via dispatch table
+                if self.current_state in self._state_draw_dispatch:
+                    draw_fn = self._state_draw_dispatch.get(self.current_state)
+                    if draw_fn is not None:
+                        draw_fn(ctx)
+            #ctx.restore()
 
         # Notifications are drawn on top of everything else, so that they are visible regardless of the current state.
         # They also contain animations, so need to be drawn every frame when active.
@@ -1365,7 +1368,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if self.notification:
             self.notification.draw(ctx)
 
-        #diagnostics_output(2, 0)
+        diagnostics_output(2, 0)
 
 
 

@@ -34,7 +34,7 @@ def init_settings(s, MySetting: type):  #pylint: disable=invalid-name
 
 class RobotBLE:
     """Handles BLE communication with the Bluefruit Connect app on a phone."""
-
+    # All use of print commented out in attempt to avoid crashes.
     __slots__ = "_ble", "_write_callback", "_name", "_logging", "_is_enabled", "_active_connection", "_uart_service", "_rx_characteristic", "_tx_characteristic"
 
     def __init__(self, ble, name="Robot", logging: bool = False):
@@ -62,8 +62,8 @@ class RobotBLE:
         )
 
         aioble.register_services(self._uart_service)
-        print("B:BLE:Services registered, tx handle:", self._tx_characteristic._value_handle)
-        print("B:BLE:Services registered, rx handle:", self._rx_characteristic._value_handle)
+        #print("B:BLE:Services registered, tx handle:", self._tx_characteristic._value_handle)
+        #print("B:BLE:Services registered, rx handle:", self._rx_characteristic._value_handle)
 
 
     async def run_loop(self):
@@ -91,7 +91,7 @@ class RobotBLE:
                 await asyncio.sleep_ms(500)
                 continue
             try:
-                print(f"B:BLE:Advertising {self._name}")
+                #print(f"B:BLE:Advertising {self._name}")
 
                 # Pass raw bytearrays directly to override aioble's layout picker
                 connection = await aioble.advertise(
@@ -109,10 +109,10 @@ class RobotBLE:
 
                     # Wait until the phone disconnects
                     await connection.disconnected()
-                    print("B:BLE:Central device disconnected")
+                    #print("B:BLE:Central device disconnected")
 
             except Exception as e:   # pylint: disable=broad-except
-                print(f"B:BLE:Advertising error: {e}")
+                #print(f"B:BLE:Advertising error: {e}")
                 await asyncio.sleep_ms(2000) # Breathing room before restarting
             finally:
                 # Clean up connection flags if a disconnection event occurs
@@ -132,16 +132,16 @@ class RobotBLE:
             # written by a central application (like Bluefruit Connect)
             try:
                 _, value = await self._rx_characteristic.written(timeout_ms=1000)
-                print(f"B:BLE:RX characteristic written: {value}")
+                #print(f"B:BLE:RX characteristic written: {value}")
                 if value and self._write_callback:
                     self._write_callback(value)
             except asyncio.TimeoutError:
-                if self._active_connection is None:
-                    # Connection was dropped while waiting for data
-                    print("B:BLE:Connection lost while waiting for RX data")
+                #if self._active_connection is None:
+                #    # Connection was dropped while waiting for data
+                #    print("B:BLE:Connection lost while waiting for RX data")
                 pass  # No data received in this interval, loop back to check connection state
             except Exception as e:   # pylint: disable=broad-except
-                print(f"B:BLE:Error reading RX characteristic data: {e}")
+                #print(f"B:BLE:Error reading RX characteristic data: {e}")
                 await asyncio.sleep_ms(50)
 
 
@@ -153,7 +153,8 @@ class RobotBLE:
             # Writes data directly into the notification register structure
             self._tx_characteristic.notify(self._active_connection, (text + "\n").encode())
         except Exception as e:       # pylint: disable=broad-except
-            print(f"B:BLE:Error sending telemetry: {e}")
+            #print(f"B:BLE:Error sending telemetry: {e}")
+            pass
 
 
     def on_write(self, callback):
@@ -186,11 +187,12 @@ class RobotBLE:
         """
         if self._active_connection:
             try:
-                print("B:BLE:Soft disconnect triggered...")
+                #print("B:BLE:Soft disconnect triggered...")
                 # Instruct the hardware radio stack to drop the central device
                 await self._active_connection.disconnect()
             except Exception as e:          # pylint: disable=broad-except
-                print(f"B:BLE:Error during disconnect execution: {e}")
+                #print(f"B:BLE:Error during disconnect execution: {e}")
+                pass
             finally:
                 # Clear references immediately in case the hardware link takes a moment to drop
                 self._active_connection = None
@@ -203,7 +205,7 @@ class RobotBLE:
         Completely powers down the physical Bluetooth hardware antenna
         and halts the internal processing tasks.
         """
-        print("B:BLE:Global shutdown triggered. Terminating capability...")
+        #print("B:BLE:Global shutdown triggered. Terminating capability...")
         self._is_enabled = False
 
         # 1. Pull the physical power down from the hardware layer
@@ -220,10 +222,10 @@ class RobotBLE:
         resumes background broadcasting.
         """
         if self._is_enabled:
-            print("B:BLE:Bluetooth is already running.")
+            #print("B:BLE:Bluetooth is already running.")
             return
 
-        print("B:BLE:Global restart triggered. Initialising hardware stack...")
+        #print("B:BLE:Global restart triggered. Initialising hardware stack...")
 
         # 1. Re-initialize the low-level silicon transceiver registers
         self.init() # re-register services and characteristics
@@ -515,7 +517,7 @@ class BluetoothMgr:
             return
 
         # Attempts to have a "Disconnect" button - caused issues, Bluefruit would immediately reconnect, but the messages were not received by the app until it was forced to disconnect and reconnect again.
-        
+
         if app.button_states.get(BUTTON_TYPES["CANCEL"]): # Back
             app.button_states.clear()
             # Return to menu - leaving BLE connection state as is (i.e. currently the same as "OK" button)
@@ -567,3 +569,12 @@ class BluetoothMgr:
             confirm_label = "BLE On"
         button_labels(ctx, confirm_label=confirm_label, cancel_label="Back", left_label=left_label)
         return True
+
+
+    # Method to send Chartable data to the phone app via BLE
+    def send_plotter_data(self, data: list[int]):
+        """Send chartable data to the phone app via BLE."""
+        if self._ble_controller is not None and self._ble_controller.is_connected:
+            # Join numbers with commas (the mandatory newline is appended by the send_telemetry method)
+            plot_string = ",".join(str(val) for val in data)
+            self._ble_controller.send_telemetry(plot_string)

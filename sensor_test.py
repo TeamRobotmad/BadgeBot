@@ -676,7 +676,7 @@ class SensorTestMgr:
                     if 20 < self._last_colour_saturation:
                         self._app.set_ring_colour(self.colour_card_rgb(colour_name))
                     else:
-                        self._app.set_ring_colour(None)
+                        self._app.set_ring_colour((0,0,0))  # low saturation, so set ring to black
             self.colour_sensor_stats.new_sample(s)
             return (True, self._last_colour_hue, self._last_colour_saturation, self._last_colour_name, self._last_colour)
         except Exception as e:          # pylint: disable=broad-except

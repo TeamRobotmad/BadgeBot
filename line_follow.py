@@ -31,7 +31,7 @@ except ImportError:
 
 # Line Follower constants
 _MAX_TIME_WITHOUT_LINE = const(500)  # milliseconds to continue moving after losing the line before stopping
-_DEFAULT_DISPLAY_REFRESH_INTERVAL_MS = const(1000)
+_DEFAULT_DISPLAY_REFRESH_INTERVAL_MS = const(100)
 _CALIBRATION_MSG_TIMEOUT_MS = const(4000)  # auto-dismiss the calibration reminder so remote (BLE) activation isn't left stuck on it
 
 # Automatic Stop based on Colour Sensor (from COLOUR_LIST)
@@ -66,6 +66,14 @@ _MAX_LINE_POWER = const(127)        # 65536 // MOTOR_POWER_SCALE_FACTOR
 # Line Follower Modes
 _FOLLOWER_MODE_DIFFERENTIAL = const(0)
 _FOLLOWER_MODE_BINARY       = const(1)    # not implemented
+
+# Plot Selection Modes
+_PLOT_SELECTION_NONE = const(0)
+_PLOT_SELECTION_COLOUR = const(1)
+_PLOT_SELECTION_RANGE = const(2)
+_PLOT_SELECTION_PID = const(3)
+_PLOT_SELECTION_POWER = const(4)
+_PLOT_SELECTION_LABELS = ("None", "Colour", "Range", "PID", "Power")
 
 
 # Editable fields shown on the Line Follower display.  Left/Right cycle the
@@ -125,6 +133,7 @@ def init_settings(s, MySetting: type):      #pylint: disable=invalid-name
     s['pid_kd']         = MySetting(s, _DEFAULT_FOLLOWER_PID_KD, 0, 65535)
     s['min_range']      = MySetting(s, _DEFAULT_MIN_OBSTACLE_DISTANCE, _MIN_MIN_OBSTACLE_DISTANCE_MM, _MIN_MAX_OBSTACLE_DISTANCE_MM)  # minimum distance in mm to an obstacle before stopping
     s['colour_stop']    = MySetting(s, _DEFAULT_COLOUR_STOP, 0, 9, labels=COLOUR_LIST)
+    s['plot_type']      = MySetting(s, _PLOT_SELECTION_RANGE, _PLOT_SELECTION_NONE, _PLOT_SELECTION_POWER, labels=_PLOT_SELECTION_LABELS)
 
 
 # ---- Line Follower Manager -------------------------------------------------
@@ -138,11 +147,12 @@ class LineFollowMgr:
         Reference to the main application instance.
     """
     __slots__ = ("_app", "_logging", "sensor_rate", "follower_mode",
-                 "line_power", "pid_integral", "pid_previous_error",
+                 "line_power", "_pid_integral", "_pid_previous_error",
                  "kp", "ki", "kd", "integral_limit", "motor_output",
                  "_last_colour", "_last_colour_hue", "_last_colour_name", "_colour_hexdrive", "_range_hexdrive",
                  "_colour_stop", "_mid_hue", "_max_hue", "_new_sample", "_display_refresh_time", "_display_refresh_interval", "_signed_steering_gain",
-                 "_time_since_line_detected", "_selected_field", "_enable_movement", "_min_obstacle_distance", "_obstacle_detection_count", "_calibration_msg_shown")
+                 "_time_since_line_detected", "_selected_field", "_enable_movement", "_min_obstacle_distance", "_obstacle_detection_count", "_calibration_msg_shown",
+                 "_last_range_mm", "_plot_selection", "_last_p_term", "_last_i_term", "_last_d_term")
 
     def __init__(self, app, logging: bool = True):
         self._app = app
@@ -150,8 +160,8 @@ class LineFollowMgr:
         self.sensor_rate: int = 0     # sample rate
         self.follower_mode: int = _FOLLOWER_MODE_DIFFERENTIAL   # Default follower mode
         self.line_power: int = _DEFAULT_FOLLOWER_POWER                # Default line follower power
-        self.pid_integral: int = 0                              # Accumulated integral term for PID controller
-        self.pid_previous_error: int = 0                        # Previous error for derivative term of PID controller
+        self._pid_integral: int = 0                              # Accumulated integral term for PID controller
+        self._pid_previous_error: int = 0                        # Previous error for derivative term of PID controller
         self.kp: int = _DEFAULT_FOLLOWER_PID_KP
         self.ki: int = _DEFAULT_FOLLOWER_PID_KI
         self.kd: int = _DEFAULT_FOLLOWER_PID_KD
@@ -175,6 +185,11 @@ class LineFollowMgr:
         self._min_obstacle_distance: int = _DEFAULT_MIN_OBSTACLE_DISTANCE  # minimum distance in mm to an obstacle before stopping
         self._obstacle_detection_count: int = 0
         self._calibration_msg_shown: bool = False  # whether the calibration message has been shown
+        self._last_range_mm: int = -1
+        self._plot_selection: int = 0  # 0 = colour, 1 = range, 2 = PID output
+        self._last_p_term: int = 0
+        self._last_i_term: int = 0
+        self._last_d_term: int = 0
         if self._logging:
             print("B:LineFollowMgr initialised")
 
@@ -223,16 +238,14 @@ class LineFollowMgr:
         app.auto_repeat_clear()
 
         # Reset controller and reading state
-        self.motor_output = (0, 0)
-        self.pid_integral = 0
-        self.pid_previous_error = 0
+        self.stop_movement()
+        self._last_range_mm = -1
         self._last_colour_hue = 0
         self._last_colour = (0, 0, 0)
         self._last_colour_name = "unknown"
         self._new_sample = False
         self._display_refresh_time = 0
         self._time_since_line_detected = _MAX_TIME_WITHOUT_LINE # start with time since line detected at max so we don't try to continue moving until we see a line.
-        self._enable_movement = False
         #self._calibration_msg_shown = False # don't reset this so we don't keep showing the message if the user has already seen it once.
         app.reset_hue_history()  # start the LED hue history from black
 
@@ -244,6 +257,7 @@ class LineFollowMgr:
         self._max_hue = _HUE_SCALE_FACTOR * (app.settings['max_hue'].v if 'max_hue' in app.settings else _DEFAULT_MAX_HUE)
         self.line_power = MOTOR_POWER_SCALE_FACTOR * (app.settings['line_power'].v if 'line_power' in app.settings else _DEFAULT_FOLLOWER_POWER)
         self._colour_stop = COLOUR_LIST[app.settings['colour_stop'].v if 'colour_stop' in app.settings else _DEFAULT_COLOUR_STOP]
+        self._plot_selection = app.settings['plot_type'].v if 'plot_type' in app.settings else _PLOT_SELECTION_RANGE
         if self._logging:
             print(f"B:LF:line_power={self.line_power}, colour_stop='{self._colour_stop}'")
 
@@ -273,12 +287,18 @@ class LineFollowMgr:
         """Handle Line Follower UI.  Returns True if handled."""
         app = self._app
 
+        #Remind User to calibrate Colour Sensor if this is the first time the Line Follower has been started since the app was launched.
+        if not self._calibration_msg_shown:
+            self._app.show_message(["Line Follower:", "For best tracking", "ensure Colour", "Sensor calibration", "is recent"], [(0.5,1.0,0.5),(1,1,1),(1,1,1),(1,1,1),(1,1,1)], return_state = STATE_FOLLOWER, timeout = _CALIBRATION_MSG_TIMEOUT_MS)
+            self._calibration_msg_shown = True
+            return True
+
         if app.sensor_test_mgr.colour_sensor_stats.update(delta):
-            if self._logging:
-                print(f"B:LF:CS={app.sensor_test_mgr.colour_sensor_stats.rate_str}")
+            #if self._logging:
+            print(f"B:LF:CS={app.sensor_test_mgr.colour_sensor_stats.rate_str}")
         if app.sensor_test_mgr.range_sensor_stats.update(delta):
-            if self._logging:
-                print(f"B:LF:RS={app.sensor_test_mgr.range_sensor_stats.rate_str}")
+            #if self._logging:
+            print(f"B:LF:RS={app.sensor_test_mgr.range_sensor_stats.rate_str}")
 
         # We don't want to update display every sample, so we use a refresh timer to limit the update rate.
         self._display_refresh_time += delta
@@ -287,6 +307,19 @@ class LineFollowMgr:
                 self._new_sample = False
                 self._display_refresh_time = 0
                 app.refresh = True
+                if app.bluetooth_mgr is not None and app.bluetooth_mgr.is_connected and self._last_range_mm >= 0:
+                    # send data according to which is selected for transmission (colour, range or PID output).
+                    if self._plot_selection == _PLOT_SELECTION_COLOUR:
+                        # send the colour sensor hue to the phone app via BLE for plotting
+                        app.bluetooth_mgr.send_plotter_data([self._last_colour_hue])
+                    elif self._plot_selection == _PLOT_SELECTION_RANGE:
+                        # send the range sensor distance to the phone app via BLE for plotting
+                        app.bluetooth_mgr.send_plotter_data([self._last_range_mm])
+                    elif self._plot_selection == _PLOT_SELECTION_PID:
+                        # send the PID values to the phone app via BLE for plotting
+                        app.bluetooth_mgr.send_plotter_data([self._last_p_term, self._last_i_term, self._last_d_term])
+                    elif self._plot_selection == _PLOT_SELECTION_POWER:
+                        app.bluetooth_mgr.send_plotter_data([self.motor_output[0], self.motor_output[1]])
 
         if app.button_states.get(BUTTON_TYPES["CANCEL"]):
             app.button_states.clear()
@@ -300,9 +333,8 @@ class LineFollowMgr:
                 sensor_mgr.disable_range_sensor(self._range_hexdrive)
             self._range_hexdrive = None
             app.set_ring_colour(None)
-            self.pid_integral = 0
-            self.pid_previous_error = 0
-
+            self.clear_pid()
+            self._last_range_mm = -1
 
             # persist any changes to the line follower settings before returning to the menu
             app.settings['mid_hue'].persist()
@@ -342,13 +374,10 @@ class LineFollowMgr:
         """Toggle the line-follower start/stop movement state (CONFIRM action).
         Shared by the local CONFIRM button and remote (BLE) control."""
         self._enable_movement = not self._enable_movement
-        if self._enable_movement:
-            if self._logging:
-                print("B:LF:Start")
-        else:
-            if self._logging:
-                print("B:LF:Stop")
-            self.motor_output = (0, 0)       # Stop
+        if self._logging:
+            print(f"B:LF:{'Start' if self._enable_movement else 'Stop'}")
+        if not self._enable_movement:
+            self.stop_movement()
         self._app.refresh = True
         self._app.performance_mode = False   # disable performance mode while adjusting settings so we can see the display update
 
@@ -369,6 +398,23 @@ class LineFollowMgr:
         if self._time_since_line_detected == 0:
             return self._last_colour_hue
         return None
+    
+
+    def clear_pid(self):
+        """Clear the PID controller state (integral and previous error)."""
+        self._pid_integral = 0
+        self._pid_previous_error = 0
+        self._last_p_term = 0
+        self._last_i_term = 0
+        self._last_d_term = 0
+
+
+    def stop_movement(self):
+        """Stop the line follower and disable the colour sensor."""
+        self.clear_pid()
+        self._enable_movement = False
+        self._app.performance_mode = False
+        self.motor_output = (0, 0)  # Stop
 
 
     def _adjust_selected_field(self, direction: int):
@@ -411,21 +457,18 @@ class LineFollowMgr:
         output = (0, 0)
 
         # Poll the shared range sensor if we are allowed to move
-        if self._range_hexdrive and self._enable_movement:
+        if self._range_hexdrive:
             new_sample, range_mm = sensor_mgr.read_range(self._range_hexdrive)
             if new_sample:
-                #if self._logging:
-                #    print(f"B:LF:Range={range_mm}mm")
+                self._last_range_mm = range_mm
                 if range_mm < self._min_obstacle_distance and self._enable_movement:
                     # Stop immediately if an obstacle is detected within 100mm
                     self._obstacle_detection_count += 1
                     if self._obstacle_detection_count > 2:  # require 3 consecutive detections to avoid false positives
                         if self._logging:
                             print(f"B:LF:Obstacle detected @{range_mm}mm, auto stop")
-                        self._enable_movement = False
-                        app = self._app
-                        app.performance_mode = False
-                        app.notification = Notification("Stop Obstacle", self._range_hexdrive.config.port)
+                            self.stop_movement()
+                        self._app.notification = Notification("Stop Obstacle", self._range_hexdrive.config.port)
                     else:
                         # start to slow down while we wait for the next sample to confirm the obstacle is still there
                         if self._logging:
@@ -437,7 +480,7 @@ class LineFollowMgr:
 
         # Poll the shared colour sensor; read_colour also updates the ring colour on change.
         # Force a read to ensure we get the latest sample, as the colour sensor is only polled in the background by the HexDrive
-        if self._colour_hexdrive and self._colour_hexdrive.colour_sensor:
+        if self._colour_hexdrive:
             _ = self._colour_hexdrive.colour_sensor.read()
 
         new_sample, hue, _, name, _raw = sensor_mgr.read_colour(self._colour_hexdrive)
@@ -454,11 +497,9 @@ class LineFollowMgr:
                     # Stop Immediately if the colour is the stop colour (e.g. black)
                     if self._logging:
                         print(f"B:LF:{self._colour_stop} detected, auto stop")
-                    self._enable_movement = False
+                    self.stop_movement()
                     self._time_since_line_detected = _MAX_TIME_WITHOUT_LINE
-                    app = self._app
-                    app.performance_mode = False  # stop performance mode if we have lost the line for a while
-                    app.notification = Notification(f"Stop On {self._colour_stop}", self._colour_hexdrive.config.port)
+                    self._app.notification = Notification(f"Stop On {self._colour_stop}", self._colour_hexdrive.config.port)
             if self._last_colour_name in ("White", "Grey", "Black"):
                 self._last_colour_hue = _HUE_COLOUR_UNKNOWN
                 # Colours with no hue (achromatic) are treated as "no line detected" and we allow a short period to pick up the line again.
@@ -519,28 +560,32 @@ class LineFollowMgr:
 
         # Integral term - accumulate error over time with anti-windup clamping
         if self.ki > 0:
-            self.pid_integral += error
-            self.pid_integral = max(min(self.pid_integral, self.integral_limit), -self.integral_limit)
-            i_term = (self.ki * self.pid_integral) // _FOLLOWER_PID_SCALE_FACTOR
+            self._pid_integral += error
+            self._pid_integral = max(min(self._pid_integral, self.integral_limit), -self.integral_limit)
+            i_term = (self.ki * self._pid_integral) // _FOLLOWER_PID_SCALE_FACTOR
         else:
             i_term = 0
 
         # Derivative term - rate of change of error
-        d_term = (self.kd * (error - self.pid_previous_error)) // _FOLLOWER_PID_SCALE_FACTOR
-        self.pid_previous_error = error
+        d_term = (self.kd * (error - self._pid_previous_error)) // _FOLLOWER_PID_SCALE_FACTOR
+        self._pid_previous_error = error
 
         # Combined PID output
         correction = p_term + i_term + d_term
 
+        self._last_p_term = p_term
+        self._last_i_term = i_term
+        self._last_d_term = d_term
+
         # adjust forward power to be faster when well aligned with the line, and slower when far from the line, to avoid overshooting
         # scale the line power based on the absolute error, so that when the error is small the line power is at maximum, and when the error is large the line power is reduced to avoid overshooting
-        abs_error = abs(error)
+        #abs_error = abs(error)
 
         # scale line power linearly from max to min (25%) based on the error when too far from the line mid point, to avoid overshooting.  When the error is small, use full line power.
-        if abs_error >= (self._max_hue // 4):
-            line_power = (self.line_power * (self._max_hue + (self._max_hue//4) - abs_error)) // self._max_hue
-        else:
-            line_power = self.line_power
+        #if abs_error >= (self._max_hue // 4):
+        #    line_power = (self.line_power * (self._max_hue + (self._max_hue//4) - abs_error)) // self._max_hue
+        #else:
+        line_power = self.line_power
 
         correction_limit = (3 * line_power) // 2
         correction = _clamp(correction, -correction_limit, correction_limit)  # limit correction
@@ -559,17 +604,8 @@ class LineFollowMgr:
     # Draw
     # ------------------------------------------------------------------
 
-
-
-    def draw(self, ctx) -> bool:
-        """Render Line Follower UI.  Returns True if handled."""
-
-        #Remind User to calibrate Colour Sensor if this is the first time the Line Follower has been started since the app was launched.
-        if not self._calibration_msg_shown:
-            self._app.show_message(["Line Follower:", "For best tracking", "ensure Colour", "Sensor calibration", "is recent"], [(0.5,1.0,0.5),(1,1,1),(1,1,1),(1,1,1),(1,1,1)], return_state = STATE_FOLLOWER, timeout = _CALIBRATION_MSG_TIMEOUT_MS)
-            self._calibration_msg_shown = True
-            return True
-
+    def draw_tracker(self, ctx):
+        """"""
         # ================================================
         # draw a box to show the deviation from mid hue:
         # ================================================
@@ -645,13 +681,24 @@ class LineFollowMgr:
         ctx.line_width = 2
         ctx.rgb(0,0,0).move_to(0, -half_height).line_to(0, 0).stroke()
 
-        # draw the button labels - up/down adjust the selected field, left/right cycle fields
-        sel_label = _EDIT_FIELDS[self._selected_field][_EDIT_FIELDS_LABEL_INDEX]
-        confirm_label = "Start" if not self._enable_movement else "Stop" # was "\u25C0"
 
-        button_labels(ctx, cancel_label="Back", confirm_label=confirm_label,
-                      up_label=f"+{sel_label}", down_label=f"-{sel_label}",
-                      left_label="Direction", right_label="\u25B6")
+    def draw(self, ctx) -> bool:
+        """Render Line Follower UI.  Returns True if handled."""
+
+        if not self._enable_movement:
+            # draw the line-following tracker only when the robot is not moving, so we can see the current deviation from mid hue.
+            self.draw_tracker(ctx)
+
+            # draw the button labels - up/down adjust the selected field, left/right cycle fields
+            sel_label = _EDIT_FIELDS[self._selected_field][_EDIT_FIELDS_LABEL_INDEX]
+            confirm_label = "Start" if not self._enable_movement else "Stop"
+
+            button_labels(ctx, cancel_label="Back", confirm_label=confirm_label,
+                        up_label=f"+{sel_label}", down_label=f"-{sel_label}",
+                        left_label="Direction", right_label="\u25B6")
+        else:
+            # draw the button labels - confirm to stop, left/right to reverse direction
+            button_labels(ctx, confirm_label="Stop", left_label="Direction")
 
         return True
 
