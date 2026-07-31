@@ -35,7 +35,7 @@ except ImportError:
 # If you could use hard=True in setting up a Pin IRQ hander, which you can't as of BadgeOS V1.10, then it is recommended to
 # allocate the emergency exception buffer to prevent crashes due to OSError: Out of memory when an interrupt occurs and
 # there is no memory available to handle the exception. Trying this to help with BLE crashes.
-micropython.alloc_emergency_exception_buf(256)
+micropython.alloc_emergency_exception_buf(1024)
 
 from .utils import draw_logo_animated, parse_version
 
@@ -44,7 +44,7 @@ HEXDRIVE2_APP_VERSION = 3
 
 SETTINGS_NAME_PREFIX = "badgebot"  # Prefix for settings keys in EEPROM
 APP_VERSION = "2.7" # BadgeBot App Version Number
-_BLUETOOTH_NAME_PREFIX = "B"  # Prefix for Bluetooth device name, followed by a 3-digit number from the unique ID
+_BLUETOOTH_NAME_PREFIX = "BBot"  # Prefix for Bluetooth device name, followed by a 3-digit number from the unique ID
 
 # If you change the URL then you will need to regenerate the QR code
 # using the generate_qr_code.py script, and update the _QR_CODE constant below with the new code generated for your URL
@@ -325,7 +325,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         "_state_background_dispatch",
         "countdown_value",
         "_performance_mode",
-        "_ble",
         "_notification_end_time",
         "_motor_enable_mask",
         "_remote_commands",
@@ -884,6 +883,9 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         bg_fn = self._state_background_dispatch.get(self.current_state)
         output = bg_fn(delta) if bg_fn is not None else None
 
+        if self._bluetooth_mgr and self._bluetooth_mgr.is_active:
+            self._bluetooth_mgr.background_update(delta)
+
         if len(self.hexdrive_apps) > 0:
             if self._bluetooth_mgr and self._bluetooth_mgr.is_connected:
                 # BLE direction buttons override the state's motor output while held,
@@ -1155,7 +1157,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                         print("Menu is animating")
                     self.refresh = True
         elif self.button_states.get(BUTTON_TYPES["CANCEL"]) and self.current_state in MINIMISE_VALID_STATES:
-            if self.current_state == STATE_MESSAGE and self.message_type == None:
+            if self.current_state == STATE_MESSAGE and self.message_type is None:
                 # If we are in the menu, we want to return to the previous state, not minimise the app
                 self.return_to_menu()
                 return

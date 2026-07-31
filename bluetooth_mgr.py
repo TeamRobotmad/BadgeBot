@@ -1,16 +1,29 @@
 """MicroPython BLE Robot Control"""
 import gc
-
-import asyncio
+import struct
 import sys
-import time
-import aioble  # Built-in async wrapper module for MicroPython BLE
 import bluetooth
+import micropython
 from events.input import BUTTON_TYPES
 from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
 
 from .app import REMOTE_CMD_LINE_FOLLOW_TOGGLE, REMOTE_CMD_LINE_FOLLOW_DIRECTION, STATE_BLUETOOTH
+
+try:
+    from machine import mem32
+except ImportError:
+    class _Mem32Shim:
+        def __getitem__(self, _addr: int) -> int:
+            return 0
+
+        def __setitem__(self, _addr: int, _value: int) -> None:
+            return None
+
+    # Simulator fallback: keep imports working even when direct register access
+    # and IRQ controls are not exposed by the simulated machine module.
+    mem32 = _Mem32Shim()
+
 
 try:
     from micropython import const
@@ -20,29 +33,45 @@ except ImportError:
     const = lambda x: x         #pylint: disable=unnecessary-lambda-assignment
 
 
+#Micropython Bluetooth is the crashiest thing I've ever seen.
+# Have tried using aioble - same result.
+# Have tried to avoid using irq at all but then you can't get the connection handle,
+# but I don't think that is the problem, as the crash happens when there is no data beign sent or received.
+# it is more likley if you load the transmissions up.
+# its core C code gets stuck due to memory issues with micropython and the ESP core wdt kicks in
+# disabling the garbage collector didn't help. (NB miicropython does seem to churn a huge amount of memory that needs to be garbage collected)
+
+
+
 # --- BLE Constants for Nordic UART Service (NUS) ---
 _ADV_TYPE_FLAGS = const(0x01)
+_ADV_TYPE_NAME = const(0x09)
+_ADV_TYPE_UUID128_COMPLETE = const(0x07)
 _UART_UUID = bluetooth.UUID("6E400001-B5A3-F393-E0A9-E50E24DCCA9E")
 _TX_UUID   = bluetooth.UUID("6E400003-B5A3-F393-E0A9-E50E24DCCA9E")
 _RX_UUID   = bluetooth.UUID("6E400002-B5A3-F393-E0A9-E50E24DCCA9E")
 
 _ADV_INTERVAL_US = const(500000)
-_ADV_APPEARANCE = const(128)  # Generic Unknown Device
+
+# --- CRITICAL: Declare flat, unboxed global storage primitives ---
+# Keeping these outside the class guarantees no complex lookup structures
+_BLE_EVENT_FLAG = 0
+_BLE_PENDING_EVENT = 0
+_BLE_PENDING_DATA = 0
 
 
 # ---- Settings initialisation -----------------------------------------------
 
 def init_settings(s, MySetting: type):  #pylint: disable=invalid-name
-    """Register motor-moves-specific settings in the shared settings dict."""
+    """Register bluetooth-specific settings in the shared settings dict."""
     _ = s
     _ = MySetting
 
 class RobotBLE:
     """Handles BLE communication with the Bluefruit Connect app on a phone."""
-    # All use of print commented out in attempt to avoid crashes.
     __slots__ = (
-        "_ble", "_write_callback", "_name", "_logging", "_enabled", "_active_connection", "_connected", "_uart_service", "_rx_characteristic", "_tx_characteristic",
-        "_adv_task_handle", "_read_task_handle", "_memory_task_handle", "_dispatch_queue_task_handle", "_rx_queue", "_queue_event"
+        "_ble", "_write_callback", "_name", "_logging", "_enabled", "_connected", "_connection_handle", "_handle_tx", "_handle_rx",
+        "_adv_data",
     )
 
     def __init__(self, ble, name="BBot", logging: bool = False):
@@ -51,185 +80,139 @@ class RobotBLE:
         self._name: str = name
         self._logging: bool = logging
         self._enabled: bool = False  # Master control flag for the hardware loop
-        self._active_connection: aioble.Connection | None = None
         self._connected: bool = False
-        self._uart_service: aioble.Service | None = None
-        self._rx_characteristic: aioble.Characteristic | None = None
-        self._tx_characteristic: aioble.Characteristic | None = None
-        self._adv_task_handle: asyncio.Task | None = None
-        self._read_task_handle: asyncio.Task | None = None
-        self._memory_task_handle: asyncio.Task | None = None
-        self._dispatch_queue_task_handle: asyncio.Task | None = None
-        self._rx_queue: list = []
-        self._queue_event = asyncio.Event()
+        self._connection_handle = None
+        self._handle_tx = None
+        self._handle_rx = None
+        self._adv_data = None
         self.init()
 
 
     def init(self):
         """ Register service nodes using safe async declarations """
+        print("B:BLE:Initializing BLE")
+
+        self._connected = False
+        self._connection_handle = None
+        #gc.enable()  # Enable garbage collection while there is no connection
+
+        self._enabled = True
         self._ble.active(True)  # Ensure the hardware radio is awake before registering services
-        self._uart_service = aioble.Service(_UART_UUID)
-        self._tx_characteristic = aioble.Characteristic(
-            self._uart_service, _TX_UUID, notify=True
-        )
-        self._rx_characteristic = aioble.Characteristic(
-            self._uart_service, _RX_UUID, write=True, write_no_response=True, capture=True
-        )
+        self._ble.irq(self._irq)
 
-        aioble.register_services(self._uart_service)
-        #self._ble.config(mtu=512)
+        _UART_SERVICE = (_UART_UUID, (
+            (_TX_UUID, bluetooth.FLAG_NOTIFY),
+            (_RX_UUID, bluetooth.FLAG_WRITE | bluetooth.FLAG_WRITE_NO_RESPONSE),
+        ))
 
-        print("B:BLE:Services registered, tx handle:", self._tx_characteristic._value_handle)
-        print("B:BLE:Services registered, rx handle:", self._rx_characteristic._value_handle)
+        # Register the profile structure and capture the direct hardware register handles
+        ((self._handle_tx, self._handle_rx),) = self._ble.gatts_register_services((_UART_SERVICE,))
 
+        self._adv_data = self._advertising_payload(name=self._name, services=[_UART_UUID])
 
-    async def run_loop(self):
-        """
-        Main application task loop.
-        Spawns background routines completely within the asyncio framework.
-        """
-        # Set the Bluetooth Device Name cleanly
+        # Configure local device name parameter
         self._ble.config(gap_name=self._name)
 
-        self._enabled = True  # Enable the BLE loop
-
-        self._adv_task_handle = asyncio.create_task(self._advertising_task())
-        self._read_task_handle = asyncio.create_task(self._read_task())
-        self._memory_task_handle = asyncio.create_task(self._memory_maintenance_task())
-        self._dispatch_queue_task_handle = asyncio.create_task(self._dispatch_queue_task())
-
-        # Concurrent processing structures: manages advertising and read tasks simultaneously
-        await asyncio.gather(
-            self._adv_task_handle,
-            self._read_task_handle,
-            self._memory_task_handle,
-            self._dispatch_queue_task_handle,
-        )
+        self.start_advertising()
 
 
-    async def _advertising_task(self):
-        """Safely cycles advertising without blocking hardware registers."""
-
-        while True:
-            if not self._enabled:
-                await asyncio.sleep_ms(500)
-                continue
-            try:
-                #print(f"B:BLE:Advertising {self._name}")
-
-                # Pass raw bytearrays directly to override aioble's layout picker
-                async with await aioble.advertise(
-                    _ADV_INTERVAL_US,
-                    name=self._name,
-                    services=[_UART_UUID], # High-level binding required by discovery
-                    #appearance=_ADV_APPEARANCE,
-                ) as connection:
-                    #print("B:BLE:Connected to central device")
-                    # Code blocks here until a smartphone connects
-                    self._active_connection = connection
-                    self._connected = True
-
-                    # Wait until the phone disconnects
-                    await connection.disconnected()
-                    #print("B:BLE:Central device disconnected")
-
-            except Exception as e:   # pylint: disable=broad-except
-                #print(f"B:BLE:Advertising error: {e}")
-                await asyncio.sleep_ms(2000) # Breathing room before restarting
-            finally:
-                # Clean up connection flags if a disconnection event occurs
-                self._active_connection = None
-                self._connected = False
-                await asyncio.sleep_ms(500) # Breathing room before restarting
-
-
-    async def _read_task(self):
-        """Safely processes incoming data streams using async queues."""
-        while True:
-            if not self._enabled or not self._connected:
-                # nothing to try to receive as no connection is active
-                await asyncio.sleep_ms(500)
-                continue
-
-            # Code pauses here cleanly until data arrives in the RX register
-            # written by a central application (like Bluefruit Connect)
-            try:
-                _, value = await self._rx_characteristic.written(timeout_ms=1000)
-                #print(f"B:BLE:RX characteristic written: {value}")
-                #if value and self._write_callback:
-                #    self._write_callback(value)
-                if value:
-                    self._rx_queue.append(value)
-                    self._queue_event.set()
-            except asyncio.TimeoutError:
-                #if not self._connected:
-                #    # Connection was dropped while waiting for data
-                #    print("B:BLE:Connection lost while waiting for RX data")
-                pass  # No data received in this interval, loop back to check connection state
-            except Exception as e:   # pylint: disable=broad-except
-                #print(f"B:BLE:Error reading RX characteristic data: {e}")
-                await asyncio.sleep_ms(50)
-
-
-    async def _memory_maintenance_task(self):
+    @micropython.native
+    def _irq(self, event, data):
         """
-        Locks out unmanaged background garbage collection completely.
-        Forces all memory cleanup to occur at controlled, predictable intervals
-        away from critical radio interrupts.
+        PERFECT STATE: Zero memory lookups, zero allocations, zero object referencing.
         """
-        # Turn off automatic background collections immediately
-        gc.disable()
+        global _BLE_EVENT_FLAG, _BLE_PENDING_EVENT, _BLE_PENDING_DATA
 
-        while True:
+        _BLE_PENDING_EVENT = event
+        _BLE_PENDING_DATA = data
+        _BLE_EVENT_FLAG = 1
+
+
+    def start_advertising(self):
+        """Start advertising the BLE service."""
+
+        self._ble.gap_advertise(_ADV_INTERVAL_US, adv_data=self._adv_data)
+        print(f"B:BLE:Advertising as {self._name}")
+
+
+    def update(self):
+        """
+        Call this function regularly inside main application loop.
+        """
+        #if self._connected:
+        #    # garbage collection is disabled while a BLE central is connected to avoid memory fragmentation during active connection
+        #    # if it looks like we are low on memory then we can force a garbage collection cycle to free up memory, but this will cause a brief pause in the main loop while the garbage collection runs.
+        #    if gc.mem_free() < 60000:  # Check if free memory is below a threshold (e.g., 20KB)
+        #        print("B:BLE:Low memory detected, forcing garbage collection...")
+        #        try:
+        #            gc.collect()  # Force garbage collection to free up memory
+        #        except Exception as e:  # pylint: disable=broad-except
+        #            print(f"B:BLE:Error during garbage collection: {e}")
+        #        finally:
+        #            print(f"B:BLE:Memory after GC: {gc.mem_free()} bytes free")
+
+        global _BLE_EVENT_FLAG, _BLE_PENDING_EVENT, _BLE_PENDING_DATA
+        if not _BLE_EVENT_FLAG:
+            return
+        _BLE_EVENT_FLAG = 0
+
+        event = _BLE_PENDING_EVENT
+        data  = _BLE_PENDING_DATA
+
+        if event == 1:    # _IRQ_CENTRAL_CONNECT
+            if self._enabled:
+                self._connected = True
+                self._connection_handle = data[0] if data else 0
+                #print(f"B:BLE:Central connected, handle={self._connection_handle}")
+                #gc.disable()  # Disable garbage collection to avoid memory fragmentation during active connection
+        elif event == 2:  # _IRQ_CENTRAL_DISCONNECT
+            self._connected = False
+            self._connection_handle = None
+            if self._enabled:
+                self.start_advertising()
+            #gc.enable()  # Re-enable garbage collection after disconnection
+        elif event == 3:  # _IRQ_GATTS_WRITE
             if self._enabled and self._connected:
-                try:
-                    # Explicitly run a controlled collection cycle now.
-                    # Because we are inside an async task loop after an await,
-                    # we know the thread is safe and not mid-allocation collision.
-                    gc.collect()
-                    print(f"B:BLE:Free={gc.mem_free()}")
-                except Exception as e:   # pylint: disable=broad-except
-                    print(f"B:BLE:Memory maintenance error: {e}")
-
-                # Poll frequently enough to keep the heap lean while the link is hot
-                await asyncio.sleep_ms(2500)
-            else:
-                # If BLE is off or disconnected, restore standard automatic rules
-                gc.enable()
-                await asyncio.sleep_ms(1000)
-                gc.disable()
+                handle = data[1] if data else 0
+                value = self._ble.gatts_read(handle)
+                #print(f"B:BLE:Received data, handle={handle}: {value}")
+                if handle == self._handle_rx and self._write_callback:
+                    try:
+                        self._write_callback(value)
+                    except Exception as e:      # pylint: disable=broad-except
+                        print(f"B:BLE:Callback Error: {e}")
 
 
-    async def _dispatch_queue_task(self):
-        """Processes the queue safely on the main thread, away from hot radio loops."""
-        while True:
-            # Code pauses here cleanly until a packet exists in the queue
-            if not self._rx_queue:
-                self._queue_event.clear()
-                await self._queue_event.wait()
+    def _advertising_payload(self, name=None, services=None):
+        # name is limited to 8 characters as the total packet is only 31 bytes.
+        # services is a list of UUID objects.
+        payload = bytearray()
 
-            # 2. Extract the oldest packet from the front of the list layout (FIFO)
-            value = self._rx_queue.pop(0)
+        def _append(adv_type, value):
+            nonlocal payload
+            payload.append(len(value) + 1)
+            payload.append(adv_type)
+            payload.extend(value)
 
-            try:
-                if self._write_callback:
-                    # This runs on the main thread. It can safely take time to execute
-                    # motor code, print strings, or update layout metrics without deadlocking.
-                    self._write_callback(value)
-            except Exception as e:      # pylint: disable=broad-except
-                print(f"[BLE Queue Error]: {e}")
+        _append(_ADV_TYPE_FLAGS, struct.pack("B", 0x06))
+        if name:
+            _append(_ADV_TYPE_NAME, name.encode('utf-8'))
+        if services:
+            for s in services:
+                _append(_ADV_TYPE_UUID128_COMPLETE, bytes(s))
+
+        return payload
 
 
     def send_telemetry(self, text):
         """Sends data out via Bluetooth"""
-        if not self._active_connection:
+        if not self._connected:
             return
         try:
-            # Writes data directly into the notification register structure
-            self._tx_characteristic.notify(self._active_connection, (text + "\n").encode())
+            # Transmit data via the TX characteristic
+            self._ble.gatts_notify(self._connection_handle, self._handle_tx, text + "\n")
         except Exception as e:       # pylint: disable=broad-except
-            #print(f"B:BLE:Error sending telemetry: {e}")
-            pass
+            print(f"B:BLE:Error sending telemetry: {e}")
 
 
     def on_write(self, callback):
@@ -247,7 +230,6 @@ class RobotBLE:
     @property
     def is_connected(self) -> bool:
         """Returns True if at least one BLE central is connected."""
-        #return self._active_connection is not None
         return self._connected
 
 
@@ -257,80 +239,58 @@ class RobotBLE:
         return self._enabled
 
 
-    async def disconnect_client(self):
-        """
-        Forces the badge to sever the link with the smartphone application.
-        """
-        if self._active_connection:
-            try:
-                #print("B:BLE:Soft disconnect triggered...")
-                # Instruct the hardware radio stack to drop the central device
-                await self._active_connection.disconnect()
-            except Exception as e:          # pylint: disable=broad-except
-                #print(f"B:BLE:Error during disconnect execution: {e}")
-                pass
-            finally:
-                # Clear references immediately in case the hardware link takes a moment to drop
-                self._active_connection = None
-
-
     # --- DISABLING & ENABLING METHODS ---
 
-    async def shutdown_ble(self):
+    def disconnect_client(self):
         """
-        Completely powers down the physical Bluetooth hardware antenna
-        and halts the internal processing tasks.
-        Assumes that all connections have been severed and the BLE stack is idle.
+        Forces the remote smartphone to disconnect instantly over the air.
         """
-        #print("B:BLE:Global shutdown triggered. Terminating capability...")
+        if self._connected:
+            print("B:BLE:Issuing hardware disconnection command...")
+            # Native low-level command to drop a connection handle explicitly
+            try:
+                self._ble.gap_disconnect(self._connection_handle)
+            except Exception as e:  # pylint: disable=broad-except
+                print(f"B:BLE:Error disconnecting client: {e}")
+            self._connected = False
+            self._connection_handle = None
+            #gc.enable()  # Re-enable garbage collection after disconnection
+
+
+
+    def stop_advertising(self):
+        """
+        Stops the over-the-air beacon broadcasts completely, preventing
+        new devices from finding the badge, but keeps the BLE stack alive.
+        """
+        # To stop advertising natively in MicroPython, pass None into the interval argument
+        self._ble.gap_advertise(None)
+
+
+    def shutdown(self):
+        """
+        Performs a full shutdown: severs active clients, stops advertisements,
+        and cuts the physical power to the 2.4 GHz radio transceiver to save power.
+        """
         self._enabled = False
-        self._connected = False
 
-        if self._adv_task_handle:
-            self._adv_task_handle.cancel()
-        if self._read_task_handle:
-            self._read_task_handle.cancel()
-        if self._memory_task_handle:
-            self._memory_task_handle.cancel()
-        if self._dispatch_queue_task_handle:
-            self._dispatch_queue_task_handle.cancel()
+        self.disconnect_client()
 
-        await asyncio.sleep_ms(100)  # Give the tasks time to exit cleanly
-        self._adv_task_handle = None
-        self._read_task_handle = None
-        self._memory_task_handle = None
-        self._dispatch_queue_task_handle = None
+        self.stop_advertising()
 
-
-        # 1. Pull the physical power down from the hardware layer
-        # This completely frees the internal transceiver peripheral and radio stack.
+        # Pull the physical power down from the ESP32-S3 silicon transceiver block.
+        # This stops peripheral scanning clocks completely to optimize battery metrics.
         self._ble.active(False)
-
-        # 2. Reclaim state registers
-        self._active_connection = None
+        print("B:BLE:Peripheral Hardware Stack Powered Down.")
 
 
-    def restart_ble(self, name: str | None = None):
+    def restart(self):
         """
-        Powers up the physical Bluetooth radio and automatically
-        resumes background broadcasting.
+        Powers up the physical radio antenna, reinitializes configuration blocks,
+        and resumes over-the-air pairing advertisements.
         """
-        if self._enabled:
-            #print("B:BLE:Bluetooth is already running.")
-            return
-
-        #print("B:BLE:Global restart triggered. Initialising hardware stack...")
-
-        # 1. Re-initialize the low-level silicon transceiver registers
-        self.init() # re-register services and characteristics
-
-        if name is not None:
-            self._name = name
-        self._ble.config(gap_name=self._name)
-
-        # 2. Release the async loops from their sleep states
-        self._enabled = True
-
+        self.init()
+        print("B:BLE:Hardware core awake. Advertising active.")
 
 
 # --- Robot Logic ---
@@ -544,25 +504,18 @@ class BluetoothMgr:
             if self._name != self._ble_controller.name:
                 # Name has changed, so we need to restart the BLE controller to update the advertising name.
                 if self._ble_controller.is_connected:
-                    # Create it as a task on the running loop context
-                    asyncio.get_event_loop().create_task(self._ble_controller.disconnect_client())
-                    time.sleep_ms(20)  # Give the disconnect time to propagate before powering down the radio
-                    self._is_connected = False
+                    self._ble_controller.disconnect_client()
 
-                # Disable the BLE hardware and stop advertising
-                asyncio.get_event_loop().create_task(self._ble_controller.shutdown_ble())
+                self._ble_controller.shutdown()
 
                 if self._is_enabled:
                     # Re-enable the BLE hardware and resume advertising - IF it was previously enabled
-                    self._ble_controller.restart_ble(name=self._name)
+                    self._ble_controller.restart()
         else:
             # Initialize the BLE controller
             try:
                 # Create a new RobotBLE instance and start advertising
                 self._ble_controller = RobotBLE(self._ble, name=self._name, logging=self._logging)
-
-                # Add the safe BLE tracking loop to the global scheduler
-                asyncio.get_event_loop().create_task(self._ble_controller.run_loop())
 
             except Exception as e:      # pylint: disable=broad-except
                 print(f"B:Failed to initialize BLE controller: {e}")
@@ -580,6 +533,13 @@ class BluetoothMgr:
         app.refresh = True
         app.auto_repeat_clear()
         return True
+
+
+    def background_update(self, delta: int) -> None:
+        """Update the Bluetooth manager's state in the background.  This should be called in the main loop's background update phase."""
+        _ = delta
+        if self._ble_controller is not None and self._ble_controller.is_enabled:
+            self._ble_controller.update()
 
 
     def update(self, delta: int) -> None:
@@ -619,16 +579,12 @@ class BluetoothMgr:
         elif app.button_states.get(BUTTON_TYPES["LEFT"]): # "BLE Off"
             app.button_states.clear()
             if self._ble_controller is not None and self._ble_controller.is_enabled:
-                # Create it as a task on the running loop context
-                asyncio.get_event_loop().create_task(self._ble_controller.disconnect_client())
-                time.sleep_ms(20)  # Give the disconnect time to propagate before powering down the radio
-                # Disable the BLE hardware and stop advertising
-                asyncio.get_event_loop().create_task(self._ble_controller.shutdown_ble())
+                self._ble_controller.shutdown()
         elif app.button_states.get(BUTTON_TYPES["CONFIRM"]): # "BLE On" / "OK"
             app.button_states.clear()
             if self._ble_controller is not None and not self._ble_controller.is_enabled:
                 # Enable the BLE hardware and resume advertising
-                self._ble_controller.restart_ble(name=self._name)
+                self._ble_controller.restart()
             else: # "OK"
                 # return to menu leaving the BLE connection active so the user can continue to control the robot from the phone app
                 app.return_to_menu()
