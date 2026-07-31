@@ -309,8 +309,9 @@ class LineFollowMgr:
             print(f"B:LF:CS={app.sensor_test_mgr.colour_sensor_stats.rate_str}")
         if app.sensor_test_mgr.range_sensor_stats.update(delta):
             #if self._logging:
-            print(f"B:LF:RS={app.sensor_test_mgr.range_sensor_stats.rate_str}")
-
+            #print(f"B:LF:RS={app.sensor_test_mgr.range_sensor_stats.rate_str}")
+            pass
+        
         # We don't want to update display every sample, so we use a refresh timer to limit the update rate.
         self._display_refresh_time += delta
         if self._display_refresh_time >= self._display_refresh_interval:

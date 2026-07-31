@@ -1623,7 +1623,7 @@ class SensorStats():
     """A class to track sensor statistics, including sample rate and count."""
     __slots__ = ("_name", "_sample_period_ms", "_sample_count", "_sample_timer", "_sample_rate", "_missed_samples", "_last_sequence_number")
 
-    def __init__(self, name: str, sample_period_ms: int=5000):
+    def __init__(self, name: str, sample_period_ms: int=10000):
         self._name: str = name
         self._sample_period_ms: int = sample_period_ms
         self._sample_count: int = 0
