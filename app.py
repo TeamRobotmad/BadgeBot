@@ -34,9 +34,8 @@ except ImportError:
 
 # If you could use hard=True in setting up a Pin IRQ hander, which you can't as of BadgeOS V1.10, then it is recommended to
 # allocate the emergency exception buffer to prevent crashes due to OSError: Out of memory when an interrupt occurs and
-# there is no memory available to handle the exception.
-#import micropython
-#micropython.alloc_emergency_exception_buf(100)
+# there is no memory available to handle the exception. Trying this to help with BLE crashes.
+micropython.alloc_emergency_exception_buf(256)
 
 from .utils import draw_logo_animated, parse_version
 
