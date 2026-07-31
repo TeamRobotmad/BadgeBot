@@ -1,4 +1,6 @@
 """MicroPython BLE Robot Control"""
+import gc
+
 import asyncio
 import sys
 import time
@@ -24,6 +26,9 @@ _UART_UUID = bluetooth.UUID("6E400001-B5A3-F393-E0A9-E50E24DCCA9E")
 _TX_UUID   = bluetooth.UUID("6E400003-B5A3-F393-E0A9-E50E24DCCA9E")
 _RX_UUID   = bluetooth.UUID("6E400002-B5A3-F393-E0A9-E50E24DCCA9E")
 
+_ADV_INTERVAL_US = const(500000)
+_ADV_APPEARANCE = const(128)  # Generic Unknown Device
+
 
 # ---- Settings initialisation -----------------------------------------------
 
@@ -35,18 +40,28 @@ def init_settings(s, MySetting: type):  #pylint: disable=invalid-name
 class RobotBLE:
     """Handles BLE communication with the Bluefruit Connect app on a phone."""
     # All use of print commented out in attempt to avoid crashes.
-    __slots__ = "_ble", "_write_callback", "_name", "_logging", "_is_enabled", "_active_connection", "_uart_service", "_rx_characteristic", "_tx_characteristic"
+    __slots__ = (
+        "_ble", "_write_callback", "_name", "_logging", "_enabled", "_active_connection", "_connected", "_uart_service", "_rx_characteristic", "_tx_characteristic",
+        "_adv_task_handle", "_read_task_handle", "_memory_task_handle", "_dispatch_queue_task_handle", "_rx_queue", "_queue_event"
+    )
 
     def __init__(self, ble, name="BBot", logging: bool = False):
         self._ble = ble
         self._write_callback = None
         self._name: str = name
-        self._logging = logging
-        self._is_enabled = False  # Master control flag for the hardware loop
-        self._active_connection = None
-        self._uart_service = None
-        self._rx_characteristic = None
-        self._tx_characteristic = None
+        self._logging: bool = logging
+        self._enabled: bool = False  # Master control flag for the hardware loop
+        self._active_connection: aioble.Connection | None = None
+        self._connected: bool = False
+        self._uart_service: aioble.Service | None = None
+        self._rx_characteristic: aioble.Characteristic | None = None
+        self._tx_characteristic: aioble.Characteristic | None = None
+        self._adv_task_handle: asyncio.Task | None = None
+        self._read_task_handle: asyncio.Task | None = None
+        self._memory_task_handle: asyncio.Task | None = None
+        self._dispatch_queue_task_handle: asyncio.Task | None = None
+        self._rx_queue: list = []
+        self._queue_event = asyncio.Event()
         self.init()
 
 
@@ -62,8 +77,10 @@ class RobotBLE:
         )
 
         aioble.register_services(self._uart_service)
-        #print("B:BLE:Services registered, tx handle:", self._tx_characteristic._value_handle)
-        #print("B:BLE:Services registered, rx handle:", self._rx_characteristic._value_handle)
+        #self._ble.config(mtu=512)
+
+        print("B:BLE:Services registered, tx handle:", self._tx_characteristic._value_handle)
+        print("B:BLE:Services registered, rx handle:", self._rx_characteristic._value_handle)
 
 
     async def run_loop(self):
@@ -74,12 +91,19 @@ class RobotBLE:
         # Set the Bluetooth Device Name cleanly
         self._ble.config(gap_name=self._name)
 
-        self._is_enabled = True  # Enable the BLE loop
+        self._enabled = True  # Enable the BLE loop
+
+        self._adv_task_handle = asyncio.create_task(self._advertising_task())
+        self._read_task_handle = asyncio.create_task(self._read_task())
+        self._memory_task_handle = asyncio.create_task(self._memory_maintenance_task())
+        self._dispatch_queue_task_handle = asyncio.create_task(self._dispatch_queue_task())
 
         # Concurrent processing structures: manages advertising and read tasks simultaneously
         await asyncio.gather(
-            self._advertising_task(),
-            self._read_handler_task()
+            self._adv_task_handle,
+            self._read_task_handle,
+            self._memory_task_handle,
+            self._dispatch_queue_task_handle,
         )
 
 
@@ -87,25 +111,23 @@ class RobotBLE:
         """Safely cycles advertising without blocking hardware registers."""
 
         while True:
-            if not self._is_enabled:
+            if not self._enabled:
                 await asyncio.sleep_ms(500)
                 continue
             try:
                 #print(f"B:BLE:Advertising {self._name}")
 
                 # Pass raw bytearrays directly to override aioble's layout picker
-                connection = await aioble.advertise(
-                    500000,
+                async with await aioble.advertise(
+                    _ADV_INTERVAL_US,
                     name=self._name,
-                    services=[_UART_UUID] # High-level binding required by discovery
-                )
-
-                if connection is None:
-                    print("B:BLE:Advertising timed out, restarting...")
-                else:
-                    print("B:BLE:Connected to central device")
+                    services=[_UART_UUID], # High-level binding required by discovery
+                    #appearance=_ADV_APPEARANCE,
+                ) as connection:
+                    #print("B:BLE:Connected to central device")
                     # Code blocks here until a smartphone connects
                     self._active_connection = connection
+                    self._connected = True
 
                     # Wait until the phone disconnects
                     await connection.disconnected()
@@ -117,13 +139,14 @@ class RobotBLE:
             finally:
                 # Clean up connection flags if a disconnection event occurs
                 self._active_connection = None
+                self._connected = False
                 await asyncio.sleep_ms(500) # Breathing room before restarting
 
 
-    async def _read_handler_task(self):
+    async def _read_task(self):
         """Safely processes incoming data streams using async queues."""
         while True:
-            if not self._is_enabled or self._active_connection is None:
+            if not self._enabled or not self._connected:
                 # nothing to try to receive as no connection is active
                 await asyncio.sleep_ms(500)
                 continue
@@ -133,16 +156,68 @@ class RobotBLE:
             try:
                 _, value = await self._rx_characteristic.written(timeout_ms=1000)
                 #print(f"B:BLE:RX characteristic written: {value}")
-                if value and self._write_callback:
-                    self._write_callback(value)
+                #if value and self._write_callback:
+                #    self._write_callback(value)
+                if value:
+                    self._rx_queue.append(value)
+                    self._queue_event.set()
             except asyncio.TimeoutError:
-                #if self._active_connection is None:
+                #if not self._connected:
                 #    # Connection was dropped while waiting for data
                 #    print("B:BLE:Connection lost while waiting for RX data")
                 pass  # No data received in this interval, loop back to check connection state
             except Exception as e:   # pylint: disable=broad-except
                 #print(f"B:BLE:Error reading RX characteristic data: {e}")
                 await asyncio.sleep_ms(50)
+
+
+    async def _memory_maintenance_task(self):
+        """
+        Locks out unmanaged background garbage collection completely.
+        Forces all memory cleanup to occur at controlled, predictable intervals
+        away from critical radio interrupts.
+        """
+        # Turn off automatic background collections immediately
+        gc.disable()
+
+        while True:
+            if self._enabled and self._connected:
+                try:
+                    # Explicitly run a controlled collection cycle now.
+                    # Because we are inside an async task loop after an await,
+                    # we know the thread is safe and not mid-allocation collision.
+                    gc.collect()
+                    print(f"B:BLE:Free={gc.mem_free()}")
+                except Exception as e:   # pylint: disable=broad-except
+                    print(f"B:BLE:Memory maintenance error: {e}")
+
+                # Poll frequently enough to keep the heap lean while the link is hot
+                await asyncio.sleep_ms(2500)
+            else:
+                # If BLE is off or disconnected, restore standard automatic rules
+                gc.enable()
+                await asyncio.sleep_ms(1000)
+                gc.disable()
+
+
+    async def _dispatch_queue_task(self):
+        """Processes the queue safely on the main thread, away from hot radio loops."""
+        while True:
+            # Code pauses here cleanly until a packet exists in the queue
+            if not self._rx_queue:
+                self._queue_event.clear()
+                await self._queue_event.wait()
+
+            # 2. Extract the oldest packet from the front of the list layout (FIFO)
+            value = self._rx_queue.pop(0)
+
+            try:
+                if self._write_callback:
+                    # This runs on the main thread. It can safely take time to execute
+                    # motor code, print strings, or update layout metrics without deadlocking.
+                    self._write_callback(value)
+            except Exception as e:      # pylint: disable=broad-except
+                print(f"[BLE Queue Error]: {e}")
 
 
     def send_telemetry(self, text):
@@ -172,13 +247,14 @@ class RobotBLE:
     @property
     def is_connected(self) -> bool:
         """Returns True if at least one BLE central is connected."""
-        return self._active_connection is not None
+        #return self._active_connection is not None
+        return self._connected
 
 
     @property
     def is_enabled(self) -> bool:
         """Returns True if the BLE hardware is currently enabled and advertising or connected."""
-        return self._is_enabled
+        return self._enabled
 
 
     async def disconnect_client(self):
@@ -200,13 +276,31 @@ class RobotBLE:
 
     # --- DISABLING & ENABLING METHODS ---
 
-    def shutdown_ble(self):
+    async def shutdown_ble(self):
         """
         Completely powers down the physical Bluetooth hardware antenna
         and halts the internal processing tasks.
+        Assumes that all connections have been severed and the BLE stack is idle.
         """
         #print("B:BLE:Global shutdown triggered. Terminating capability...")
-        self._is_enabled = False
+        self._enabled = False
+        self._connected = False
+
+        if self._adv_task_handle:
+            self._adv_task_handle.cancel()
+        if self._read_task_handle:
+            self._read_task_handle.cancel()
+        if self._memory_task_handle:
+            self._memory_task_handle.cancel()
+        if self._dispatch_queue_task_handle:
+            self._dispatch_queue_task_handle.cancel()
+
+        await asyncio.sleep_ms(100)  # Give the tasks time to exit cleanly
+        self._adv_task_handle = None
+        self._read_task_handle = None
+        self._memory_task_handle = None
+        self._dispatch_queue_task_handle = None
+
 
         # 1. Pull the physical power down from the hardware layer
         # This completely frees the internal transceiver peripheral and radio stack.
@@ -221,7 +315,7 @@ class RobotBLE:
         Powers up the physical Bluetooth radio and automatically
         resumes background broadcasting.
         """
-        if self._is_enabled:
+        if self._enabled:
             #print("B:BLE:Bluetooth is already running.")
             return
 
@@ -235,7 +329,7 @@ class RobotBLE:
         self._ble.config(gap_name=self._name)
 
         # 2. Release the async loops from their sleep states
-        self._is_enabled = True
+        self._enabled = True
 
 
 
@@ -456,7 +550,7 @@ class BluetoothMgr:
                     self._is_connected = False
 
                 # Disable the BLE hardware and stop advertising
-                self._ble_controller.shutdown_ble()
+                asyncio.get_event_loop().create_task(self._ble_controller.shutdown_ble())
 
                 if self._is_enabled:
                     # Re-enable the BLE hardware and resume advertising - IF it was previously enabled
@@ -529,7 +623,7 @@ class BluetoothMgr:
                 asyncio.get_event_loop().create_task(self._ble_controller.disconnect_client())
                 time.sleep_ms(20)  # Give the disconnect time to propagate before powering down the radio
                 # Disable the BLE hardware and stop advertising
-                self._ble_controller.shutdown_ble()
+                asyncio.get_event_loop().create_task(self._ble_controller.shutdown_ble())
         elif app.button_states.get(BUTTON_TYPES["CONFIRM"]): # "BLE On" / "OK"
             app.button_states.clear()
             if self._ble_controller is not None and not self._ble_controller.is_enabled:
