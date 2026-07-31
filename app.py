@@ -405,18 +405,48 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.settings: dict = {}
         if MySetting is not None:
             # General settings
-            self.settings['brightness']    = MySetting(self.settings, _BRIGHTNESS, 0.1, 1.0)
-            self.settings['logging']       = MySetting(self.settings, _DEFAULT_LOGGING, False, True)
+            self.settings['brightness']    = MySetting(
+                self.settings, _BRIGHTNESS, 0.1, 1.0,
+                group=MySetting.GROUP_GENERAL, order=10, title="Brightness",
+                description="Sets the brightness used by BadgeBot effects.")
+            self.settings['logging']       = MySetting(
+                self.settings, _DEFAULT_LOGGING, False, True,
+                group=MySetting.GROUP_GENERAL, order=20, title="Logging",
+                description="Prints diagnostic messages to the console.")
             #self.settings['path']         = MySetting(self.settings, 0, 0, len(_FILE_DEST_LABELS) - 1, labels=_FILE_DEST_LABELS)
             # Motor/Drive Direction settings
-            self.settings['acceleration']  = MySetting(self.settings, DEFAULT_ACCELERATION,  _MIN_ACCELERATION,  _MAX_ACCELERATION)
-            self.settings['max_power']     = MySetting(self.settings, DEFAULT_MAX_POWER, _MIN_MAX_POWER, _MAX_MAX_POWER)
-            self.settings['mtr_deadband']  = MySetting(self.settings, _DEFAULT_MOTOR_DEADBAND, 0, 127)
-            self.settings['mtr1_dir']      = MySetting(self.settings, _DEFAULT_FWD_DIR, 0, 1, labels=_MOTOR_DIRECTION_LABELS)
-            self.settings['mtr2_dir']      = MySetting(self.settings, _DEFAULT_FWD_DIR, 0, 1, labels=_MOTOR_DIRECTION_LABELS)
-            self.settings['mtr1_min']      = MySetting(self.settings, _DEFAULT_MOTOR_MIN, 0, 127)
-            self.settings['mtr2_min']      = MySetting(self.settings, _DEFAULT_MOTOR_MIN, 0, 127)
-            self.settings['front_face']    = MySetting(self.settings, _DEFAULT_FRONT_FACE, 0, 11, labels=_FRONT_FACE_LABELS)
+            self.settings['acceleration']  = MySetting(
+                self.settings, DEFAULT_ACCELERATION, _MIN_ACCELERATION, _MAX_ACCELERATION,
+                group=MySetting.GROUP_MOTORS, order=10, title="Acceleration",
+                description="Limits how quickly motor power can change.")
+            self.settings['max_power']     = MySetting(
+                self.settings, DEFAULT_MAX_POWER, _MIN_MAX_POWER, _MAX_MAX_POWER,
+                group=MySetting.GROUP_MOTORS, order=30, title="Max power",
+                description="Caps the output sent to both motors.")
+            self.settings['mtr_deadband']  = MySetting(
+                self.settings, _DEFAULT_MOTOR_DEADBAND, 0, 127,
+                group=MySetting.GROUP_MOTORS, order=20, title="Deadband",
+                description="Ignores very small motor demands around zero.")
+            self.settings['mtr1_dir']      = MySetting(
+                self.settings, _DEFAULT_FWD_DIR, 0, 1, labels=_MOTOR_DIRECTION_LABELS,
+                group=MySetting.GROUP_MOTORS, order=40, title="M1 direction",
+                description="Selects normal or reversed output for motor 1.")
+            self.settings['mtr2_dir']      = MySetting(
+                self.settings, _DEFAULT_FWD_DIR, 0, 1, labels=_MOTOR_DIRECTION_LABELS,
+                group=MySetting.GROUP_MOTORS, order=41, title="M2 direction",
+                description="Selects normal or reversed output for motor 2.")
+            self.settings['mtr1_min']      = MySetting(
+                self.settings, _DEFAULT_MOTOR_MIN, 0, 127,
+                group=MySetting.GROUP_MOTORS, order=50, title="M1 minimum",
+                description="Sets the minimum output that starts motor 1.")
+            self.settings['mtr2_min']      = MySetting(
+                self.settings, _DEFAULT_MOTOR_MIN, 0, 127,
+                group=MySetting.GROUP_MOTORS, order=51, title="M2 minimum",
+                description="Sets the minimum output that starts motor 2.")
+            self.settings['front_face']    = MySetting(
+                self.settings, _DEFAULT_FRONT_FACE, 0, 11, labels=_FRONT_FACE_LABELS,
+                group=MySetting.GROUP_DRIVING, order=30, title="Front face",
+                description="Selects the badge edge treated as forward.")
 
             # Module-specific settings - only initialise modules which are NOT dependent on specific Hexpansion hardware here, as we want to be able to access settings in the HexpansionMgr before we have detected what hardware is present.  For Hexpansion-dependent modules, we will initialise their settings after we have scanned for hardware and know which modules we will be using.
             if _hexpansion_init_settings is not None:
@@ -1641,18 +1671,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                     back_handler=self._menu_back_handler,
                     position=self._main_menu_position,
                 )
-        elif menu_name == MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS] and self._settings_mgr is not None: # "Settings"
-            # construct the settings menu
-            _settings_menu_items = ["Default All"]
-            for _, setting in enumerate(self.settings):
-                _settings_menu_items.append(f"{setting}")
-            self.menu = Menu(
-                self,
-                _settings_menu_items,
-                select_handler=self._settings_menu_select_handler,
-                back_handler=self._menu_back_handler,
-                position=self.settings_menu_position,
-                )
+        elif self._settings_mgr is not None and self._settings_mgr.handles_menu(menu_name):
+            self.menu = self._settings_mgr.build_menu(menu_name)
 
 
     # this appears to be able to be called at any time
@@ -1726,21 +1746,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             eventbus.emit(RequestStopAppEvent(self))
 
 
-    def _settings_menu_select_handler(self, item: str, idx: int):
-        if self._logging:
-            print(f"B:Setting {item} @ {idx}")
-        if idx == 0: #Default
-            if self._logging:
-                print("B:Settings Default All")
-            for s in self.settings:
-                self.settings[s].v = self.settings[s].d
-                self.settings[s].persist()
-            self.notification = Notification("Settings Defaulted")
-            self.set_menu()
-        elif self._settings_mgr is not None and self._settings_mgr.start(item):
-            self.current_state = STATE_SETTINGS
-
-
     def _menu_back_handler(self):
         if self.current_menu == "main":
             self._main_menu_position = self.menu.position if self.menu else 0
@@ -1748,9 +1753,10 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 print("B:Save Settings")
             platform_settings.save()         # Save settings before minimising
             self.minimise()
-        # for submenus, just return to the main menu
-        if self.current_menu == MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS]:
-            self.settings_menu_position = self.menu.position if self.menu else 0
+        if self._settings_mgr is not None and self._settings_mgr.handles_menu(self.current_menu):
+            self._settings_mgr.menu_back()
+            return
+        # for other submenus, just return to the main menu
         self.set_menu()
 
 
