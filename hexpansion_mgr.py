@@ -124,6 +124,7 @@ class HexpansionMgr:
         self._app = app
         self._logging: bool = logging
         self._mode: int = _MODE_INIT
+        self._saved_state: int = STATE_HEXPANSION
         self._sub_state: int = _SUB_INIT
         self._prev_state: int = _SUB_INIT
         self._port_selected: int = 0
@@ -345,6 +346,8 @@ class HexpansionMgr:
             # This flag is set when a hexpansion-related event occurs that should trigger an update of the hexpansion management state machine (e.g. insertion/removal of a hexpansion).
             if self._mode == _MODE_IDLE:
                 self._mode = _MODE_UPDATE
+                if app.current_state != STATE_HEXPANSION:
+                    self._saved_state = app.current_state
                 if self._logging:
                     print("B:Hexpansion update triggered by event")
                 self._sub_state = _SUB_CHECK
@@ -397,7 +400,11 @@ class HexpansionMgr:
             app.hexpansion_update_required = False
             self._message_being_shown = False
             app.initialise_settings()
-            app.return_to_menu()
+            if self._mode == _MODE_UPDATE and self._saved_state is not None:
+                app.current_state = self._saved_state
+                self._saved_state = None
+            else:
+                app.return_to_menu()
             self._mode = _MODE_IDLE
 
         return True
