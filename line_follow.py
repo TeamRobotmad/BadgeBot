@@ -129,40 +129,40 @@ def init_settings(s, MySetting: type):      #pylint: disable=invalid-name
     s['line_power']     = MySetting(
         s, _DEFAULT_FOLLOWER_POWER, _MIN_LINE_POWER, _MAX_LINE_POWER,
         group=group, order=20, title="Line power",
-        description="Sets motor power while following a line.")
+        description="Motor power while following a line")
     s['mid_hue']        = MySetting(
         s, _DEFAULT_MID_HUE, 0, 360, wrap=True,
         group=group, order=30, title="Mid hue",
-        description="Sets the line colour used as neutral steering.")
+        description="Line colour used as neutral steering")
     s['max_hue']        = MySetting(
         s, _DEFAULT_MAX_HUE, 0, 180,
         group=group, order=10, title="Hue range",
-        description="Sets the largest hue error accepted as the line.")
+        description="Largest hue error accepted as the line")
     s['pid_kp']         = MySetting(
         s, _DEFAULT_FOLLOWER_PID_KP, 0, 65536,
         group=group, order=60, title="PID Kp",
-        description="Sets proportional steering correction.")
+        description="Proportional steering gain")
     s['pid_ki']         = MySetting(
         s, _DEFAULT_FOLLOWER_PID_KI, 0, 65535,
         group=group, order=50, title="PID Ki",
-        description="Sets accumulated steering correction.")
+        description="Accumulated steering correction gain")
     s['pid_kd']         = MySetting(
         s, _DEFAULT_FOLLOWER_PID_KD, 0, 65535,
         group=group, order=40, title="PID Kd",
-        description="Sets steering response to rapid error changes.")
+        description="Steering response to error changes")
     s['min_range']      = MySetting(
         s, _DEFAULT_MIN_OBSTACLE_DISTANCE,
         _MIN_MIN_OBSTACLE_DISTANCE_MM, _MIN_MAX_OBSTACLE_DISTANCE_MM,
         group=group, order=90, title="Stop range",
-        description="Sets the obstacle distance in mm that stops driving.")
+        description="Distance to obstacle that stops driving (mm)")
     s['colour_stop']    = MySetting(
         s, _DEFAULT_COLOUR_STOP, 0, 9, labels=COLOUR_LIST,
         group=group, order=80, title="Stop colour",
-        description="Selects the colour that stops line following.")
+        description="Colour that stops line following")
     s['plot_type']      = MySetting(
         s, _PLOT_SELECTION_NONE, _PLOT_SELECTION_NONE, _PLOT_SELECTION_POWER,
         labels=_PLOT_SELECTION_LABELS, group=group, order=70, title="Plot",
-        description="Selects the live data shown on the follower display.")
+        description="Data shown on BLE Plot")
 
 
 # ---- Line Follower Manager -------------------------------------------------

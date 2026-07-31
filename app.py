@@ -408,45 +408,45 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             self.settings['brightness']    = MySetting(
                 self.settings, _BRIGHTNESS, 0.1, 1.0,
                 group=MySetting.GROUP_GENERAL, order=10, title="Brightness",
-                description="Sets the brightness used by BadgeBot effects.")
+                description="Brightness used by BadgeBot effects")
             self.settings['logging']       = MySetting(
                 self.settings, _DEFAULT_LOGGING, False, True,
                 group=MySetting.GROUP_GENERAL, order=20, title="Logging",
-                description="Prints diagnostic messages to the console.")
+                description="Prints diagnostic messages to the console")
             #self.settings['path']         = MySetting(self.settings, 0, 0, len(_FILE_DEST_LABELS) - 1, labels=_FILE_DEST_LABELS)
             # Motor/Drive Direction settings
             self.settings['acceleration']  = MySetting(
                 self.settings, DEFAULT_ACCELERATION, _MIN_ACCELERATION, _MAX_ACCELERATION,
                 group=MySetting.GROUP_MOTORS, order=10, title="Acceleration",
-                description="Limits how quickly motor power can change.")
+                description="Limits how quickly motor power can change")
             self.settings['max_power']     = MySetting(
                 self.settings, DEFAULT_MAX_POWER, _MIN_MAX_POWER, _MAX_MAX_POWER,
                 group=MySetting.GROUP_MOTORS, order=30, title="Max power",
-                description="Caps the output sent to both motors.")
+                description="Caps the output sent to motors")
             self.settings['mtr_deadband']  = MySetting(
                 self.settings, _DEFAULT_MOTOR_DEADBAND, 0, 127,
                 group=MySetting.GROUP_MOTORS, order=20, title="Deadband",
-                description="Ignores very small motor demands around zero.")
+                description="Ignores very small motor demands around zero")
             self.settings['mtr1_dir']      = MySetting(
                 self.settings, _DEFAULT_FWD_DIR, 0, 1, labels=_MOTOR_DIRECTION_LABELS,
                 group=MySetting.GROUP_MOTORS, order=40, title="M1 direction",
-                description="Selects normal or reversed output for motor 1.")
+                description="Normal or reversed output for motor 1")
             self.settings['mtr2_dir']      = MySetting(
                 self.settings, _DEFAULT_FWD_DIR, 0, 1, labels=_MOTOR_DIRECTION_LABELS,
                 group=MySetting.GROUP_MOTORS, order=41, title="M2 direction",
-                description="Selects normal or reversed output for motor 2.")
+                description="Normal or reversed output for motor 2")
             self.settings['mtr1_min']      = MySetting(
                 self.settings, _DEFAULT_MOTOR_MIN, 0, 127,
                 group=MySetting.GROUP_MOTORS, order=50, title="M1 minimum",
-                description="Sets the minimum output that starts motor 1.")
+                description="Minimum output that starts motor 1")
             self.settings['mtr2_min']      = MySetting(
                 self.settings, _DEFAULT_MOTOR_MIN, 0, 127,
                 group=MySetting.GROUP_MOTORS, order=51, title="M2 minimum",
-                description="Sets the minimum output that starts motor 2.")
+                description="Minimum output that starts motor 2")
             self.settings['front_face']    = MySetting(
                 self.settings, _DEFAULT_FRONT_FACE, 0, 11, labels=_FRONT_FACE_LABELS,
                 group=MySetting.GROUP_DRIVING, order=30, title="Front face",
-                description="Selects the badge edge treated as forward.")
+                description="Badge edge treated as forward")
 
             # Module-specific settings - only initialise modules which are NOT dependent on specific Hexpansion hardware here, as we want to be able to access settings in the HexpansionMgr before we have detected what hardware is present.  For Hexpansion-dependent modules, we will initialise their settings after we have scanned for hardware and know which modules we will be using.
             if _hexpansion_init_settings is not None:

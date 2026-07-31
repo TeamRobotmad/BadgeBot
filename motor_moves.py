@@ -167,15 +167,15 @@ def init_settings(s, MySetting: type):  #pylint: disable=invalid-name
     s['drive_step_ms'] = MySetting(
         s, _DEFAULT_USER_DRIVE_MS, _MIN_USER_DRIVE_MS, _MAX_USER_DRIVE_MS,
         group=MySetting.GROUP_DRIVING, order=20, title="Drive step",
-        description="Sets milliseconds per forward or reverse program step.")
+        description="Milliseconds per forward or reverse program step")
     s['turn_step_ms']  = MySetting(
         s, _DEFAULT_USER_TURN_MS, _MIN_USER_TURN_MS, _MAX_USER_TURN_MS,
         group=MySetting.GROUP_DRIVING, order=40, title="Turn step",
-        description="Sets milliseconds per left or right program step.")
+        description="Milliseconds per left or right program step")
     s['drive_mode']    = MySetting(
         s, _DEFAULT_DRIVE_MODE, DRIVE_MODE_TIME, DRIVE_MODE_DISTANCE,
         labels=_DRIVE_MODE_LABELS, group=MySetting.GROUP_DRIVING, order=10,
-        title="Drive mode", description="Selects time or distance drive control.")
+        title="Drive mode", description="Time or distance drive control")
 
 
 # ---- Motor Moves manager ---------------------------------------------------
