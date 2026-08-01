@@ -31,9 +31,19 @@ _MAX_SERVO_RANGE       = 1400
 
 def init_settings(s, MySetting):            #pylint: disable=invalid-name
     """Register servo-test-specific settings in the shared settings dict."""
-    s['servo_step']    = MySetting(s, _SERVO_DEFAULT_STEP, 1, 100)
-    s['servo_range']   = MySetting(s, _SERVO_DEFAULT_RANGE, 100, _MAX_SERVO_RANGE)
-    s['servo_period']  = MySetting(s, _SERVO_DEFAULT_PERIOD, 5, 50)
+    group = MySetting.GROUP_SERVOS
+    s['servo_step']    = MySetting(
+        s, _SERVO_DEFAULT_STEP, 1, 100,
+        group=group, order=30, title="Step size",
+        description="Sets the position adjustment step in microseconds.")
+    s['servo_range']   = MySetting(
+        s, _SERVO_DEFAULT_RANGE, 100, _MAX_SERVO_RANGE,
+        group=group, order=20, title="Servo range",
+        description="Limits servo travel around its centre in microseconds.")
+    s['servo_period']  = MySetting(
+        s, _SERVO_DEFAULT_PERIOD, 5, 50,
+        group=group, order=10, title="PWM period",
+        description="Sets the servo PWM period in milliseconds.")
 
 
 class ServoMode:

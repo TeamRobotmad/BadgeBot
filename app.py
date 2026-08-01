@@ -34,9 +34,8 @@ except ImportError:
 
 # If you could use hard=True in setting up a Pin IRQ hander, which you can't as of BadgeOS V1.10, then it is recommended to
 # allocate the emergency exception buffer to prevent crashes due to OSError: Out of memory when an interrupt occurs and
-# there is no memory available to handle the exception.
-#import micropython
-#micropython.alloc_emergency_exception_buf(100)
+# there is no memory available to handle the exception. Trying this to help with BLE crashes.
+micropython.alloc_emergency_exception_buf(1024)
 
 from .utils import draw_logo_animated, parse_version
 
@@ -45,6 +44,7 @@ HEXDRIVE2_APP_VERSION = 3
 
 SETTINGS_NAME_PREFIX = "badgebot"  # Prefix for settings keys in EEPROM
 APP_VERSION = "2.7" # BadgeBot App Version Number
+_BLUETOOTH_NAME_PREFIX = "BBot"  # Prefix for Bluetooth device name, followed by a 3-digit number from the unique ID
 
 # If you change the URL then you will need to regenerate the QR code
 # using the generate_qr_code.py script, and update the _QR_CODE constant below with the new code generated for your URL
@@ -98,12 +98,31 @@ _MAX_MAX_POWER         = const(65535) // MOTOR_POWER_SCALE_FACTOR
 
 _LONG_PRESS_MS = const(750)        # Time for long button press to register, in ms
 _RUN_COUNTDOWN_MS = const(5000)    # Time after running program until drive starts, in ms
+_WARNING_MESSAGE_TIMEOUT_MS = const(10000)  # Default auto-dismiss time for "warning" messages, in ms
+
+# Line-follower LED hue-history visualisation.
+# The 6 LEDs on each side of the ring show the colour-sensor hue over time, newest at
+# the two front-face LEDs and oldest at the rear.  Change _LED_HUE_HISTORY_SPAN_MS to
+# alter how far back in time the rear LEDs reach; the intermediate LEDs re-space
+# automatically.
+_HUE_CIRCLE = const(3600)                 # hue wrap point, in 0.1-degree units
+_LED_HUE_HISTORY_SPAN_MS = const(2000)    # time window from front (newest) to back (oldest) LED
+_LED_HUE_SAMPLE_INTERVAL_MS = const(20)   # history time-resolution: one buffer entry per this many ms
+_LED_HUE_SIDE_COUNT = const(6)            # LEDs per side (front-to-back)
+_LED_HUE_BUFFER_LEN = _LED_HUE_HISTORY_SPAN_MS // _LED_HUE_SAMPLE_INTERVAL_MS + 1
+# Per-side buffer look-back (in samples) for each LED front->back, recomputed if the
+# span / interval / side-count constants change (endpoints inclusive: 0 .. span).
+_LED_HUE_LED_OFFSETS = tuple(
+    round(i * _LED_HUE_HISTORY_SPAN_MS / (_LED_HUE_SIDE_COUNT - 1) / _LED_HUE_SAMPLE_INTERVAL_MS)
+    for i in range(_LED_HUE_SIDE_COUNT)
+)
+
 _AUTO_REPEAT_MS = const(200)       # Time between auto-repeats, in ms
 _AUTO_REPEAT_COUNT_THRES = const(10) # Number of auto-repeats before increasing level
 _AUTO_REPEAT_SPEED_LEVEL_MAX = const(4)  # Maximum level of auto-repeat speed increases
 _AUTO_REPEAT_LEVEL_MAX = const(3)  # Maximum level of auto-repeat digit increases
 DEFAULT_BACKGROUND_UPDATE_PERIOD = const(50)       # mS when not moving
-DEFAULT_ACTIVE_UPDATE_PERIOD     = const(10)       # mS when moving
+DEFAULT_ACTIVE_UPDATE_PERIOD     = const(20)       # mS when moving
 _NOTIFICATION_DISPLAY_DURATION   = const(1000 * 3) # 3 seconds (hard coded in BadgeOS)
 
 # App states
@@ -119,6 +138,21 @@ STATE_SENSOR = const(8)          # Sensor Test
 STATE_AUTODRIVE = const(9)       # Autonomous Drive
 STATE_HEXPANSION = const(10)     # Hexpansion Management (sub-states managed by HexpansionMgr)
 STATE_BLUETOOTH = const(11)      # Bluetooth Control (sub-states managed by BluetoothMgr)
+
+# Motor enable users: each caller that needs motor power owns one user id.
+# Motors are enabled if ANY user is enabled, disabled only when ALL are disabled.
+MOTOR_ENABLE_USER_BLE = const(0)
+MOTOR_ENABLE_USER_STATE = const(1)
+
+# Remote-control commands that can be posted by any comms transport (BLE now,
+# other transports in future) via post_remote_command() and are actioned from
+# update().  Keeping these transport-agnostic lets new input sources reuse them.
+REMOTE_CMD_LINE_FOLLOW_TOGGLE = const(1)     # enter Line Follower / toggle start-stop
+REMOTE_CMD_LINE_FOLLOW_DIRECTION = const(2)  # toggle Line Follower steering direction
+
+# States from which a remote command may switch the app into Line Follower.
+# Extend this tuple to permit remote activation from additional states.
+_REMOTE_LINE_FOLLOW_STATES = (STATE_BLUETOOTH, STATE_FOLLOWER, STATE_MENU)
 
 # App states where user can minimise app (Menu, Message, Logo)
 MINIMISE_VALID_STATES = [STATE_MENU, STATE_MESSAGE, STATE_LOGO]
@@ -201,6 +235,28 @@ def _clamp(value: int, lo: int, hi: int) -> int:
     if value > hi:
         return hi
     return value
+
+
+def _hue_to_rgb(hue: int) -> tuple:
+    """Convert a hue in 0.1-degree units (0-3600) to a full-saturation, full-value
+    RGB tuple (0-255 per channel)."""
+    if hue >= _HUE_CIRCLE:
+        hue %= _HUE_CIRCLE
+    sector = hue // 600                       # 0-5 (each 60 degrees == 600 units)
+    ramp = (hue - sector * 600) * 255 // 600  # 0-255 ramp within the sector
+    if sector == 0:
+        return (255, ramp, 0)
+    if sector == 1:
+        return (255 - ramp, 255, 0)
+    if sector == 2:
+        return (0, 255, ramp)
+    if sector == 3:
+        return (0, 255 - ramp, 255)
+    if sector == 4:
+        return (ramp, 0, 255)
+    return (255, 0, 255 - ramp)
+
+
 class BadgeBotApp(app.App):         # pylint: disable=no-member
     """Main application class for BadgeBot.  Manages overall state, user input, and delegates to functional area managers for specific features."""
     __slots__ = (
@@ -211,6 +267,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         "message_colours",
         "message_type",
         "message_return_state",
+        "message_timeout",
         "current_menu",
         "menu",
         "_main_menu_position",
@@ -268,8 +325,12 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         "_state_background_dispatch",
         "countdown_value",
         "_performance_mode",
-        "_ble",
         "_notification_end_time",
+        "_motor_enable_mask",
+        "_remote_commands",
+        "_hue_hist_buffer",
+        "_hue_hist_head",
+        "_hue_hist_accum",
     )
 
     DEFAULT_MAX_POWER = DEFAULT_MAX_POWER
@@ -306,6 +367,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.message_colours: list = []
         self.message_type: str | None = None
         self.message_return_state: int | None = None
+        self.message_timeout: int | None = None  # ms to auto-dismiss the message (None = wait for user)
         self.current_menu: str | None = None
         self.menu: Menu | None = None
         self._main_menu_position: int = 0
@@ -343,18 +405,48 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.settings: dict = {}
         if MySetting is not None:
             # General settings
-            self.settings['brightness']    = MySetting(self.settings, _BRIGHTNESS, 0.1, 1.0)
-            self.settings['logging']       = MySetting(self.settings, _DEFAULT_LOGGING, False, True)
+            self.settings['brightness']    = MySetting(
+                self.settings, _BRIGHTNESS, 0.1, 1.0,
+                group=MySetting.GROUP_GENERAL, order=10, title="Brightness",
+                description="Brightness used by BadgeBot effects")
+            self.settings['logging']       = MySetting(
+                self.settings, _DEFAULT_LOGGING, False, True,
+                group=MySetting.GROUP_GENERAL, order=20, title="Logging",
+                description="Prints diagnostic messages to the console")
             #self.settings['path']         = MySetting(self.settings, 0, 0, len(_FILE_DEST_LABELS) - 1, labels=_FILE_DEST_LABELS)
             # Motor/Drive Direction settings
-            self.settings['acceleration']  = MySetting(self.settings, DEFAULT_ACCELERATION,  _MIN_ACCELERATION,  _MAX_ACCELERATION)
-            self.settings['max_power']     = MySetting(self.settings, DEFAULT_MAX_POWER, _MIN_MAX_POWER, _MAX_MAX_POWER)
-            self.settings['mtr_deadband'] = MySetting(self.settings, _DEFAULT_MOTOR_DEADBAND, 0, 127)
-            self.settings['mtr1_dir']    = MySetting(self.settings, _DEFAULT_FWD_DIR, 0, 1, labels=_MOTOR_DIRECTION_LABELS)
-            self.settings['mtr2_dir']    = MySetting(self.settings, _DEFAULT_FWD_DIR, 0, 1, labels=_MOTOR_DIRECTION_LABELS)
-            self.settings['mtr1_min']    = MySetting(self.settings, _DEFAULT_MOTOR_MIN, 0, 127)
-            self.settings['mtr2_min']    = MySetting(self.settings, _DEFAULT_MOTOR_MIN, 0, 127)
-            self.settings['front_face']    = MySetting(self.settings, _DEFAULT_FRONT_FACE, 0, 11, labels=_FRONT_FACE_LABELS)
+            self.settings['acceleration']  = MySetting(
+                self.settings, DEFAULT_ACCELERATION, _MIN_ACCELERATION, _MAX_ACCELERATION,
+                group=MySetting.GROUP_MOTORS, order=10, title="Acceleration",
+                description="Limits how quickly motor power can change")
+            self.settings['max_power']     = MySetting(
+                self.settings, DEFAULT_MAX_POWER, _MIN_MAX_POWER, _MAX_MAX_POWER,
+                group=MySetting.GROUP_MOTORS, order=30, title="Max power",
+                description="Caps the output sent to motors")
+            self.settings['mtr_deadband']  = MySetting(
+                self.settings, _DEFAULT_MOTOR_DEADBAND, 0, 127,
+                group=MySetting.GROUP_MOTORS, order=20, title="Deadband",
+                description="Ignores very small motor demands around zero")
+            self.settings['mtr1_dir']      = MySetting(
+                self.settings, _DEFAULT_FWD_DIR, 0, 1, labels=_MOTOR_DIRECTION_LABELS,
+                group=MySetting.GROUP_MOTORS, order=40, title="M1 direction",
+                description="Normal or reversed output for motor 1")
+            self.settings['mtr2_dir']      = MySetting(
+                self.settings, _DEFAULT_FWD_DIR, 0, 1, labels=_MOTOR_DIRECTION_LABELS,
+                group=MySetting.GROUP_MOTORS, order=41, title="M2 direction",
+                description="Normal or reversed output for motor 2")
+            self.settings['mtr1_min']      = MySetting(
+                self.settings, _DEFAULT_MOTOR_MIN, 0, 127,
+                group=MySetting.GROUP_MOTORS, order=50, title="M1 minimum",
+                description="Minimum output that starts motor 1")
+            self.settings['mtr2_min']      = MySetting(
+                self.settings, _DEFAULT_MOTOR_MIN, 0, 127,
+                group=MySetting.GROUP_MOTORS, order=51, title="M2 minimum",
+                description="Minimum output that starts motor 2")
+            self.settings['front_face']    = MySetting(
+                self.settings, _DEFAULT_FRONT_FACE, 0, 11, labels=_FRONT_FACE_LABELS,
+                group=MySetting.GROUP_DRIVING, order=30, title="Front face",
+                description="Badge edge treated as forward")
 
             # Module-specific settings - only initialise modules which are NOT dependent on specific Hexpansion hardware here, as we want to be able to access settings in the HexpansionMgr before we have detected what hardware is present.  For Hexpansion-dependent modules, we will initialise their settings after we have scanned for hardware and know which modules we will be using.
             if _hexpansion_init_settings is not None:
@@ -471,6 +563,18 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
         # Bluetooth LE
         self._ble_override_active: bool = False
+        self._motor_enable_mask: int = 0
+
+        # Queue of pending remote-control commands (REMOTE_CMD_*) posted by comms
+        # transports (BLE now, others in future) and actioned from update().
+        self._remote_commands: list = []
+
+        # Line-follower LED hue history (ring buffer of pre-converted RGB tuples,
+        # newest at _hue_hist_head).  Fed via add_hue_sample() and painted onto the
+        # ring LEDs each frame while in line-follower mode.
+        self._hue_hist_buffer: list = [(0, 0, 0)] * _LED_HUE_BUFFER_LEN
+        self._hue_hist_head: int = 0
+        self._hue_hist_accum: int = 0
 
         # Hexpansion event handlers registered directly by hexpansion_mgr
         if self._hexpansion_mgr is not None:
@@ -484,7 +588,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         # We start with focus on launch, without an event emmited
         # This version is compatible with the simulator
         asyncio.get_event_loop().create_task(self._gain_focus(RequestForegroundPushEvent(self)))
-
 
 
         # Check what version of the Badge s/w we are running on
@@ -551,13 +654,21 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     @performance_mode.setter
     def performance_mode(self, value: bool):
         """Convenience property to set performance_mode setting."""
+        if value and 0 == self._performance_mode:
+            self.refresh = True  # force a refresh when we enter performance mode to ensure the screen is cleared
         self._performance_mode = 1 if value else 0
 
 
     @property
     def sensor_test_mgr(self):
-        """Public access to the SensorTestMgr, used by LineFollowMgr & AutoDriveMgr to share the sensor manager."""
+        """Public access to the SensorTestMgr, used by LineFollowMgr to access sensors that sensor_test_mgr manages."""
         return self._sensor_test_mgr
+
+
+    @property
+    def bluetooth_mgr(self):
+        """Public access to the BluetoothMgr, used by LineFollowMgr to send plotter data."""
+        return self._bluetooth_mgr
 
 
     @property
@@ -574,6 +685,142 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if self._logging:
             print(f"B:Setting update_period to {value} ms")
         self._update_period = value
+
+
+    def enable_motors(self, enable: bool, user: int) -> bool:
+        """Enable/disable motors for a specific user id.
+
+        Uses a bit-mask of user ownership flags:
+        - hardware turns on when ANY user is enabled
+        - hardware turns off when ALL users are disabled
+        """
+        if user < 0:
+            if self._logging:
+                print(f"B:Invalid motor user id {user}")
+            return False
+
+        bit = 1 << user
+        old_mask = self._motor_enable_mask
+        had_user_enabled = (old_mask & bit) != 0
+
+        # No state change requested for this user.
+        if had_user_enabled == enable:
+            return True
+
+        new_mask = (old_mask | bit) if enable else (old_mask & ~bit)
+        motors_were_enabled = old_mask != 0
+        motors_should_be_enabled = new_mask != 0
+
+        # Record the user-state change first; if hardware transition fails, roll back.
+        self._motor_enable_mask = new_mask
+
+        # If aggregate state did not change, no hardware transition is required.
+        if motors_were_enabled == motors_should_be_enabled:
+            return True
+
+        motor_hexdrive_app = self.hexdrive_apps[0] if len(self.hexdrive_apps) > 0 else None
+        if motor_hexdrive_app is None:
+            if self._logging:
+                print("B:No HexDrive app available for motors")
+            self._motor_enable_mask = 0
+            self.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD  # restore the default update period when motors are disabled
+            return False
+
+        if motors_should_be_enabled:
+            ok = (motor_hexdrive_app.initialise()
+                  and motor_hexdrive_app.set_power(True)
+                  and motor_hexdrive_app.set_freq(MOTOR_PWM_FREQ))
+            if ok:
+                motor_hexdrive_app.set_logging(self._logging)
+                if self._logging:
+                    print(f"B:Motors enabled (user={user}, mask={new_mask})")
+                self.update_period = DEFAULT_ACTIVE_UPDATE_PERIOD  # ensure we have a fast update period when motors are enabled
+                return True
+            self._motor_enable_mask = old_mask
+            if self._logging:
+                print(f"B:Failed to enable motors (user={user})")
+            return False
+
+        self.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD  # restore the default update period when motors are disabled
+        self._output1 = 0
+        self._output2 = 0
+        ok = motor_hexdrive_app.set_motors((0, 0)) and motor_hexdrive_app.set_power(False)
+        if ok:
+            if self._logging:
+                print(f"B:Motors disabled (user={user}, mask={new_mask})")
+            return True
+
+        self._motor_enable_mask = old_mask
+        if self._logging:
+            print(f"B:Failed to disable motors (user={user})")
+        return False
+
+
+
+    ### REMOTE CONTROL (transport-agnostic) ###
+
+    def post_remote_command(self, command: int):
+        """Queue a remote-control command (REMOTE_CMD_*) from an external comms
+        transport (e.g. BLE).  Commands are actioned from update() so all state
+        control stays owned by the app, regardless of the input source."""
+        self._remote_commands.append(command)
+
+
+    def _process_remote_commands(self):
+        """Action any queued remote-control commands.  Runs from update() on the
+        main loop, keeping state transitions in the app rather than in transports."""
+        while self._remote_commands:
+            command = self._remote_commands.pop(0)
+            if command == REMOTE_CMD_LINE_FOLLOW_TOGGLE:
+                self._remote_line_follow_toggle()
+            elif command == REMOTE_CMD_LINE_FOLLOW_DIRECTION:
+                self._remote_line_follow_direction()
+            elif self._logging:
+                print(f"B:Ignoring unknown remote command {command}")
+
+
+    def _remote_line_follow_toggle(self):
+        """Remote 'button 1': enter Line Follower from an allowed state, or toggle
+        start/stop (as per CONFIRM) when already in Line Follower."""
+        if self.current_state == STATE_FOLLOWER:
+            if self._line_follow_mgr is not None:
+                self._line_follow_mgr.toggle_movement()
+            return
+        if self.current_state in _REMOTE_LINE_FOLLOW_STATES:
+            if self._logging:
+                print("B:Remote activating Line Follower")
+            self.start_line_follow()
+        elif self._logging:
+            print(f"B:Remote Line Follower activation ignored in state {self.current_state}")
+
+
+    def _remote_line_follow_direction(self):
+        """Remote 'button 2': toggle Line Follower steering direction (as per LEFT),
+        only while Line Follower is the active feature."""
+        if self.current_state == STATE_FOLLOWER and self._line_follow_mgr is not None:
+            self._line_follow_mgr.toggle_direction()
+        elif self._logging:
+            print(f"B:Remote direction toggle ignored in state {self.current_state}")
+
+
+    def start_line_follow(self) -> bool:
+        """Enter the Line Follower state, checking for the required motor hardware.
+        Centralised so the menu and remote (BLE) control share one entry path.
+        Returns True if the Line Follower state was entered."""
+        if self.num_motors == 0:
+            self.notification = Notification("No Motors")
+            return False
+        if self.num_motors == 1:
+            self.notification = Notification("2 Motors Required")
+            return False
+        if self._line_follow_mgr is None:
+            return False
+        self._line_follow_mgr.logging = self._logging  # sync logging with current app setting
+        if self._line_follow_mgr.start():
+            self.current_state = STATE_FOLLOWER
+            return True
+        return False
+
 
 
     ### ASYNC EVENT HANDLERS ###
@@ -601,6 +848,9 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if event.app is self:
             if self.logging:
                 print(f"B:BadgeBot gained focus in state {self.current_state}")
+            # if Bluetooth is connected - enable motors while we have the focus
+            if self._bluetooth_mgr and self._bluetooth_mgr.is_connected:
+                self.enable_motors(True, MOTOR_ENABLE_USER_BLE)
             if self.current_state in _LED_CONTROL_STATES:
                 eventbus.emit(PatternDisable())
                 self.pattern_status = False
@@ -613,6 +863,9 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if event.app is self:
             if self.logging:
                 print(f"B:BadgeBot lost focus from state {self.current_state}")
+            # if Bluetooth is connected - disable motors while we don't have the focus
+            if self._bluetooth_mgr and self._bluetooth_mgr.is_connected:
+                self.enable_motors(False, MOTOR_ENABLE_USER_BLE)
             if not self.pattern_status:
                 eventbus.emit(PatternEnable())
                 self.pattern_status = True
@@ -660,8 +913,11 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         bg_fn = self._state_background_dispatch.get(self.current_state)
         output = bg_fn(delta) if bg_fn is not None else None
 
+        if self._bluetooth_mgr and self._bluetooth_mgr.is_active:
+            self._bluetooth_mgr.background_update(delta)
+
         if len(self.hexdrive_apps) > 0:
-            if self._bluetooth_mgr:
+            if self._bluetooth_mgr and self._bluetooth_mgr.is_connected:
                 # BLE direction buttons override the state's motor output while held,
                 # regardless of whether the current state produced any output.
                 ble_override = self._bluetooth_mgr.motor_override(self.max_power)
@@ -673,6 +929,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                         # ensure we stop the motors if we were previously overriding them with BLE and now there is no output from the current state
                         output = (0, 0)
                     self._ble_override_active = False
+            else:
+                self._ble_override_active = False
 
             if output is None and (self._output1 != 0 or self._output2 != 0):
                 # ensure we stop the motors if the current state has no output and the previous output was non-zero
@@ -832,7 +1090,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
     def update(self, delta: int):
         """Main update function called from the main loop. Handles state transitions, user input, and delegates to functional area managers."""
-        diagnostics_output(1, 1)
+        #diagnostics_output(1, 1)
 
         if self.notification:
             self.notification.update(delta)
@@ -860,14 +1118,23 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                     print(f"B:Notification active (remaining {self._notification_end_time} ms)")
                 self.refresh = True
 
-        # manage LED PatternEnable/Disable for all states
-        #self._pattern_management()
-
         # Update Hexpansion management if something 'hexpansion' related has changed
         if self.hexpansion_update_required:
             if self.current_state != STATE_HEXPANSION and self._hexpansion_mgr is not None:
                 # Trigger an update cycle for hexpansion_mgr even though it is not currently active
                 self._hexpansion_mgr.update(delta)
+
+        # if Bluetooth has been Activated, update it even if we are not in the Bluetooth state, to ensure that BLE events are processed and the connection is maintained.
+        if self._bluetooth_mgr is not None and self.current_state != STATE_BLUETOOTH and self._bluetooth_mgr.is_active:
+            self._bluetooth_mgr.update(delta)
+        if self._bluetooth_mgr is not None and (self.current_state == STATE_BLUETOOTH or self._bluetooth_mgr.is_active):
+            if not self.enable_motors(self._bluetooth_mgr.is_connected, MOTOR_ENABLE_USER_BLE):
+                if self._logging:
+                    print("B:Failed BLE motor en/disable update")
+
+        # Action any remote-control commands queued by comms transports (BLE now,
+        # others in future).  State changes happen here, in the app, not in the transport.
+        self._process_remote_commands()
 
         # Update the main application state (menus, countdowns, and delegating to functional area managers)
         self._update_main_application(delta)
@@ -882,27 +1149,24 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             self.refresh = True
 
         if self.current_state in _LED_CONTROL_STATES:
-            if self.current_state in [STATE_FOLLOWER]:
-                # For Line Follower, set LEDs based on the line sensor readings
-                # could be optimised to only update LEDs when sensor readings change, rather than every update cycle
-                # nothing while we try to optimise the sensor reading rate
-                pass
-            else:
-                if self.settings['brightness'].v < 1.0:
-                    # Scale brightness
-                    for i in range(1,13):
-                        colour = tildagonos.leds[i]
-                        tildagonos.leds[i] = (
-                            int(colour[0] * self.settings['brightness'].v),
-                            int(colour[1] * self.settings['brightness'].v),
-                            int(colour[2] * self.settings['brightness'].v),
-                        )
-                try:
-                    # saw this crash randomly - hence protected by try/except to prevent whole app crashing, and added logging to investigate further
-                    tildagonos.leds.write()
-                except OSError as e:
-                    print(f"Error writing to LEDs: {e}")
-        diagnostics_output(1, 0)
+            if self.current_state == STATE_FOLLOWER:
+                # For Line Follower, paint the ring LEDs from the colour-sensor hue history.
+                self._update_line_follow_leds(delta)
+            if self.settings['brightness'].v < 1.0:
+                # Scale brightness
+                for i in range(1,13):
+                    colour = tildagonos.leds[i]
+                    tildagonos.leds[i] = (
+                        int(colour[0] * self.settings['brightness'].v),
+                        int(colour[1] * self.settings['brightness'].v),
+                        int(colour[2] * self.settings['brightness'].v),
+                    )
+            try:
+                # saw this crash randomly - hence protected by try/except to prevent whole app crashing, and added logging to investigate further
+                tildagonos.leds.write()
+            except OSError as e:
+                print(f"Error writing to LEDs: {e}")
+        #diagnostics_output(1, 0)
 
 
 
@@ -923,7 +1187,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                         print("Menu is animating")
                     self.refresh = True
         elif self.button_states.get(BUTTON_TYPES["CANCEL"]) and self.current_state in MINIMISE_VALID_STATES:
-            if self.current_state == STATE_MESSAGE and self.message_type == None:
+            if self.current_state == STATE_MESSAGE and self.message_type is None:
                 # If we are in the menu, we want to return to the previous state, not minimise the app
                 self.return_to_menu()
                 return
@@ -959,40 +1223,39 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         ### End of Update ###
 
 
-    def _update_state_message(self, delta: int):      # pylint: disable=unused-argument
+    def _dismiss_message(self):
+        """Dismiss the current message and move on, honouring message_return_state
+        (or the main menu if none).  Shared by the OK button and the message timeout."""
+        if self.message_return_state is not None:
+            self.current_state = self.message_return_state
+        else:
+            # refresh the menu in case available options have changed
+            self.set_menu()
+            self.refresh = True
+            self.current_state = STATE_MENU
+        self.message = []
+        self.message_colours = []
+        self.message_type = None
+        self.message_return_state = None
+        self.message_timeout = None
+
+
+    def _update_state_message(self, delta: int):
         if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
+            self.button_states.clear()
             if self.message_type == "reboop":
-                self.button_states.clear()
                 # Reboot has been acknowledged by the user - unfortunately we can't actually reboot the badge from Python.
                 return # leave the message on screen.
-            elif self.message_return_state is not None:
-                self.button_states.clear()
-                self.current_state = self.message_return_state
-            else:
-                # Message has been acknowledged by the user - allow access to the menu
-                self.button_states.clear()
-                # refresh the menu in case available options have changed
-                self.set_menu()
-                self.refresh = True
-                self.current_state = STATE_MENU
-            self.message = []
-            self.message_colours = []
-            self.message_type = None
-            self.message_return_state = None
+            # Message has been acknowledged by the user
+            self._dismiss_message()
         else:
             # "CANCEL" button is handled in common for all MINIMISE_VALID_STATES so no custom code here
-            # Show the warning screen for 10 seconds
             self.animation_counter += delta
-            if self.message_type == "warning" and self.animation_counter > 10000:
-                # For Warnings, after 10 seconds show the logo
-                self.animation_counter = 0
-                self.current_state = STATE_LOGO
-                self.message = []
-                self.message_colours = []
-                self.message_type = None
-                self.message_return_state = None
-                self.refresh = True
-            elif self.current_state == STATE_LOGO:
+            if self.message_timeout is not None and self.animation_counter >= self.message_timeout:
+                # Auto-dismiss once the timeout expires, exactly as if OK had been pressed.
+                self._dismiss_message()
+                return
+            if self.current_state == STATE_LOGO:
                 # LED management - to match rotating logo:
                 for i in range(1,13):
                     colour = (255, 241, 0)      # custom Robotmad shade of yellow
@@ -1010,6 +1273,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                     tildagonos.leds[i] = (255,0,0) if self.message_type == "error" else (0,255,0)
 
 
+
     def _update_state_countdown(self, delta: int):
         self.clear_leds()
         self.run_countdown_elapsed_ms += delta
@@ -1018,10 +1282,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 # Motor Moves: delegate to begin_moves
                 self.current_state = self.countdown_next_state
                 if self._motor_moves_mgr is not None:
-                    self._motor_moves_mgr.begin_moves()
-                else:
-                    self.return_to_menu()
-            else:
+                    if self._motor_moves_mgr.begin_moves():
+                        return
                 # Generic fallback
                 self.return_to_menu()
         else:
@@ -1059,79 +1321,77 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         """Set the colour of the ring drawn around the edge of the display.
            Pass an (r, g, b) tuple (each 0.0-1.0) to show a coloured ring, or None to stop showing the ring (the default).
            Setting a colour flags a ring refresh so the ring is rendered on the next draw regardless of whether a full display refresh is required."""
-        self._ring_colour = colour
-        self._ring_refresh = True
+        if colour != self._ring_colour:
+            self._ring_colour = colour
+            self._ring_refresh = True
 
 
     def draw(self, ctx):
         """Main draw function called from the main loop. Handles drawing the current state, including any notifications."""
-        if 2 == self._performance_mode:
-            # drawing the screen takes a VERY long time - so when trying to run robot control algorithms as fast as possible we skip drawing the screen to avoid stalling the background updates
-            return
 
         # diagnostics output for measuring draw time on a scope - pin 2 is high while draw() is running, low when it is finished
         diagnostics_output(2, 1)
 
-        if 1 == self._performance_mode or self.refresh:
-            # Clear the Screen
+        if 2 != self._performance_mode and self.refresh:
+            # Clear the Screen - before drawing on it
             clear_background(ctx)
 
-        if 1 == self._performance_mode:
-            # Now the Screen is cleared, we can switch to performance mode, which will skip drawing the screen in future frames until a refresh is required.
-            self._performance_mode = 2
+        if 2 == self._performance_mode:
+            # Drawing the screen takes a VERY long time - so when trying to run robot control algorithms as fast as possible
+            # we skip drawing the screen to avoid stalling the background updates
             diagnostics_output(2, 0)
             return
+        elif 1 == self._performance_mode:
+            # Allow this refresh cycle then stop updating the screen
+            self._performance_mode = 2
+
+        if self._ring_refresh or self.refresh:
+            if self._ring_colour is not None and 0 == self._performance_mode:
+                self._ring_refresh = False
+                # The ring can be updated without redrawing the entire display
+                # Draw an 8-pixel colour ring around the edge of the display
+                ctx.line_width = 8
+                ctx.rgb(*self._ring_colour).arc(0, 0, 116, 0, pi * 2, 0).stroke()
 
         if self.current_state == STATE_MENU and self.menu is not None:
             # These need to be drawn every frame as they contain animations
             self.menu.draw(ctx)
-        else:
-            if self._ring_refresh or self.refresh:
-                if self._ring_colour is not None:
-                    self._ring_refresh = False
-                    # The ring can be updated without redrawing the entire display
-                    # Draw an 8-pixel colour ring around the edge of the display
-                    ctx.line_width = 8
-                    ctx.rgb(*self._ring_colour).arc(0, 0, 116, 0, pi * 2, 0).stroke()
+        elif self.refresh:
+            self.refresh = False
 
-            if self.refresh:
-                self.refresh = False
+            #ctx.save()
+            #if in a mode where rotated display is desirable:
+            #    ctx.rotate(self.front_face * 2.0 * pi / _FRONT_FACE_NUM_ORIENTATIONS)  # Rotate the entire display based on the front_face setting, so that "forward" is always at the top of the display regardless of how the badge is oriented
+            ctx.font_size = label_font_size
+            ctx.text_align = ctx.LEFT
+            ctx.text_baseline = ctx.BOTTOM
 
-                #ctx.save()
-                #if in a mode where rotated display is desirable:
-                #    ctx.rotate(self.front_face * 2.0 * pi / _FRONT_FACE_NUM_ORIENTATIONS)  # Rotate the entire display based on the front_face setting, so that "forward" is always at the top of the display regardless of how the badge is oriented
-                ctx.font_size = label_font_size
-                if ctx.text_align != ctx.LEFT:
-                    # See https://github.com/emfcamp/badge-2024-software/issues/181
-                    ctx.text_align = ctx.LEFT
-                ctx.text_baseline = ctx.BOTTOM
+            if self.current_state == STATE_LOGO:
+                draw_logo_animated(ctx, self.rpm, self.animation_counter, [self.b_msg, self.t_msg], self.qr_code)
+            elif self.scroll_mode_enabled and self.is_scroll and self._performance_mode != 2:
+                # Scroll mode indicator border
+                ctx.rgb(0,0.2,0).rectangle(     -120,-120, 115+H_START,240).fill()
+                ctx.rgb(0,0  ,0).rectangle(H_START-5,-120,10-2*H_START,240).fill()
+                ctx.rgb(0,0.2,0).rectangle(5-H_START,-120, 115+H_START,240).fill()
+            #else:
+            #    ctx.rgb(0,0,0).rectangle(-120,-120,240,240).fill()
 
-                if self.current_state == STATE_LOGO:
-                    draw_logo_animated(ctx, self.rpm, self.animation_counter, [self.b_msg, self.t_msg], self.qr_code)
-                elif self.scroll_mode_enabled and self.is_scroll:
-                    # Scroll mode indicator border
-                    ctx.rgb(0,0.2,0).rectangle(     -120,-120, 115+H_START,240).fill()
-                    ctx.rgb(0,0  ,0).rectangle(H_START-5,-120,10-2*H_START,240).fill()
-                    ctx.rgb(0,0.2,0).rectangle(5-H_START,-120, 115+H_START,240).fill()
-                #else:
-                #    ctx.rgb(0,0,0).rectangle(-120,-120,240,240).fill()
-
-                # Common states for messages and errors, which can be triggered by any functional area manager and are displayed in a consistent way
-                if self.current_state == STATE_MESSAGE:
-                    if self.message_colours == []:
-                        self.message_colours = [(1,0,0)]*len(self.message)
-                    self.draw_message(ctx, self.message, self.message_colours, label_font_size if len(self.message) <= 5 else small_font_size)
-                    if self.message_type is None or self.message_type == "warning":
-                        button_labels(ctx, confirm_label="OK", cancel_label="Exit")
-                elif self.current_state == STATE_COUNTDOWN:
-                    self.draw_message(ctx, [str(self.countdown_value)], [(1,1,0)], twentyfour_pt)
-                else:
-                    # Delegate to functional area managers via dispatch table
-                    if self.current_state in self._state_draw_dispatch:
-                        draw_fn = self._state_draw_dispatch.get(self.current_state)
-                        if draw_fn is not None:
-                            draw_fn(ctx)
-                #ctx.restore()
+            # Common states for messages and errors, which can be triggered by any functional area manager and are displayed in a consistent way
+            if self.current_state == STATE_MESSAGE:
+                if self.message_colours == []:
+                    self.message_colours = [(1,0,0)]*len(self.message)
+                self.draw_message(ctx, self.message, self.message_colours, label_font_size if len(self.message) <= 5 else small_font_size)
+                if self.message_type is None or self.message_type == "warning":
+                    button_labels(ctx, confirm_label="OK", cancel_label="Exit")
+            elif self.current_state == STATE_COUNTDOWN:
+                self.draw_message(ctx, [str(self.countdown_value)], [(1,1,0)], twentyfour_pt)
+            else:
+                # Delegate to functional area managers via dispatch table
+                if self.current_state in self._state_draw_dispatch:
+                    draw_fn = self._state_draw_dispatch.get(self.current_state)
+                    if draw_fn is not None:
+                        draw_fn(ctx)
+            #ctx.restore()
 
         # Notifications are drawn on top of everything else, so that they are visible regardless of the current state.
         # They also contain animations, so need to be drawn every frame when active.
@@ -1208,6 +1468,79 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         tildagonos.leds[led_b] = colour
 
 
+    def reset_hue_history(self) -> None:
+        """Clear the line-follower LED hue history to all-black.  Called when line
+        following starts so old colours do not linger on the ring."""
+        buf = self._hue_hist_buffer
+        for i in range(_LED_HUE_BUFFER_LEN):
+            buf[i] = (0, 0, 0)
+        self._hue_hist_head = 0
+        self._hue_hist_accum = 0
+
+
+    def add_hue_sample(self, hue) -> None:
+        """Push one hue sample into the line-follower LED history ring buffer.
+        'hue' is in 0.1-degree units (0-3600); pass None (or a negative value) for
+        'no line', stored as black.  The colour is pre-converted to a full-saturation,
+        full-value RGB tuple so per-frame painting stays cheap.  This is the single
+        input point for the buffer and can be fed from any hue source."""
+        if hue is None or hue < 0:
+            colour = (0, 0, 0)
+        else:
+            colour = _hue_to_rgb(hue)
+        head = self._hue_hist_head + 1
+        if head >= _LED_HUE_BUFFER_LEN:
+            head = 0
+        self._hue_hist_buffer[head] = colour
+        self._hue_hist_head = head
+
+
+    def _update_line_follow_leds(self, delta: int) -> None:
+        """Advance the hue history by the real elapsed time (delta-accumulated, so the
+        displayed time window is independent of frame rate) using the current line
+        follower hue, then paint the ring LEDs from the buffer."""
+        mgr = self._line_follow_mgr
+        hue = mgr.current_led_hue() if mgr is not None else None
+        self._hue_hist_accum += delta
+        count = 0
+        while self._hue_hist_accum >= _LED_HUE_SAMPLE_INTERVAL_MS:
+            self._hue_hist_accum -= _LED_HUE_SAMPLE_INTERVAL_MS
+            self.add_hue_sample(hue)
+            count += 1
+            if count >= _LED_HUE_BUFFER_LEN:
+                # Long stall: the buffer is now entirely this sample; drop any backlog.
+                self._hue_hist_accum = 0
+                break
+        self._paint_hue_history_leds()
+
+
+    def _paint_hue_history_leds(self) -> None:
+        """Paint the 12 ring LEDs from the hue history: both sides mirror the same
+        history with the newest sample on the two front-face LEDs (chosen from
+        'front_face') and progressively older samples toward the rear."""
+        f = self._front_face
+        pos = f % 12
+        led_a = pos if pos > 0 else 12   # left front LED (1-12)
+        led_b = pos + 1                  # right front LED (1-12)
+        buf = self._hue_hist_buffer
+        head = self._hue_hist_head
+        leds = tildagonos.leds
+        offsets = _LED_HUE_LED_OFFSETS
+        for i in range(_LED_HUE_SIDE_COUNT):
+            idx = head - offsets[i]
+            if idx < 0:
+                idx += _LED_HUE_BUFFER_LEN
+            colour = buf[idx]
+            left = led_a - i
+            if left < 1:
+                left += 12
+            right = led_b + i
+            if right > 12:
+                right -= 12
+            leds[left] = colour
+            leds[right] = colour
+
+
     @staticmethod
     def draw_message(ctx, message, colours, size=label_font_size):
         """Utility function to draw a multi-line message on the screen, with optional colour for each line. The message is centred on the screen, and the y-position of each line is adjusted based on the total number of lines to ensure it is visually balanced."""
@@ -1235,15 +1568,19 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             print("Returning to menu")
         if menu_name is not None:
             self.set_menu(menu_name)
-        self.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
+        if self._motor_enable_mask == 0:
+            self.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
         self.current_state = STATE_MENU
         self.refresh = True
         self.update_settings()
         self.fast_settings_update()
 
 
-    def show_message(self, msg_content, msg_colours, msg_type = None, return_state: int | None = None):
-        """Utility function to set the current state to the message display, and populate the message content and colours. The message_type can be used to indicate whether this is an 'error' (red) or 'warning' (green) message, which can affect both the display and the behaviour when the user acknowledges the message."""
+    def show_message(self, msg_content, msg_colours, msg_type = None, return_state: int | None = None, timeout: int | None = None):
+        """Utility function to set the current state to the message display, and populate the message content and colours. The message_type can be used to indicate whether this is an 'error' (red) or 'warning' (green) message, which can affect both the display and the behaviour when the user acknowledges the message.
+        timeout (ms) optionally auto-dismisses the message (as if OK were pressed) after the given time; None waits for the user.  "warning" messages default to a 10s auto-dismiss when no explicit timeout is given."""
+        if timeout is None and msg_type == "warning":
+            timeout = _WARNING_MESSAGE_TIMEOUT_MS
         if self._logging:
             print(f"Showing message: '{msg_content}' with type {msg_type}")
         self.animation_counter = 0
@@ -1251,6 +1588,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.message_colours = msg_colours
         self.message_type = msg_type
         self.message_return_state = return_state
+        self.message_timeout = timeout
         self.current_state = STATE_MESSAGE
         self.refresh = True
 
@@ -1333,18 +1671,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                     back_handler=self._menu_back_handler,
                     position=self._main_menu_position,
                 )
-        elif menu_name == MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS] and self._settings_mgr is not None: # "Settings"
-            # construct the settings menu
-            _settings_menu_items = ["Default All"]
-            for _, setting in enumerate(self.settings):
-                _settings_menu_items.append(f"{setting}")
-            self.menu = Menu(
-                self,
-                _settings_menu_items,
-                select_handler=self._settings_menu_select_handler,
-                back_handler=self._menu_back_handler,
-                position=self.settings_menu_position,
-                )
+        elif self._settings_mgr is not None and self._settings_mgr.handles_menu(menu_name):
+            self.menu = self._settings_mgr.build_menu(menu_name)
 
 
     # this appears to be able to be called at any time
@@ -1359,22 +1687,14 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 # Name is limited to 8 characters, so we use "BBot" & a three digit decimal number from the unique ID, which is a 32-bit number, so we take the last three digits of the unique ID modulo 1000
                 uniqueid = self._hexpansion_mgr.get_active_hexdrive_unique_id()
                 if uniqueid is not None:
-                    name = f"BBot{uniqueid % 1000:03d}"
+                    name = f"{_BLUETOOTH_NAME_PREFIX}{uniqueid % 1000:03d}"
                 else:
                     name = None
                 if self._bluetooth_mgr.start(name = name):
                     self.current_state = STATE_BLUETOOTH
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_LINE_FOLLOWER]: # Line Follower
-            # Check for required hardware and show message if not present, otherwise start the line follower manager and switch to follower state
-            if self.num_motors == 0:
-                self.notification = Notification("No Motors")
-            elif self.num_motors == 1:
-                self.notification = Notification("2 Motors Required")
-            else:
-                if self._line_follow_mgr is not None:
-                    self._line_follow_mgr.logging = self._logging # update logging setting in line follow manager based on current app setting, in case it was changed
-                    if self._line_follow_mgr.start():
-                        self.current_state = STATE_FOLLOWER
+            # Check for required hardware and switch to follower state (shared with remote control)
+            self.start_line_follow()
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_MOTOR_MOVES]: # Motor Moves
             # Check for required hardware and show message if not present, otherwise start the motor moves manager and switch to motor moves state
             if self.num_motors == 0:
@@ -1426,21 +1746,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             eventbus.emit(RequestStopAppEvent(self))
 
 
-    def _settings_menu_select_handler(self, item: str, idx: int):
-        if self._logging:
-            print(f"B:Setting {item} @ {idx}")
-        if idx == 0: #Default
-            if self._logging:
-                print("B:Settings Default All")
-            for s in self.settings:
-                self.settings[s].v = self.settings[s].d
-                self.settings[s].persist()
-            self.notification = Notification("Settings Defaulted")
-            self.set_menu()
-        elif self._settings_mgr is not None and self._settings_mgr.start(item):
-            self.current_state = STATE_SETTINGS
-
-
     def _menu_back_handler(self):
         if self.current_menu == "main":
             self._main_menu_position = self.menu.position if self.menu else 0
@@ -1448,9 +1753,10 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 print("B:Save Settings")
             platform_settings.save()         # Save settings before minimising
             self.minimise()
-        # for submenus, just return to the main menu
-        if self.current_menu == MAIN_MENU_ITEMS[MENU_ITEM_SETTINGS]:
-            self.settings_menu_position = self.menu.position if self.menu else 0
+        if self._settings_mgr is not None and self._settings_mgr.handles_menu(self.current_menu):
+            self._settings_mgr.menu_back()
+            return
+        # for other submenus, just return to the main menu
         self.set_menu()
 
 

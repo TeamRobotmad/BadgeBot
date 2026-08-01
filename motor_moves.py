@@ -25,7 +25,7 @@ from events.input import BUTTON_TYPES, Button
 from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
 from .utils import chain
-from .app import (STATE_COUNTDOWN, STATE_MOTOR_MOVES, STATE_LOGO, DEFAULT_BACKGROUND_UPDATE_PERIOD, DEFAULT_ACTIVE_UPDATE_PERIOD, MOTOR_PWM_FREQ)
+from .app import (STATE_COUNTDOWN, STATE_MOTOR_MOVES, STATE_LOGO, DEFAULT_ACTIVE_UPDATE_PERIOD, MOTOR_ENABLE_USER_STATE)
 
 try:
     from micropython import const
@@ -71,6 +71,9 @@ _SUB_DONE          = const(3)
 class Instruction:
     """Represents a single movement instruction, consisting of a direction (button press) and duration (number of ticks).
     Also contains the power plan for this instruction, which is a list of (power_tuple)"""
+
+    __slots__ = "_app", "_press_type", "_duration", "power_plan"
+
     def __init__(self, app, press_type: Button) -> None:
         self._app = app
         self._press_type = press_type
@@ -161,9 +164,18 @@ class Instruction:
 
 def init_settings(s, MySetting: type):  #pylint: disable=invalid-name
     """Register motor-moves-specific settings in the shared settings dict."""
-    s['drive_step_ms'] = MySetting(s, _DEFAULT_USER_DRIVE_MS, _MIN_USER_DRIVE_MS, _MAX_USER_DRIVE_MS)
-    s['turn_step_ms']  = MySetting(s, _DEFAULT_USER_TURN_MS,  _MIN_USER_TURN_MS,  _MAX_USER_TURN_MS)
-    s['drive_mode']    = MySetting(s, _DEFAULT_DRIVE_MODE, DRIVE_MODE_TIME, DRIVE_MODE_DISTANCE, labels=_DRIVE_MODE_LABELS)
+    s['drive_step_ms'] = MySetting(
+        s, _DEFAULT_USER_DRIVE_MS, _MIN_USER_DRIVE_MS, _MAX_USER_DRIVE_MS,
+        group=MySetting.GROUP_DRIVING, order=20, title="Drive step",
+        description="Milliseconds per forward or reverse program step")
+    s['turn_step_ms']  = MySetting(
+        s, _DEFAULT_USER_TURN_MS, _MIN_USER_TURN_MS, _MAX_USER_TURN_MS,
+        group=MySetting.GROUP_DRIVING, order=40, title="Turn step",
+        description="Milliseconds per left or right program step")
+    s['drive_mode']    = MySetting(
+        s, _DEFAULT_DRIVE_MODE, DRIVE_MODE_TIME, DRIVE_MODE_DISTANCE,
+        labels=_DRIVE_MODE_LABELS, group=MySetting.GROUP_DRIVING, order=10,
+        title="Drive mode", description="Time or distance drive control")
 
 
 # ---- Motor Moves manager ---------------------------------------------------
@@ -176,6 +188,7 @@ class MotorMovesMgr:
     app : BadgeBotApp
         Reference to the main application instance.
     """
+    __slots__ = "_app", "_logging", "_sub_state", "_prev_state", "instructions", "current_instruction", "current_power_duration", "power_plan_iter", "long_press_delta", "_mc_task"
 
     def __init__(self, app, logging: bool = False):
         self._app = app
@@ -235,7 +248,7 @@ class MotorMovesMgr:
     # begin_moves – called after countdown to start execution
     # ------------------------------------------------------------------
 
-    def begin_moves(self):
+    def begin_moves(self) -> bool:
         """Build the power plan and start running (called after countdown).
         When a MotorController is available, uses it for IMU-aided execution."""
         app = self._app
@@ -250,18 +263,13 @@ class MotorMovesMgr:
             self.power_plan_iter = chain(*(instr.power_plan for instr in self.instructions))
             if self.logging:
                 print(f"M:Beginning motor moves with power plan iterator based on {len(self.instructions)} instructions")
-            if 0 < len(app.hexdrive_apps):
-                if app.hexdrive_apps[0].initialise() and app.hexdrive_apps[0].set_power(True) and app.hexdrive_apps[0].set_freq(MOTOR_PWM_FREQ):
-                    app.hexdrive_apps[0].set_logging(False)
-                else:
-                    if self.logging:
-                        print("H:Failed to initialise HexDrive for motor moves")
-                    app.notification = Notification("HexDrive Init Failed")
-                    self._sub_state = _SUB_DONE
-                    return
+            if not app.enable_motors(True, MOTOR_ENABLE_USER_STATE):
+                if self._logging:
+                    print("Failed to enable motors for Motor Moves")
+                return False
         self._sub_state = _SUB_RUN
-        app.update_period = DEFAULT_ACTIVE_UPDATE_PERIOD
         app.refresh = True
+        return True
 
 
     async def _run_instructions_async(self):
@@ -315,7 +323,6 @@ class MotorMovesMgr:
         #    if self._mc_task.done():
         #        self.reset_robot()
         #        self._sub_state = _SUB_DONE
-        #        self._app.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
         #    return None  # MotorController manages motors directly
         #else:
         # Legacy power-plan path
@@ -324,7 +331,6 @@ class MotorMovesMgr:
             output = self._get_current_power_level(delta)
         else:
             output = None
-            self._app.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
         return output
 
 
@@ -336,6 +342,7 @@ class MotorMovesMgr:
         app = self._app
         if app.button_states.get(BUTTON_TYPES["CANCEL"]):
             app.button_states.clear()
+            app.enable_motors(False, MOTOR_ENABLE_USER_STATE)
             app.return_to_menu()
         elif app.button_states.get(BUTTON_TYPES["CONFIRM"]):
             app.button_states.clear()
@@ -487,10 +494,7 @@ class MotorMovesMgr:
         app.refresh = True
         if self.logging:
             print("Robot reset")
-        if len(app.hexdrive_apps) > 0:
-            hexdrive_app = app.hexdrive_apps[0]
-            hexdrive_app.set_motors((0, 0))
-            hexdrive_app.set_power(False)
+        app.enable_motors(False, MOTOR_ENABLE_USER_STATE)
 
     def reset_instructions(self):
         """Reset the instruction list and related state."""

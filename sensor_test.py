@@ -18,7 +18,7 @@ from app_components.notification import Notification
 import settings as platform_settings
 import micropython
 
-from .app import (SETTINGS_NAME_PREFIX, DEFAULT_BACKGROUND_UPDATE_PERIOD)
+from .app import SETTINGS_NAME_PREFIX
 #from .diagnostics import output as diagnostics_output
 
 try:
@@ -46,7 +46,6 @@ except ImportError:
         _ = _state
         return None
 
-
 try:
     from micropython import const
 except ImportError:
@@ -65,16 +64,30 @@ def _sleep_ms(delay_ms: int) -> None:
 
 _SENSOR_COLOUR = "Colour"
 _SENSOR_RANGE  = "Range"
+
 _COLOUR_BLACK  = "Black"
 _COLOUR_WHITE  = "White"
+_COLOUR_GREY   = "Grey"
 _COLOUR_RED    = "Red"
-_COLOUR_GREEN  = "Green"
-_COLOUR_BLUE   = "Blue"
-_COLOUR_YELLOW = "Yellow"
-_COLOUR_CYAN   = "Cyan"
-_COLOUR_MAGENTA= "Magenta"
 _COLOUR_ORANGE = "Orange"
-_COLOUR_GRAY   = "Gray"
+_COLOUR_YELLOW = "Yellow"
+_COLOUR_GREEN  = "Green"
+_COLOUR_CYAN   = "Cyan"
+_COLOUR_BLUE   = "Blue"
+_COLOUR_MAGENTA= "Magenta"
+
+COLOUR_LIST = [
+    _COLOUR_BLACK,
+    _COLOUR_WHITE,
+    _COLOUR_GREY,
+    _COLOUR_RED,
+    _COLOUR_ORANGE,
+    _COLOUR_YELLOW,
+    _COLOUR_GREEN,
+    _COLOUR_CYAN,
+    _COLOUR_BLUE,
+    _COLOUR_MAGENTA,
+]
 
 # Constants
 _SLOTS = const(6)
@@ -111,10 +124,10 @@ class SensorEntry:
 _COLOUR_CALIBRATION_PREFIX = "stc"
 
 # Colour Test Cards
-_COLOUR_TEST_CARDS = [_COLOUR_BLACK, _COLOUR_WHITE, _COLOUR_RED, _COLOUR_GREEN, _COLOUR_BLUE, _COLOUR_YELLOW, _COLOUR_CYAN, _COLOUR_MAGENTA, _COLOUR_ORANGE, _COLOUR_GRAY]
+_COLOUR_TEST_CARDS = [_COLOUR_BLACK, _COLOUR_WHITE, _COLOUR_RED, _COLOUR_GREEN, _COLOUR_BLUE, _COLOUR_YELLOW, _COLOUR_CYAN, _COLOUR_MAGENTA, _COLOUR_ORANGE, _COLOUR_GREY]
 
 # RGB float tuples (0.0-1.0) for each named colour, used for the ring and text colouring.
-# "Orange" and "Gray" are included as lookup_colour_RGB can return them.
+# "Orange" and "Grey" are included as lookup_colour_RGB can return them.
 _COLOUR_CARD_RGB = {
     _COLOUR_BLACK:   (0.0,  0.0,  0.0),
     _COLOUR_WHITE:   (1.0,  1.0,  1.0),
@@ -125,7 +138,7 @@ _COLOUR_CARD_RGB = {
     _COLOUR_CYAN:    (0.0,  1.0,  1.0),
     _COLOUR_MAGENTA: (1.0,  0.0,  1.0),
     _COLOUR_ORANGE:  (1.0,  0.5,  0.0),
-    _COLOUR_GRAY:    (0.5,  0.5,  0.5),
+    _COLOUR_GREY:    (0.5,  0.5,  0.5),
 }
 
 
@@ -148,7 +161,7 @@ class SensorTestMgr:
     __slots__ = ("_app", "_sub_state", "_last_sub_state", "_port_selected", "_new_sample", "_use_events", "_update_timer",
                  "_min_update_period_ms", "_hexdrive_app", "_sensor_selected", "_sensor_type", "_sensor_name",
                  "_display_data", "_page_selected", "_page_count", "_test_card", "_logging", "_draw_stats",
-                 "_last_range", "_last_colour", "_last_colour_name", "_last_colour_hue", "_display_colour", "range_sensor_stats",
+                 "_last_range", "_last_colour", "_last_colour_name", "_last_colour_hue", "_last_colour_saturation", "_display_colour", "range_sensor_stats",
                  "colour_sensor_stats", "_range_sensor", "_colour_sensor", "_sensor_list",
                  "_last_colour_sequence", "_last_range_sequence")
 
@@ -179,6 +192,7 @@ class SensorTestMgr:
         self._last_colour: tuple[int, int, int, int] | None = None
         self._last_colour_name: str = "unknown"
         self._last_colour_hue: int = 0
+        self._last_colour_saturation: int = 0
         self._display_colour: tuple[float, float, float] = (1.0, 1.0, 0.0)  # default to yellow for non-colour sensors
         self.range_sensor_stats = SensorStats(_SENSOR_RANGE)
         self.colour_sensor_stats = SensorStats(_SENSOR_COLOUR)
@@ -245,8 +259,9 @@ class SensorTestMgr:
         self._last_colour = None
         self._last_colour_name = "unknown"
         self._last_colour_hue = 0
+        self._last_colour_saturation = 0
         self._last_range = None
-        self.colour = (1.0, 1.0, 0.0)  # reset to yellow when starting sensor test
+        #self.colour = (1.0, 1.0, 0.0)  # reset to yellow when starting sensor test
         self._new_sample = False
         self._update_timer = self._min_update_period_ms # so that the first reading is displayed immediately
 
@@ -315,7 +330,7 @@ class SensorTestMgr:
             return
         self._display_data = {}
         self._update_timer = self._min_update_period_ms
-        self.colour = (1.0, 1.0, 0.0)  # reset to yellow when switching sensors
+        #self.colour = (1.0, 1.0, 0.0)  # reset to yellow when switching sensors
         # Which Sensor is selected
         selected_sensor = self._sensor_list[self._sensor_selected]
         self._sensor_type = selected_sensor.sensor_type
@@ -387,7 +402,6 @@ class SensorTestMgr:
                 print("Exiting Sensor Test")
             self._disable_sensors()
             self._hexdrive_app = None
-            app.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD
             app.return_to_menu()
 
 
@@ -549,7 +563,7 @@ class SensorTestMgr:
         return self.active_colour_hexdrive() is not None
 
 
-    def apply_colour_calibration(self, hexdrive_app) -> bool:
+    def apply_colour_calibration(self, hexdrive_app, force: bool = False) -> bool:
         """Load persisted colour calibration into the sensor when required.
         Returns True if the sensor is calibrated (or calibration is not applicable),
         or False if the sensor still needs the user to perform calibration."""
@@ -568,25 +582,25 @@ class SensorTestMgr:
             if self._logging:
                 print("B:Colour sensor does not have a 'calibrated' attribute.")
             return True
-        if calibrated:
+        if calibrated and not force:
             if self._logging:
                 print("B:Colour sensor already calibrated.")
             return True
+        # Either not calibrated or force is True, so attempt to load calibration from settings
+        settings_black_reference = self._load_colour_calibration("black")
+        if settings_black_reference is not None:
+            colour_sensor.black_reference = settings_black_reference
+            if self._logging:
+                print(f"B:Loaded black reference from settings: {settings_black_reference}")
+        elif self._logging:
+            print("B:Black reference not found in settings.")
         settings_white_gains = self._load_colour_calibration("gain")
         if settings_white_gains is not None:
             colour_sensor.white_gains = settings_white_gains
             if self._logging:
                 print(f"B:Loaded white gains from settings: {settings_white_gains}")
-            settings_black_reference = self._load_colour_calibration("black")
-            if settings_black_reference is not None:
-                colour_sensor.black_reference = settings_black_reference
-                if self._logging:
-                    print(f"B:Loaded black reference from settings: {settings_black_reference}")
-            elif self._logging:
-                print("B:Black reference not found in settings.")
         elif self._logging:
             print("B:White gains not found in settings.")
-            return False  # sensor needs calibration
         return bool(getattr(colour_sensor, "calibrated", True))
 
 
@@ -639,31 +653,39 @@ class SensorTestMgr:
         self.colour_sensor_stats.reset()
 
 
-    def read_colour(self, hexdrive_app, update_ring: bool = True) -> tuple[bool, int, str, tuple[int, int, int, int] | None]:
-        """Poll the colour sensor once.  Returns (new_sample, hue, name, raw).
+    def read_colour(self, hexdrive_app, update_ring: bool = True) -> tuple[bool, int, int, str, tuple[int, int, int, int] | None]:
+        """Poll the colour sensor once.  Returns (new_sample, hue, saturation, name, raw).
         When a new reading is available the internal last-colour state and sample stats are
         updated, and (when update_ring) the app ring colour is set to match the detected colour."""
         colour_sensor = getattr(hexdrive_app, "colour_sensor", None) if hexdrive_app is not None else None
         if colour_sensor is None:
-            return (False, self._last_colour_hue, self._last_colour_name, self._last_colour)
-        s = colour_sensor.sequence
+            return (False, self._last_colour_hue, self._last_colour_saturation, self._last_colour_name, self._last_colour)
+        try:
+            s = colour_sensor.sequence
+        except Exception as e:          # pylint: disable=broad-except
+            print(f"B:Error reading colour sensor: {e}")
+            return (False, self._last_colour_hue, self._last_colour_saturation, self._last_colour_name, self._last_colour)
         if s == self._last_colour_sequence:
             # No new reading available
-            return (False, self._last_colour_hue, self._last_colour_name, self._last_colour)
+            return (False, self._last_colour_hue, self._last_colour_saturation, self._last_colour_name, self._last_colour)
         try:
             self._last_colour_sequence = s
             self._last_colour = colour_sensor.colour
             self._last_colour_hue = colour_sensor.colour_hue
+            self._last_colour_saturation = getattr(colour_sensor, "colour_saturation", 0) # saturation may not be available on all colour sensors
             colour_name = colour_sensor.colour_name
             if colour_name != self._last_colour_name:
                 self._last_colour_name = colour_name
                 if update_ring:
-                    self._app.set_ring_colour(self.colour_card_rgb(colour_name))
+                    if 20 < self._last_colour_saturation:
+                        self._app.set_ring_colour(self.colour_card_rgb(colour_name))
+                    else:
+                        self._app.set_ring_colour((0,0,0))  # low saturation, so set ring to black
             self.colour_sensor_stats.new_sample(s)
-            return (True, self._last_colour_hue, self._last_colour_name, self._last_colour)
+            return (True, self._last_colour_hue, self._last_colour_saturation, self._last_colour_name, self._last_colour)
         except Exception as e:          # pylint: disable=broad-except
             print(f"B:Error reading colour sensor: {e}")
-            return (False, self._last_colour_hue, self._last_colour_name, self._last_colour)
+            return (False, self._last_colour_hue, self._last_colour_saturation, self._last_colour_name, self._last_colour)
 
 
     def _capture_white_reference(self) -> bool:
@@ -771,7 +793,7 @@ class SensorTestMgr:
                 # NB you can't depend on the order of display_data dict items when drawn
                 self._display_data["colour"] = self._last_colour_name
                 self._display_data["match"] = "PASS" if self._last_colour_name == self._test_card else "FAIL"
-            self.colour = _COLOUR_CARD_RGB.get(self._last_colour_name, (0.5, 0.5, 0.5))
+            #self.colour = _COLOUR_CARD_RGB.get(self._last_colour_name, (0.5, 0.5, 0.5))
 
         elif self._sensor_type is _SENSOR_RANGE:
             if self._page_selected == _PAGE_DATA and self._last_range is not None:
@@ -1605,7 +1627,7 @@ class SensorStats():
     """A class to track sensor statistics, including sample rate and count."""
     __slots__ = ("_name", "_sample_period_ms", "_sample_count", "_sample_timer", "_sample_rate", "_missed_samples", "_last_sequence_number")
 
-    def __init__(self, name: str, sample_period_ms: int=5000):
+    def __init__(self, name: str, sample_period_ms: int=10000):
         self._name: str = name
         self._sample_period_ms: int = sample_period_ms
         self._sample_count: int = 0
