@@ -37,7 +37,7 @@ _CALIBRATION_MSG_TIMEOUT_MS = const(4000)  # auto-dismiss the calibration remind
 # Automatic Stop based on Colour Sensor (from COLOUR_LIST)
 _DEFAULT_COLOUR_STOP = const(0)  # default colour index to stop on ("Black")
 
-# Automatic Stop baesd on Range Sensor
+# Automatic Stop based on Range Sensor
 _DEFAULT_MIN_OBSTACLE_DISTANCE = const(100)  # minimum distance in mm to an obstacle before stopping
 _MIN_MIN_OBSTACLE_DISTANCE_MM = const(20)       # Minimum allowed value for the minimum range setting
 _MIN_MAX_OBSTACLE_DISTANCE_MM = const(500)      # Maximum allowed value for the minimum range setting
