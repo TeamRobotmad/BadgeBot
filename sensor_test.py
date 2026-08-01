@@ -654,13 +654,17 @@ class SensorTestMgr:
 
 
     def read_colour(self, hexdrive_app, update_ring: bool = True) -> tuple[bool, int, int, str, tuple[int, int, int, int] | None]:
-        """Poll the colour sensor once.  Returns (new_sample, hue, name, raw).
+        """Poll the colour sensor once.  Returns (new_sample, hue, saturation, name, raw).
         When a new reading is available the internal last-colour state and sample stats are
         updated, and (when update_ring) the app ring colour is set to match the detected colour."""
         colour_sensor = getattr(hexdrive_app, "colour_sensor", None) if hexdrive_app is not None else None
         if colour_sensor is None:
             return (False, self._last_colour_hue, self._last_colour_saturation, self._last_colour_name, self._last_colour)
-        s = colour_sensor.sequence
+        try:
+            s = colour_sensor.sequence
+        except Exception as e:          # pylint: disable=broad-except
+            print(f"B:Error reading colour sensor: {e}")
+            return (False, self._last_colour_hue, self._last_colour_saturation, self._last_colour_name, self._last_colour)
         if s == self._last_colour_sequence:
             # No new reading available
             return (False, self._last_colour_hue, self._last_colour_saturation, self._last_colour_name, self._last_colour)

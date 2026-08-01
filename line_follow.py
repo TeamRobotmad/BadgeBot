@@ -37,7 +37,7 @@ _CALIBRATION_MSG_TIMEOUT_MS = const(4000)  # auto-dismiss the calibration remind
 # Automatic Stop based on Colour Sensor (from COLOUR_LIST)
 _DEFAULT_COLOUR_STOP = const(0)  # default colour index to stop on ("Black")
 
-# Automatic Stop baesd on Range Sensor
+# Automatic Stop based on Range Sensor
 _DEFAULT_MIN_OBSTACLE_DISTANCE = const(100)  # minimum distance in mm to an obstacle before stopping
 _MIN_MIN_OBSTACLE_DISTANCE_MM = const(20)       # Minimum allowed value for the minimum range setting
 _MIN_MAX_OBSTACLE_DISTANCE_MM = const(500)      # Maximum allowed value for the minimum range setting
@@ -520,9 +520,10 @@ class LineFollowMgr:
                     self._obstacle_detection_count = 0
 
         # Poll the shared colour sensor; read_colour also updates the ring colour on change.
-        # Force a read to ensure we get the latest sample, as the colour sensor is only polled in the background by the HexDrive
-        if self._colour_hexdrive:
-            _ = self._colour_hexdrive.colour_sensor.read()
+        # Force a read to ensure we get the latest sample, as the colour sensor is only polled in the background by the HexDrive.
+        colour_sensor = getattr(self._colour_hexdrive, "colour_sensor", None)
+        if colour_sensor is not None:
+            _ = colour_sensor.read()
 
         new_sample, hue, _, name, _raw = sensor_mgr.read_colour(self._colour_hexdrive)
         if new_sample:
