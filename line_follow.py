@@ -520,9 +520,10 @@ class LineFollowMgr:
                     self._obstacle_detection_count = 0
 
         # Poll the shared colour sensor; read_colour also updates the ring colour on change.
-        # Force a read to ensure we get the latest sample, as the colour sensor is only polled in the background by the HexDrive
-        if self._colour_hexdrive:
-            _ = self._colour_hexdrive.colour_sensor.read()
+        # Force a read to ensure we get the latest sample, as the colour sensor is only polled in the background by the HexDrive.
+        colour_sensor = getattr(self._colour_hexdrive, "colour_sensor", None)
+        if colour_sensor is not None:
+            _ = colour_sensor.read()
 
         new_sample, hue, _, name, _raw = sensor_mgr.read_colour(self._colour_hexdrive)
         if new_sample:
