@@ -128,27 +128,27 @@ def init_settings(s, MySetting: type):      #pylint: disable=invalid-name
     group = MySetting.GROUP_LINE_FOLLOWER
     s['line_power']     = MySetting(
         s, _DEFAULT_FOLLOWER_POWER, _MIN_LINE_POWER, _MAX_LINE_POWER,
-        group=group, order=20, title="Line power",
+        group=group, order=10, title="Line power",
         description="Motor power while following a line")
     s['mid_hue']        = MySetting(
         s, _DEFAULT_MID_HUE, 0, 360, wrap=True,
-        group=group, order=30, title="Mid hue",
+        group=group, order=20, title="Mid hue",
         description="Line colour used as neutral steering")
     s['max_hue']        = MySetting(
         s, _DEFAULT_MAX_HUE, 0, 180,
-        group=group, order=10, title="Hue range",
+        group=group, order=30, title="Hue range",
         description="Largest hue error accepted as the line")
     s['pid_kp']         = MySetting(
         s, _DEFAULT_FOLLOWER_PID_KP, 0, 65536,
-        group=group, order=60, title="PID Kp",
+        group=group, order=40, title="PID Kp",
         description="Proportional steering gain")
     s['pid_ki']         = MySetting(
         s, _DEFAULT_FOLLOWER_PID_KI, 0, 65535,
-        group=group, order=50, title="PID Ki",
+        group=group, order=45, title="PID Ki",
         description="Accumulated steering correction gain")
     s['pid_kd']         = MySetting(
         s, _DEFAULT_FOLLOWER_PID_KD, 0, 65535,
-        group=group, order=40, title="PID Kd",
+        group=group, order=50, title="PID Kd",
         description="Steering response to error changes")
     s['min_range']      = MySetting(
         s, _DEFAULT_MIN_OBSTACLE_DISTANCE,
@@ -161,7 +161,7 @@ def init_settings(s, MySetting: type):      #pylint: disable=invalid-name
         description="Colour that stops line following")
     s['plot_type']      = MySetting(
         s, _PLOT_SELECTION_NONE, _PLOT_SELECTION_NONE, _PLOT_SELECTION_POWER,
-        labels=_PLOT_SELECTION_LABELS, group=group, order=70, title="Plot",
+        labels=_PLOT_SELECTION_LABELS, group=group, order=100, title="Plot",
         description="Data shown on BLE Plot")
 
 
