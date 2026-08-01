@@ -1,20 +1,22 @@
 # BadgeBot app
 
-Companion app for the HexDrive hexpansion. Supports 2 brushed DC motors, 4 RC servos (2 for HexDrive2), 1 motor + 2 servos (1 for HexDrive2). Features Logo-style motor programming, PID line following with automatic gain tuning, I²C sensor testing, servo test mode, and persistent settings management.
+Companion app for the HexDrive hexpansion. Supports 2 brushed DC motors, 4 RC servos (2 for HexDrive2), 1 motor + 2 servos (1 for HexDrive2). Features Logo-style motor programming, line following with colour sensor, Bluetooth LE control, I²C sensor testing, servo test mode, and persistent settings management.
 
-This guide is current for BadgeBot version 1.5
+This guide is current for BadgeBot version 2.7
 
 As this application has become quite complicated if you are looking for example code to use a HexDrive please see [HexDriveUseTemplate](https://github.com/TeamRobotmad/HexDriveUseTemplate)
 
+See also the [HexDrive2 README](https://github.com/TeamRobotmad/HexDrive2)
+
 ## User guide
 
-Install the BadgeBot app and then plug your HexDrive board into any of the hexpansion slots on your EMF Camp 2024 Badge.  If your HexDrive EEPROM has not been initialised before you will be promted to confirm that the hexpansion is a HexDrive, if you have other hexpansions plugged in which have uninitialised EEPROMs then please be careful to only initialise the correct one as being a HexDrive.
+Install the BadgeBot app and then plug your HexDrive board into any of the hexpansion slots on your EMF Camp 2024/2026 Badge.  If your HexDrive EEPROM has not been initialised before you will be promted to confirm that the hexpansion is a HexDrive, if you have other hexpansions plugged in which have uninitialised EEPROMs then please be careful to only initialise the correct one as being a HexDrive.
 
 If your HexDrive software (stored on the EEPROM on the hexpansion) is not the latest version then you will be prompted to update this.  You can select from 5 'flavours' of configuration suitable for:
 - 2 Motor
-- 4 Servo
+- 2/4 Servo
 - 1 Motor and 2 Servos
-- Unknown
+- Uncommited (This is how new boards are supplied)
 
 Once you have selected the desired 'flavour' - please confirm by pressing the "C" (confirm) button.
 
@@ -23,46 +25,66 @@ There must be a HexDrive board plugged in and running the latest software to use
 ### Main Menu ###
 
 The main menu presents the following options:
-- **Line Follower** – PID-controlled line following using a HexSense with QTRX reflectance sensors
+- **Bluetooth** - Bluetooth LE control (e.g. via Adafruit Bluefruit LE Connect Phone App)
+- **Line Follower** – PID-controlled line following using colour sensor on HexDrive2
 - **Motor Moves** – Logo/turtle-style motor programming (record UP/DOWN/LEFT/RIGHT sequences, then execute)
+- **Sensor Test** - Test the Range and Colour sensor on the HexDrive2 - also used to calibrate the Colour sensor.
 - **Servo Test** – Test up to 4 RC servos (position, trim, and scanning modes)
-- **PID Auto Tune** – Automatic PID gain tuning using relay feedback (Åström-Hägglund method)
 - **Settings** – Adjust configurable parameters (see below)
 - **About** – Show version info, animated logo and QR code
 - **Exit** – Exit the BadgeBot app
 
+Note 1 - using the "CANCEL" button from the main menu does NOT exit the application, it is just "minimised" but remains running in memory - if you have finished using the App then it is best to properly Exit.
+Note 2 - please use the Sensor Test feature to calibrate ("Cal") the Colour Sensor by placing over a black and then a white surface when prompted, BEFORE using the Line Follower.
+
 ### Settings ###
 
 The main menu includes a sub-menu of Settings which can be adjusted.
-#### Motor Moves Settings ####
+#### Motors Settings ####
 | Setting          | Description                               | Default        | Min    | Max    |
 |------------------|-------------------------------------------|----------------|--------|--------|
-| acceleration     | Limits the change in motor drive per tick | 7500           | 1      | 65535  |
-| max_power        | Maximum motor power level                 | 20000          | 1000   | 65535  |
-| drive_step_ms    | Step duration for driving in ms           | 50             | 5      | 200    |
-| turn_step_ms     | Step duration for turning in ms           | 20             | 5      | 200    |
-#### Servo Test Settings ####
+| acceleration     | Limits the change in motor power per tick | 7500           | 2      | 127    |
+| deadband         | Motor power deadband                      | 1              | 0      | 127    |
+| max_power        | Maximum motor power level                 | 107            | 20     | 127    |
+| mtr1_dir         | Motor 1 direction                         | 0              | 0      | 1      |
+| mtr2_dir         | Motor 2 direction                         | 0              | 0      | 1      |
+| mtr1_min         | Motor 1 minimum power                     | 0              | 0      | 127    |
+| mtr2_min         | Motor 2 minimum power                     | 0              | 0      | 127    |
+#### Driving Settings ####
 | Setting          | Description                               | Default        | Min    | Max    |
 |------------------|-------------------------------------------|----------------|--------|--------|
-| servo_step       | Servo pulse step value in us              | 10             | 1      | 100    |
+| front_face       | Badge edge treated as forward             | 0              | 0      | 11     |
+| drive_step_ms    | Motor Moves step duration forward/backward| 50             | 10     | 10000  |
+| turn_step_ms     | Motor Moves Step duration for turning     | 20             | 10     | 10000  |
+| drive_mode       | Motor Moves drive mode                    | Time           | Time   |Distance|
+#### Servos Settings ####
+| Setting          | Description                               | Default        | Min    | Max    |
+|------------------|-------------------------------------------|----------------|--------|--------|
+| servo_step       | Position adjustment step value in us      | 10             | 1      | 100    |
 | servo_range      | Range of servo motion in us               | 1000           | 100    | 1400   |
-| servo_period     | Servo period duration in ms               | 20             | 5      | 50     |
+| pwm_period       | Servo period duration in ms               | 20             | 5      | 50     |
 #### Line Follower Settings ####
 | Setting          | Description                               | Default        | Min    | Max    |
 |------------------|-------------------------------------------|----------------|--------|--------|
-| line_threshold   | Line sensor threshold                     | 500            | 0      | 65535  |
-| pid_kp           | Proportional gain for line following      | 20000          | 0      | 65536  |
+| mid_hue          | Colour Hue recognised as middle of line   | 300            | 0      | 360    |
+| hue_range        | Colour Hue range recognised as 'line'     | 70             | 0      | 180    |
+| line_power       | Motor power when following line           | 10             | 2      | 127    |
+| pid_kp           | Proportional gain for line following      | 25             | 0      | 65536  |
 | pid_ki           | Integral gain for line following          | 0              | 0      | 65535  |
-| pid_kd           | Derivative gain for line following        | 0              | 0      | 65535  |
-#### Other Settings ####
+| pid_kd           | Derivative gain for line following        | 200            | 0      | 65535  |
+| stop_range       | Minimum distance to obstacle in mm        | 100            | 20     | 500    |
+| stop_colour      | Colour that stops line following          | Black          |        |        |
+| plot_type        | Data to show on live BLE Plot             | None           | None   | Power  |
+|                  |   (None, Colour, Range, PID, Power)       |                |        |        |
+#### General Settings ####
 | Setting          | Description                               | Default        | Min    | Max    |
 |------------------|-------------------------------------------|----------------|--------|--------|
 | brightness       | LED brightness                            | 1.0            | 0.1    | 1.0    |
 | logging          | Enable or disable logging                 | False          | False  | True   |
 
-The PID gains are best set by using the "PID Auto Tune" menu option.  Place the robot on a line and press C to start the tuning process.  The auto-tuner uses relay feedback (Åström-Hägglund method) to determine the ultimate gain and period of oscillation, then calculates PID gains using Ziegler-Nichols tuning rules.  The tuning process includes a quality score (0-100%) indicating how consistent the oscillation data was.  Results are automatically saved to settings.
+If you are using the BadgeBot application to control a HexDrive then you will need to set the parameters in the Motors Settings section to suit your motors and servos.  The default values are suitable for low power motors and servos, but if you have more powerful motors then you will need to reduce the ```acceleration``` setting and possibly also the ```max_power``` setting.
 
-The training line should ideally include gentle curves so that the controller is exercised across a range of error magnitudes, but a straight line will also work for basic tuning.
+If your Badgebot is not driving straight then you may need to adjust the ```mtr1_dir``` and ```mtr2_dir``` settings to reverse the direction of one or both motors.  If your motors are not starting to move until a high PWM value is reached then you will need to increase the ```mtr1_min``` and/or ```mtr2_min``` settings.  There is considerable resistance to small gear motors so the minimum PWM value to get them to move is often quite high.
 
 ### Limitations ###
 
@@ -86,15 +108,14 @@ This repo contains lots of files that you don't need on your badge to use a HexD
 + EEPROM/hexdrive.mpy
 + EEPROM/hexdrive2.mpy
 + utils.mpy
++ diagnostics.mpy
 + hexpansion_mgr.mpy
++ bluetooth_mgr.mpy
 + motor_controller.mpy
 + motor_moves.mpy
 + servo_test.mpy
 + settings_mgr.mpy
 + line_follow.mpy
-+ autotune.mpy
-+ autotune_mgr.mpy
-+ autodrive.mpy
 + sensor_test.mpy
 
 
@@ -132,29 +153,6 @@ https://github.com/TeamRobotmad/BadgeBotParts/tree/main/Docs
 Writing your own code to control the motor driver is very easy.  The BadgeBot application contains lots of extra code to support initialising and upgrading the software on the HexDrive, but once this is done you can use the board without needing this code.
 
 To fit the HexDrive software into a small EEPROM it is converted into a .mpy file.  The file hexdrive.py is the source of this code if you want to see what it is doing.  The intention is that this code manages the hardware as it knows which slot the hexpansion is in.
-
-### Power
-The HexDrive incorporates a Switch Mode Power Supply which boosts the 3.3V provided by the badge up to 5V (or higher if your hexpansion has been modified) to drive the motors.  To turn this on or off call
-```set_power(True | False)```
-
-### Drive
-Call ```set_motors()``` to control the two motors, providing a signed integer from -65535 to +65535 for each in a tuple.
-
-Alternatively:
-Call ```set_pwm()``` to set the duty cycle of the 4 PWM channels which control the motors. This function takes a tuple of 4 integers, each from 0 to 65535. e.g.
-```set_pwm((0,1000,1000,0))```
-note the extra set of brackets as the function argument is a single tuple of 4 values rather than being 4 individual values.
-
-### Servos
-You can control 1,2,3 or 4 RC hobby servos (centre pulse width 1500us).  The first time you set a pulse width for a channel using ```set_servoposition()``` the PWM frequency for that channel will be set to 50Hz.
-The first two Channels take up signals that would otherwise control Motor 1 and the second two Channels take up the signals that are used for Motor 2.
-You can use one motor and 1 or 2 servos simultaneously.
-
-### Frequency
-You can adjust the PWM frequency, default 20000Hz for motors and 50Hz for servos by calling the ```set_freq()``` function.
-
-#### Keep Alive
-To protect against most badge/software crashes causing the motors or servos to run out of control there is a keep alive mechanism which means that if you do not make a call to the ```set_pwm```, ```set_motors``` or ```set_servoposition``` functions the motors/servos will be turned off after 1000mS (default - which can be changed with a call to ```set_keep_alive()```).
 
 ### Developers setup
 This is to help develop the BadgeBot application using the Badge simulator.

@@ -170,7 +170,7 @@ def init_settings(s, MySetting: type):  #pylint: disable=invalid-name
         description="Milliseconds per forward or reverse program step")
     s['turn_step_ms']  = MySetting(
         s, _DEFAULT_USER_TURN_MS, _MIN_USER_TURN_MS, _MAX_USER_TURN_MS,
-        group=MySetting.GROUP_DRIVING, order=40, title="Turn step",
+        group=MySetting.GROUP_DRIVING, order=20, title="Turn step",
         description="Milliseconds per left or right program step")
     s['drive_mode']    = MySetting(
         s, _DEFAULT_DRIVE_MODE, DRIVE_MODE_TIME, DRIVE_MODE_DISTANCE,
