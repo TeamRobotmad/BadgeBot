@@ -67,7 +67,7 @@ _SENSOR_RANGE  = "Range"
 
 _COLOUR_BLACK  = "Black"
 _COLOUR_WHITE  = "White"
-_COLOUR_GRAY   = "Gray"
+_COLOUR_GREY   = "Grey"
 _COLOUR_RED    = "Red"
 _COLOUR_ORANGE = "Orange"
 _COLOUR_YELLOW = "Yellow"
@@ -79,7 +79,7 @@ _COLOUR_MAGENTA= "Magenta"
 COLOUR_LIST = [
     _COLOUR_BLACK,
     _COLOUR_WHITE,
-    _COLOUR_GRAY,
+    _COLOUR_GREY,
     _COLOUR_RED,
     _COLOUR_ORANGE,
     _COLOUR_YELLOW,
@@ -124,10 +124,10 @@ class SensorEntry:
 _COLOUR_CALIBRATION_PREFIX = "stc"
 
 # Colour Test Cards
-_COLOUR_TEST_CARDS = [_COLOUR_BLACK, _COLOUR_WHITE, _COLOUR_RED, _COLOUR_GREEN, _COLOUR_BLUE, _COLOUR_YELLOW, _COLOUR_CYAN, _COLOUR_MAGENTA, _COLOUR_ORANGE, _COLOUR_GRAY]
+_COLOUR_TEST_CARDS = [_COLOUR_BLACK, _COLOUR_WHITE, _COLOUR_RED, _COLOUR_GREEN, _COLOUR_BLUE, _COLOUR_YELLOW, _COLOUR_CYAN, _COLOUR_MAGENTA, _COLOUR_ORANGE, _COLOUR_GREY]
 
 # RGB float tuples (0.0-1.0) for each named colour, used for the ring and text colouring.
-# "Orange" and "Gray" are included as lookup_colour_RGB can return them.
+# "Orange" and "Grey" are included as lookup_colour_RGB can return them.
 _COLOUR_CARD_RGB = {
     _COLOUR_BLACK:   (0.0,  0.0,  0.0),
     _COLOUR_WHITE:   (1.0,  1.0,  1.0),
@@ -138,7 +138,7 @@ _COLOUR_CARD_RGB = {
     _COLOUR_CYAN:    (0.0,  1.0,  1.0),
     _COLOUR_MAGENTA: (1.0,  0.0,  1.0),
     _COLOUR_ORANGE:  (1.0,  0.5,  0.0),
-    _COLOUR_GRAY:    (0.5,  0.5,  0.5),
+    _COLOUR_GREY:    (0.5,  0.5,  0.5),
 }
 
 
