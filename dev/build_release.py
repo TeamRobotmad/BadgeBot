@@ -120,12 +120,12 @@ if __name__ == "__main__":
 
     for file in files_to_mpy:
         print(f"Mpy-ing file: {file}")
-        processes.append((file, mpy_cross.run(file, "-march=xtensawin", "-v")))
+        processes.append((file, mpy_cross.run(file, "-march=xtensawin", "-O3", "-v")))
 
     for spec in EXTERNAL_MODULES:
         print(f"Mpy-ing file: {spec.source} -> {spec.artifact}")
         spec.artifact.parent.mkdir(parents=True, exist_ok=True)
-        processes.append((spec.source, mpy_cross.run(str(spec.source), "-march=xtensawin", "-v", "-o", str(spec.artifact))))
+        processes.append((spec.source, mpy_cross.run(str(spec.source), "-march=xtensawin", "-O3", "-v", "-o", str(spec.artifact))))
 
     for source, process in processes:
         if process.wait() != 0:

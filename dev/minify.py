@@ -210,8 +210,8 @@ def minify_file(
             return -1
 
         artifact.parent.mkdir(parents=True, exist_ok=True)
-        #cmd = [str(MPY_CROSS), "-O2", "-o", str(artifact), str(temp_min)]
-        cmd = [str(MPY_CROSS), "-march=xtensawin", "-O2", "-o", str(artifact), str(source)]
+        #cmd = [str(MPY_CROSS), "-O3", "-o", str(artifact), str(temp_min)]
+        cmd = [str(MPY_CROSS), "-march=xtensawin", "-O3", "-o", str(artifact), str(source)]
 
         r = subprocess.run(cmd, capture_output=True, text=True)
         #temp_min.unlink()
@@ -262,7 +262,7 @@ def main() -> int:
 
         # Compile original for baseline comparison
         orig_mpy = spec.source.parent / (spec.source.stem + ".orig.mpy")
-        cmd = [str(MPY_CROSS), "-O2", "-o", str(orig_mpy), str(spec.source)]
+        cmd = [str(MPY_CROSS), "-O3", "-o", str(orig_mpy), str(spec.source)]
         subprocess.run(cmd, capture_output=True, text=True)
         orig_size = orig_mpy.stat().st_size if orig_mpy.exists() else 0
         orig_mpy.unlink(missing_ok=True)
