@@ -2,7 +2,7 @@
 
 Companion app for the HexDrive hexpansion. Supports 2 brushed DC motors, 4 RC servos (2 for HexDrive2), 1 motor + 2 servos (1 for HexDrive2). Features Logo-style motor programming, line following with colour sensor, Bluetooth LE control, I²C sensor testing, servo test mode, and persistent settings management.
 
-This guide is current for BadgeBot version 2.7
+This guide is current for BadgeBot version 2.8
 
 As this application has become quite complicated if you are looking for example code to use a HexDrive please see [HexDriveUseTemplate](https://github.com/TeamRobotmad/HexDriveUseTemplate)
 

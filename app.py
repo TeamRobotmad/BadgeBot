@@ -43,7 +43,7 @@ HEXDRIVE_APP_VERSION = 6
 HEXDRIVE2_APP_VERSION = 3
 
 SETTINGS_NAME_PREFIX = "badgebot"  # Prefix for settings keys in EEPROM
-APP_VERSION = "2.7" # BadgeBot App Version Number
+APP_VERSION = "2.8" # BadgeBot App Version Number
 _BLUETOOTH_NAME_PREFIX = "BBot"  # Prefix for Bluetooth device name, followed by a 3-digit number from the unique ID
 
 # If you change the URL then you will need to regenerate the QR code
