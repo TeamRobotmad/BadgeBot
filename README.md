@@ -68,10 +68,10 @@ The main menu includes a sub-menu of Settings which can be adjusted.
 |------------------|-------------------------------------------|----------------|--------|--------|
 | mid_hue          | Colour Hue recognised as middle of line   | 300            | 0      | 360    |
 | hue_range        | Colour Hue range recognised as 'line'     | 70             | 0      | 180    |
-| line_power       | Motor power when following line           | 10             | 2      | 127    |
-| pid_kp           | Proportional gain for line following      | 25             | 0      | 65536  |
+| line_power       | Motor power when following line           | 60             | 2      | 127    |
+| pid_kp           | Proportional gain for line following      | 60             | 0      | 65536  |
 | pid_ki           | Integral gain for line following          | 0              | 0      | 65535  |
-| pid_kd           | Derivative gain for line following        | 200            | 0      | 65535  |
+| pid_kd           | Derivative gain for line following        | 25             | 0      | 65535  |
 | stop_range       | Minimum distance to obstacle in mm        | 100            | 20     | 500    |
 | stop_colour      | Colour that stops line following          | Black          |        |        |
 | plot_type        | Data to show on live BLE Plot             | None           | None   | Power  |
@@ -217,7 +217,7 @@ Hexpansion apps stored on EEPROM are minified before being compiled to `.mpy` to
 The pipeline uses `dev/minify.py` which:
 1. Renames internal `self.*` attributes to short names via an AST transform (source stays readable)
 2. Strips docstrings with `python-minifier`
-3. Compiles with `mpy-cross -march=xtensawin -O2`
+3. Compiles with `mpy-cross -march=xtensawin -O3`
 
 Typical savings are ~5% compared with compiling from source directly.
 
