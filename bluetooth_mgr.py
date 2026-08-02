@@ -315,7 +315,7 @@ _ble_active_button = None
 # ble_process_command (runs on the main thread via schedule) and drained by
 # BluetoothMgr.update() so the app can action them.
 _ble_pending_buttons = []
-
+_logging = False
 
 def ble_process_command(data):
     """
@@ -323,9 +323,11 @@ def ble_process_command(data):
     !B <button_number> <1=pressed/0=released> <checksum>
     Example: b'!B516' is Up Button Pressed
     """
-    global _ble_active_button
+    global _ble_active_button, _logging
 
-    print(f"B:BLE:Processing command: {data}")
+    if _logging:
+        print(f"B:BLE:Processing command: {data}")
+        
     command = data.decode().strip()
     if not command.startswith("!B"):
         print(f"B:BLE:Invalid command format: {command}")
@@ -524,6 +526,8 @@ class BluetoothMgr:
 
             # Register the command processor
             self._ble_controller.on_write(ble_process_command)
+            global _logging
+            _logging = self._logging
 
             if self._logging:
                 print("B:BluetoothMgr initialised")
