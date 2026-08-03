@@ -34,7 +34,7 @@ except ImportError:
     # CPython / simulator fallback – const() is just an identity function
     # on MicroPython; replicate that so module-level const() calls work.
     const = lambda x: x         #pylint: disable=unnecessary-lambda-assignment
-    
+
 _SLOTS = 6
 
 # HexDrive Hexpansion constants
@@ -701,7 +701,7 @@ class HexpansionMgr:
                     print(f"B:HexDrive on port {port} added to list")
                 new_hexdrive_ports.append(port)
 
-        if set(new_hexdrive_ports) != set(app.hexdrive_ports):
+        if set(new_hexdrive_ports) != set(app.hexdrive_ports) or len(app.hexdrive_apps) != len(new_hexdrive_ports):
             if self._logging:
                 print(f"B:HexDrive ports changed from {app.hexdrive_ports} to {new_hexdrive_ports}")
             app.hexdrive_ports = new_hexdrive_ports
@@ -710,6 +710,7 @@ class HexpansionMgr:
             app.num_servos = 0
             app.num_sensors = 0
             hexdrive_apps = []
+
             for port in app.hexdrive_ports:
                 if self._logging:
                     print(f"B:Checking HexDrive app on port {port}, current state: {_HEXPANSION_STATE_NAMES[self._hexpansion_state_by_slot[port - 1]]}")
