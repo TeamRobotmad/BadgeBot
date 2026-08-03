@@ -552,6 +552,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         # Bluetooth LE
         self._ble_override_active: bool = False
         self._motor_enable_mask: int = 0
+        self._ble_connected: bool = False
 
         # Queue of pending remote-control commands (REMOTE_CMD_*) posted by comms
         # transports (BLE now, others in future) and actioned from update().
@@ -1112,13 +1113,17 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 # Trigger an update cycle for hexpansion_mgr even though it is not currently active
                 self._hexpansion_mgr.update(delta)
 
-        # if Bluetooth has been Activated, update it even if we are not in the Bluetooth state, to ensure that BLE events are processed and the connection is maintained.
-        if self._bluetooth_mgr is not None and self.current_state != STATE_BLUETOOTH and self._bluetooth_mgr.is_active:
-            self._bluetooth_mgr.update(delta)
-        if self._bluetooth_mgr is not None and (self.current_state == STATE_BLUETOOTH or self._bluetooth_mgr.is_active):
-            if not self.enable_motors(self._bluetooth_mgr.is_connected, MOTOR_ENABLE_USER_BLE):
-                if self._logging:
-                    print("B:Failed BLE motor en/disable update")
+        if self._bluetooth_mgr is not None:
+            if self.current_state != STATE_BLUETOOTH and self._bluetooth_mgr.is_active:
+                # if Bluetooth has been Activated, update it even if we are not in the Bluetooth state, to ensure that BLE events are processed and the connection is maintained.
+                self._bluetooth_mgr.update(delta)
+            if self.current_state == STATE_BLUETOOTH or self._bluetooth_mgr.is_active:
+                # has BLE connection state changed?  If so, enable/disable motors for BLE user.
+                if self._bluetooth_mgr.is_connected != self._ble_connected:
+                    self._ble_connected = self._bluetooth_mgr.is_connected
+                    if not self.enable_motors(self._bluetooth_mgr.is_connected, MOTOR_ENABLE_USER_BLE):
+                        if self._logging:
+                            print("B:Failed BLE motor en/disable update")
 
         # Action any remote-control commands queued by comms transports (BLE now,
         # others in future).  State changes happen here, in the app, not in the transport.
