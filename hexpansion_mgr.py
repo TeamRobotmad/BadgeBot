@@ -32,8 +32,10 @@ _SLOTS = 6
 
 # HexDrive Hexpansion constants
 # EEPROM Constants
-_DEFAULT_EEPROM_PAGE_SIZE = 32
-_DEFAULT_EEPROM_TOTAL_SIZE = 64 * 1024 // 8
+_DEFAULT_EEPROM_PAGE_SIZE = const(32)
+_DEFAULT_EEPROM_TOTAL_SIZE = const(64 * 1024 // 8)
+
+_TIME_TO_WAIT_FOR_APP_TO_APPEAR = const(5000)  # ms to wait for the hexpansion app to start after initialisation or upgrade before assuming it needs installing
 
 _IS_SIMULATOR = sys.platform != "esp32"
 
@@ -51,15 +53,15 @@ _SUB_EXIT            = 9           # State for exiting from interactive mode bac
 
 # Hexpansion states
 # unknown, blank, unrecognised, recognised but no app, recognised with app
-_HEXPANSION_STATE_UNKNOWN = 0
-_HEXPANSION_STATE_EMPTY = 1
-_HEXPANSION_STATE_FAULTY = 2
-_HEXPANSION_STATE_BLANK = 3
-_HEXPANSION_STATE_UNRECOGNISED = 4
-_HEXPANSION_STATE_RECOGNISED = 5
-_HEXPANSION_STATE_RECOGNISED_NO_APP = 6
-_HEXPANSION_STATE_RECOGNISED_OLD_APP = 7
-_HEXPANSION_STATE_RECOGNISED_APP_OK = 8
+_HEXPANSION_STATE_UNKNOWN = const(0)
+_HEXPANSION_STATE_EMPTY = const(1)
+_HEXPANSION_STATE_FAULTY = const(2)
+_HEXPANSION_STATE_BLANK = const(3)
+_HEXPANSION_STATE_UNRECOGNISED = const(4)
+_HEXPANSION_STATE_RECOGNISED = const(5)
+_HEXPANSION_STATE_RECOGNISED_NO_APP = const(6)
+_HEXPANSION_STATE_RECOGNISED_OLD_APP = const(7)
+_HEXPANSION_STATE_RECOGNISED_APP_OK = const(8)
 _HEXPANSION_STATE_NAMES = [
     "Unknown",
     "Empty",
@@ -74,20 +76,20 @@ _HEXPANSION_STATE_NAMES = [
 
 
 # EEPROM app programming outcomes
-_APP_EEPROM_RESULT_FAILURE = 0
-_APP_EEPROM_RESULT_MISSING = -1
-_APP_EEPROM_RESULT_SUCCESSFUL_UPGRADE = 1
-_APP_EEPROM_RESULT_SUCCESSFUL_WRITE = 2
+_APP_EEPROM_RESULT_FAILURE = const(0)
+_APP_EEPROM_RESULT_MISSING = const(-1)
+_APP_EEPROM_RESULT_SUCCESSFUL_UPGRADE = const(1)
+_APP_EEPROM_RESULT_SUCCESSFUL_WRITE = const(2)
 
 
 _HEXDRIVE_REQUIRED_MESSAGE = ["Requires:","RobotMad HexDrive","github.com","/TeamRobotmad","/BadgeBot"]
 _HEXDRIVE_REQUIRED_MESSAGE_COLOURS = [(1,1,0),(1,1,0),(0,1,1),(0,1,1),(0,1,1)]
 
 # Modes
-_MODE_INIT = 0          # Initial mode on app startup to do first scan of all ports
-_MODE_IDLE = 1          # Idle mode with no hexpansion-related activity, waiting for events
-_MODE_UPDATE = 2        # Normal mode for responding to hexpansion-related events (insertion/removal)
-_MODE_INTERACTIVE = 3   # Interactive mode for user interactions for initialisation/upgrade/erasure of hexpansions
+_MODE_INIT = const(0)          # Initial mode on app startup to do first scan of all ports
+_MODE_IDLE = const(1)          # Idle mode with no hexpansion-related activity, waiting for events
+_MODE_UPDATE = const(2)        # Normal mode for responding to hexpansion-related events (insertion/removal)
+_MODE_INTERACTIVE = const(3)   # Interactive mode for user interactions for initialisation/upgrade/erasure of hexpansions
 
 
 # WHEN Badge hexpansion handling has stabillised - revisit this and make much much simpler...
@@ -458,8 +460,9 @@ class HexpansionMgr:
                     app.notification = Notification("Initialised", port=self._detected_port)
                     # Only worth showing "Initialised" Notification is we are NOT going to trigger Hexpansion Insertion Notification
                     self._upgrade_port = self._detected_port
+                    self._hexpansion_state_by_slot[self._upgrade_port - 1] = _HEXPANSION_STATE_RECOGNISED
                     self._sub_state = _SUB_PROGRAMMING
-                    self._hexpansion_state_by_slot[self._detected_port - 1] = _HEXPANSION_STATE_RECOGNISED
+                    app.refresh = True
                 else:
                     eventbus.emit(HexpansionInsertionEvent(self._detected_port))
                     #app.show_message(["No App", "for this", "Hexpansion"], [(1,1,0),(1,1,1),(1,1,1)], return_state = STATE_HEXPANSION)
@@ -485,6 +488,7 @@ class HexpansionMgr:
         if app.button_states.get(BUTTON_TYPES["CONFIRM"]):
             app.button_states.clear()
             self._sub_state = _SUB_PROGRAMMING
+            app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["CANCEL"]):
             app.button_states.clear()
             if self._logging:
@@ -510,6 +514,7 @@ class HexpansionMgr:
                 print(f"B:Erase Confirmed on port {self._erase_port}")
             app.button_states.clear()
             self._sub_state = _SUB_ERASE
+            app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["CANCEL"]):
             if self._logging:
                 print("B:Erase Cancelled")
@@ -589,6 +594,7 @@ class HexpansionMgr:
             app.button_states.clear()
             app.notification = Notification("Upgrading", port=upgrade_port)
             self._sub_state = _SUB_PROGRAMMING
+            app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["CANCEL"]):
             if self._logging:
                 print("B:Upgrade Cancelled")
@@ -696,14 +702,6 @@ class HexpansionMgr:
             app.num_motors = 0
             app.num_servos = 0
             app.num_sensors = 0
-            for port in app.hexdrive_ports:
-                hexdrive_type_idx = self._hexpansion_type_by_slot[port - 1]
-                if hexdrive_type_idx is not None and 0 <= hexdrive_type_idx < len(app.HEXPANSION_TYPES):
-                    app.num_motors   += app.HEXPANSION_TYPES[hexdrive_type_idx].motors
-                    app.num_servos   += app.HEXPANSION_TYPES[hexdrive_type_idx].servos
-                    app.num_sensors  += app.HEXPANSION_TYPES[hexdrive_type_idx].sensors
-
-        if len(app.hexdrive_ports) != len (app.hexdrive_apps):
             hexdrive_apps = []
             for port in app.hexdrive_ports:
                 if self._logging:
@@ -713,6 +711,12 @@ class HexpansionMgr:
                     hexdrive_app = self._find_hexpansion_app(port)
                     if hexdrive_app is not None and hexdrive_app not in app.hexdrive_apps:
                         hexdrive_apps.append(hexdrive_app)
+                        # Now that we know there is a valid App on this port we can include its motors, servos and sensors in the total counts
+                        hexdrive_type_idx = self._hexpansion_type_by_slot[port - 1]
+                        if hexdrive_type_idx is not None and 0 <= hexdrive_type_idx < len(app.HEXPANSION_TYPES):
+                            app.num_motors   += app.HEXPANSION_TYPES[hexdrive_type_idx].motors
+                            app.num_servos   += app.HEXPANSION_TYPES[hexdrive_type_idx].servos
+                            app.num_sensors  += app.HEXPANSION_TYPES[hexdrive_type_idx].sensors
                 elif self._hexpansion_state_by_slot[port - 1] == _HEXPANSION_STATE_RECOGNISED:
                     # should this port have an app
                     type_idx = self._hexpansion_type_by_slot[port - 1]
@@ -808,11 +812,13 @@ class HexpansionMgr:
                 self._detected_port = self._port_selected
                 app.notification = Notification("Init?", port=self._detected_port)
                 self._sub_state = _SUB_DETECTED
+                app.refresh = True
             elif self._hexpansion_state_by_slot[self._port_selected - 1] >= _HEXPANSION_STATE_FAULTY:
                 # The selected port has a non-blank EEPROM with a detected hexpansion type, so we need to erase it before we can initialise or upgrade it.
                 self._erase_port = self._port_selected
                 app.notification = Notification("Erase?", port=self._erase_port)
                 self._sub_state = _SUB_ERASE_CONFIRM
+                app.refresh = True
         elif app.button_states.get(BUTTON_TYPES["UP"]):
             app.button_states.clear()
             if self._port_detail_page_count > 0:
@@ -1351,6 +1357,7 @@ class HexpansionMgr:
             self._detected_port = self._ports_to_initialise.pop()
             app.notification = Notification("Initialise?", port=self._detected_port)
             self._sub_state = _SUB_DETECTED
+            app.refresh = True
             return True
         return False
 
@@ -1382,13 +1389,15 @@ class HexpansionMgr:
                         print(f"B:Hexpansion [{port}] upgrade to {app.HEXPANSION_TYPES[type_index].app_mpy_version}?")
                     self._upgrade_port = port
                     self._sub_state = _SUB_UPGRADE_CONFIRM
-            elif 5000 < self._hexpansion_app_startup_timer:
+                    app.refresh = True
+            elif _TIME_TO_WAIT_FOR_APP_TO_APPEAR < self._hexpansion_app_startup_timer:
                 if self._logging:
                     print("B:Timeout waiting for Hexpansion app to be started - assume it needs installing")
                     print(f"B:Hexpansion [{port}] install {app.HEXPANSION_TYPES[type_index].app_mpy_name} app?")
                 self._hexpansion_state_by_slot[port - 1] = _HEXPANSION_STATE_RECOGNISED_NO_APP
                 self._upgrade_port = port
                 self._sub_state = _SUB_UPGRADE_CONFIRM
+                app.refresh = True
             else:
                 if 0 == self._hexpansion_app_startup_timer:
                     if self._logging:

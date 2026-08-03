@@ -503,18 +503,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         # Servo Hardware
         self.num_servos: int = 0        # initialised to 0 until we detect a HexDrive Hexpansion and can set this based on the actual number of servos it has
 
-
-        slots = get_slots_by_vid_pid(0xCBCB, 0x10C8)    # shortcut to initialise HexDrive2 as provided at EMF Camp 2026 BadgeBot Workshop
-        if len(slots) > 0:
-            self.hexdrive_ports = slots
-            _app = get_app_by_slot(slots[0])
-            if _app is not None:
-                print(f"B:HexDrive2 (with App) found in slot {slots[0]}")
-                self.hexdrive_apps.append(_app)
-            self._calc_num_motors_servos_sensors()
-            if self.logging:
-                print(f"B:Num motors={self.num_motors}, servos={self.num_servos}, sensors={self.num_sensors}")
-
         # HexAudio hexpansion
         self.hexaudio_port  = None            # Store the HexpansionConfig of the HexAudio that is providing the audio output
 
@@ -611,18 +599,18 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             print(f"B:BadgeBot App V{self.app_version} Initialised")
 
 
-    def _calc_num_motors_servos_sensors(self):
-        """Calculate the total number of motors, servos, and sensors based on the detected HexDrive hexpansion types."""
-        self.num_motors = 0
-        self.num_servos = 0
-        self.num_sensors = 0
-        for _ in self.hexdrive_ports:
-            hexdrive_type_idx = self.HEXDRIVE_V2_HEXPANSION_INDEX # don't force this type
-            # when BLE is made a sub-app we won't need to pre-empt hexpansion_mgr and can wait for it to detect the hexpansion types...
-            if hexdrive_type_idx is not None and 0 <= hexdrive_type_idx < len(self.HEXPANSION_TYPES):
-                self.num_motors   += self.HEXPANSION_TYPES[hexdrive_type_idx].motors
-                self.num_servos   += self.HEXPANSION_TYPES[hexdrive_type_idx].servos
-                self.num_sensors  += self.HEXPANSION_TYPES[hexdrive_type_idx].sensors
+    #def _calc_num_motors_servos_sensors(self):
+    #    """Calculate the total number of motors, servos, and sensors based on the detected HexDrive hexpansion types."""
+    #    self.num_motors = 0
+    #    self.num_servos = 0
+    #    self.num_sensors = 0
+    #    for _ in self.hexdrive_ports:
+    #        hexdrive_type_idx = self.HEXDRIVE_V2_HEXPANSION_INDEX # don't force this type
+    #        # when BLE is made a sub-app we won't need to pre-empt hexpansion_mgr and can wait for it to detect the hexpansion types...
+    #        if hexdrive_type_idx is not None and 0 <= hexdrive_type_idx < len(self.HEXPANSION_TYPES):
+    #            self.num_motors   += self.HEXPANSION_TYPES[hexdrive_type_idx].motors
+    #            self.num_servos   += self.HEXPANSION_TYPES[hexdrive_type_idx].servos
+    #            self.num_sensors  += self.HEXPANSION_TYPES[hexdrive_type_idx].sensors
 
 
     def _register_state_functions(self, state: int, manager: object | None):
