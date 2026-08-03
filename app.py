@@ -668,12 +668,13 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     @update_period.setter
     def update_period(self, value: int):
         """Convenience property to set update_period setting."""
-        # if we have an active Bluetooth Connection then we need to maintain a high update rate so that the motor acceleration is correct
-        if self._bluetooth_mgr is not None and self._bluetooth_mgr.is_connected:
+        # if we have enabled motors then we need to maintain a high update rate so that the motor acceleration is correct
+        if self._motor_enable_mask != 0:
             value = min(value, DEFAULT_ACTIVE_UPDATE_PERIOD)  # ensure we don't go below the minimum update period when Bluetooth is active
-        if self._logging:
-            print(f"B:Setting update_period to {value} ms")
-        self._update_period = value
+        if self._update_period != value:
+            if self._logging:
+                print(f"B:Setting update_period to {value} ms")
+            self._update_period = value
 
 
     def enable_motors(self, enable: bool, user: int) -> bool:
@@ -686,6 +687,13 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if user < 0:
             if self._logging:
                 print(f"B:Invalid motor user id {user}")
+            return False
+
+        if len(self.hexdrive_apps) == 0:
+            self._motor_enable_mask = 0
+            self.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD  # restore the default update period when motors are disabled
+            if self._logging:
+                print("B:No HexDrive apps available")
             return False
 
         bit = 1 << user
@@ -707,13 +715,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if motors_were_enabled == motors_should_be_enabled:
             return True
 
-        motor_hexdrive_app = self.hexdrive_apps[0] if len(self.hexdrive_apps) > 0 else None
-        if motor_hexdrive_app is None:
-            if self._logging:
-                print("B:No HexDrive app available for motors")
-            self._motor_enable_mask = 0
-            self.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD  # restore the default update period when motors are disabled
-            return False
+        motor_hexdrive_app = self.hexdrive_apps[0]
 
         if motors_should_be_enabled:
             ok = (motor_hexdrive_app.initialise()
