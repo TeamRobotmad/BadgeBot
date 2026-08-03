@@ -28,6 +28,13 @@ from system.scheduler import scheduler
 
 from .app import STATE_HEXPANSION, STATE_LOGO
 
+try:
+    from micropython import const
+except ImportError:
+    # CPython / simulator fallback – const() is just an identity function
+    # on MicroPython; replicate that so module-level const() calls work.
+    const = lambda x: x         #pylint: disable=unnecessary-lambda-assignment
+    
 _SLOTS = 6
 
 # HexDrive Hexpansion constants
