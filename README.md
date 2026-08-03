@@ -2,7 +2,7 @@
 
 Companion app for the HexDrive hexpansion. Supports 2 brushed DC motors, 4 RC servos (2 for HexDrive2), 1 motor + 2 servos (1 for HexDrive2). Features Logo-style motor programming, line following with colour sensor, Bluetooth LE control, I²C sensor testing, servo test mode, and persistent settings management.
 
-This guide is current for BadgeBot version 2.7
+This guide is current for BadgeBot version 2.8
 
 As this application has become quite complicated if you are looking for example code to use a HexDrive please see [HexDriveUseTemplate](https://github.com/TeamRobotmad/HexDriveUseTemplate)
 
@@ -68,11 +68,11 @@ The main menu includes a sub-menu of Settings which can be adjusted.
 |------------------|-------------------------------------------|----------------|--------|--------|
 | mid_hue          | Colour Hue recognised as middle of line   | 300            | 0      | 360    |
 | hue_range        | Colour Hue range recognised as 'line'     | 70             | 0      | 180    |
-| line_power       | Motor power when following line           | 10             | 2      | 127    |
-| pid_kp           | Proportional gain for line following      | 25             | 0      | 65536  |
-| pid_ki           | Integral gain for line following          | 0              | 0      | 65535  |
-| pid_kd           | Derivative gain for line following        | 200            | 0      | 65535  |
-| stop_range       | Minimum distance to obstacle in mm        | 100            | 20     | 500    |
+| line_power       | Motor power when following line           | 60             | 10     | 127    |
+| pid_kp           | Proportional gain for line following      | 60             | 0      | 2000   |
+| pid_ki           | Integral gain for line following          | 0              | 0      | 2000   |
+| pid_kd           | Derivative gain for line following        | 25             | 0      | 2000   |
+| stop_range       | Minimum distance to obstacle in mm        | 100            | 20     | 800    |
 | stop_colour      | Colour that stops line following          | Black          |        |        |
 | plot_type        | Data to show on live BLE Plot             | None           | None   | Power  |
 |                  |   (None, Colour, Range, PID, Power)       |                |        |        |
@@ -217,7 +217,7 @@ Hexpansion apps stored on EEPROM are minified before being compiled to `.mpy` to
 The pipeline uses `dev/minify.py` which:
 1. Renames internal `self.*` attributes to short names via an AST transform (source stays readable)
 2. Strips docstrings with `python-minifier`
-3. Compiles with `mpy-cross -march=xtensawin -O2`
+3. Compiles with `mpy-cross -march=xtensawin -O3`
 
 Typical savings are ~5% compared with compiling from source directly.
 

@@ -43,7 +43,7 @@ HEXDRIVE_APP_VERSION = 6
 HEXDRIVE2_APP_VERSION = 3
 
 SETTINGS_NAME_PREFIX = "badgebot"  # Prefix for settings keys in EEPROM
-APP_VERSION = "2.7" # BadgeBot App Version Number
+APP_VERSION = "2.8" # BadgeBot App Version Number
 _BLUETOOTH_NAME_PREFIX = "BBot"  # Prefix for Bluetooth device name, followed by a 3-digit number from the unique ID
 
 # If you change the URL then you will need to regenerate the QR code
@@ -503,18 +503,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         # Servo Hardware
         self.num_servos: int = 0        # initialised to 0 until we detect a HexDrive Hexpansion and can set this based on the actual number of servos it has
 
-
-        slots = get_slots_by_vid_pid(0xCBCB, 0x10C8)    # shortcut to initialise HexDrive2 as provided at EMF Camp 2026 BadgeBot Workshop
-        if len(slots) > 0:
-            self.hexdrive_ports = slots
-            _app = get_app_by_slot(slots[0])
-            if _app is not None:
-                print(f"B:HexDrive2 (with App) found in slot {slots[0]}")
-                self.hexdrive_apps.append(_app)
-            self._calc_num_motors_servos_sensors()
-            if self.logging:
-                print(f"B:Num motors={self.num_motors}, servos={self.num_servos}, sensors={self.num_sensors}")
-
         # HexAudio hexpansion
         self.hexaudio_port  = None            # Store the HexpansionConfig of the HexAudio that is providing the audio output
 
@@ -564,6 +552,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         # Bluetooth LE
         self._ble_override_active: bool = False
         self._motor_enable_mask: int = 0
+        self._ble_connected: bool = False
 
         # Queue of pending remote-control commands (REMOTE_CMD_*) posted by comms
         # transports (BLE now, others in future) and actioned from update().
@@ -611,18 +600,18 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             print(f"B:BadgeBot App V{self.app_version} Initialised")
 
 
-    def _calc_num_motors_servos_sensors(self):
-        """Calculate the total number of motors, servos, and sensors based on the detected HexDrive hexpansion types."""
-        self.num_motors = 0
-        self.num_servos = 0
-        self.num_sensors = 0
-        for _ in self.hexdrive_ports:
-            hexdrive_type_idx = self.HEXDRIVE_V2_HEXPANSION_INDEX # don't force this type
-            # when BLE is made a sub-app we won't need to pre-empt hexpansion_mgr and can wait for it to detect the hexpansion types...
-            if hexdrive_type_idx is not None and 0 <= hexdrive_type_idx < len(self.HEXPANSION_TYPES):
-                self.num_motors   += self.HEXPANSION_TYPES[hexdrive_type_idx].motors
-                self.num_servos   += self.HEXPANSION_TYPES[hexdrive_type_idx].servos
-                self.num_sensors  += self.HEXPANSION_TYPES[hexdrive_type_idx].sensors
+    #def _calc_num_motors_servos_sensors(self):
+    #    """Calculate the total number of motors, servos, and sensors based on the detected HexDrive hexpansion types."""
+    #    self.num_motors = 0
+    #    self.num_servos = 0
+    #    self.num_sensors = 0
+    #    for _ in self.hexdrive_ports:
+    #        hexdrive_type_idx = self.HEXDRIVE_V2_HEXPANSION_INDEX # don't force this type
+    #        # when BLE is made a sub-app we won't need to pre-empt hexpansion_mgr and can wait for it to detect the hexpansion types...
+    #        if hexdrive_type_idx is not None and 0 <= hexdrive_type_idx < len(self.HEXPANSION_TYPES):
+    #            self.num_motors   += self.HEXPANSION_TYPES[hexdrive_type_idx].motors
+    #            self.num_servos   += self.HEXPANSION_TYPES[hexdrive_type_idx].servos
+    #            self.num_sensors  += self.HEXPANSION_TYPES[hexdrive_type_idx].sensors
 
 
     def _register_state_functions(self, state: int, manager: object | None):
@@ -679,12 +668,13 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     @update_period.setter
     def update_period(self, value: int):
         """Convenience property to set update_period setting."""
-        # if we have an active Bluetooth Connection then we need to maintain a high update rate so that the motor acceleration is correct
-        if self._bluetooth_mgr is not None and self._bluetooth_mgr.is_connected:
+        # if we have enabled motors then we need to maintain a high update rate so that the motor acceleration is correct
+        if self._motor_enable_mask != 0:
             value = min(value, DEFAULT_ACTIVE_UPDATE_PERIOD)  # ensure we don't go below the minimum update period when Bluetooth is active
-        if self._logging:
-            print(f"B:Setting update_period to {value} ms")
-        self._update_period = value
+        if self._update_period != value:
+            if self._logging:
+                print(f"B:Setting update_period to {value} ms")
+            self._update_period = value
 
 
     def enable_motors(self, enable: bool, user: int) -> bool:
@@ -697,6 +687,13 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if user < 0:
             if self._logging:
                 print(f"B:Invalid motor user id {user}")
+            return False
+
+        if len(self.hexdrive_apps) == 0:
+            self._motor_enable_mask = 0
+            self.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD  # restore the default update period when motors are disabled
+            if self._logging:
+                print("B:No HexDrive apps available")
             return False
 
         bit = 1 << user
@@ -718,13 +715,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if motors_were_enabled == motors_should_be_enabled:
             return True
 
-        motor_hexdrive_app = self.hexdrive_apps[0] if len(self.hexdrive_apps) > 0 else None
-        if motor_hexdrive_app is None:
-            if self._logging:
-                print("B:No HexDrive app available for motors")
-            self._motor_enable_mask = 0
-            self.update_period = DEFAULT_BACKGROUND_UPDATE_PERIOD  # restore the default update period when motors are disabled
-            return False
+        motor_hexdrive_app = self.hexdrive_apps[0]
 
         if motors_should_be_enabled:
             ok = (motor_hexdrive_app.initialise()
@@ -832,7 +823,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 print("B:BadgeBot received RequestStopAppEvent, save settings & releasing resources")
             # Save settings before we exit, so that any changes made during this session are preserved
             platform_settings.save()
-            if self.pattern_status:
+            if not self.pattern_status:
                 eventbus.emit(PatternEnable())
                 self.pattern_status = True
             if self._hexpansion_mgr is not None:
@@ -1124,13 +1115,17 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 # Trigger an update cycle for hexpansion_mgr even though it is not currently active
                 self._hexpansion_mgr.update(delta)
 
-        # if Bluetooth has been Activated, update it even if we are not in the Bluetooth state, to ensure that BLE events are processed and the connection is maintained.
-        if self._bluetooth_mgr is not None and self.current_state != STATE_BLUETOOTH and self._bluetooth_mgr.is_active:
-            self._bluetooth_mgr.update(delta)
-        if self._bluetooth_mgr is not None and (self.current_state == STATE_BLUETOOTH or self._bluetooth_mgr.is_active):
-            if not self.enable_motors(self._bluetooth_mgr.is_connected, MOTOR_ENABLE_USER_BLE):
-                if self._logging:
-                    print("B:Failed BLE motor en/disable update")
+        if self._bluetooth_mgr is not None:
+            if self.current_state != STATE_BLUETOOTH and self._bluetooth_mgr.is_active:
+                # if Bluetooth has been Activated, update it even if we are not in the Bluetooth state, to ensure that BLE events are processed and the connection is maintained.
+                self._bluetooth_mgr.update(delta)
+            if self.current_state == STATE_BLUETOOTH or self._bluetooth_mgr.is_active:
+                # has BLE connection state changed?  If so, enable/disable motors for BLE user.
+                if self._bluetooth_mgr.is_connected != self._ble_connected:
+                    self._ble_connected = self._bluetooth_mgr.is_connected
+                    if not self.enable_motors(self._bluetooth_mgr.is_connected, MOTOR_ENABLE_USER_BLE):
+                        if self._logging:
+                            print("B:Failed BLE motor en/disable update")
 
         # Action any remote-control commands queued by comms transports (BLE now,
         # others in future).  State changes happen here, in the app, not in the transport.
@@ -1238,6 +1233,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.message_type = None
         self.message_return_state = None
         self.message_timeout = None
+        self.animation_counter = 0
+
 
 
     def _update_state_message(self, delta: int):
