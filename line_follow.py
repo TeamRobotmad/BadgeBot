@@ -139,15 +139,15 @@ def init_settings(s, MySetting: type):      #pylint: disable=invalid-name
         group=group, order=30, title="Hue range",
         description="Largest hue error accepted as the line")
     s['pid_kp']         = MySetting(
-        s, _DEFAULT_FOLLOWER_PID_KP, 0, 65536,
+        s, _DEFAULT_FOLLOWER_PID_KP, 0, 2000,
         group=group, order=40, title="PID Kp",
         description="Proportional steering gain")
     s['pid_ki']         = MySetting(
-        s, _DEFAULT_FOLLOWER_PID_KI, 0, 65535,
+        s, _DEFAULT_FOLLOWER_PID_KI, 0, 2000,
         group=group, order=45, title="PID Ki",
         description="Accumulated steering correction gain")
     s['pid_kd']         = MySetting(
-        s, _DEFAULT_FOLLOWER_PID_KD, 0, 65535,
+        s, _DEFAULT_FOLLOWER_PID_KD, 0, 2000,
         group=group, order=50, title="PID Kd",
         description="Steering response to error changes")
     s['min_range']      = MySetting(

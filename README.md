@@ -69,9 +69,9 @@ The main menu includes a sub-menu of Settings which can be adjusted.
 | mid_hue          | Colour Hue recognised as middle of line   | 300            | 0      | 360    |
 | hue_range        | Colour Hue range recognised as 'line'     | 70             | 0      | 180    |
 | line_power       | Motor power when following line           | 60             | 10     | 127    |
-| pid_kp           | Proportional gain for line following      | 60             | 0      | 65536  |
-| pid_ki           | Integral gain for line following          | 0              | 0      | 65535  |
-| pid_kd           | Derivative gain for line following        | 25             | 0      | 65535  |
+| pid_kp           | Proportional gain for line following      | 60             | 0      | 2000   |
+| pid_ki           | Integral gain for line following          | 0              | 0      | 2000   |
+| pid_kd           | Derivative gain for line following        | 25             | 0      | 2000   |
 | stop_range       | Minimum distance to obstacle in mm        | 100            | 20     | 800    |
 | stop_colour      | Colour that stops line following          | Black          |        |        |
 | plot_type        | Data to show on live BLE Plot             | None           | None   | Power  |
