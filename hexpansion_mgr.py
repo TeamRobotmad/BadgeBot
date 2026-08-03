@@ -26,7 +26,7 @@ from system.hexpansion.header import HexpansionHeader, write_header
 from system.hexpansion.util import get_hexpansion_block_devices, detect_eeprom_addr
 from system.scheduler import scheduler
 
-from .app import STATE_HEXPANSION
+from .app import STATE_HEXPANSION, STATE_LOGO
 
 _SLOTS = 6
 
@@ -761,7 +761,7 @@ class HexpansionMgr:
                 app.show_message(["Please", "reboop"], [(1,1,1),(1,1,1)], "reboop")
                 return # so that you can't get out of this without a reboop
             elif len(app.hexdrive_apps) == 0 and self._mode == _MODE_INIT:
-                app.show_message(_HEXDRIVE_REQUIRED_MESSAGE, _HEXDRIVE_REQUIRED_MESSAGE_COLOURS, "warning", return_state = STATE_HEXPANSION)
+                app.show_message(_HEXDRIVE_REQUIRED_MESSAGE, _HEXDRIVE_REQUIRED_MESSAGE_COLOURS, "error", timeout = 10000, return_state = STATE_LOGO)
                 self._message_being_shown = True
 
             if self._message_being_shown or self._mode == _MODE_INTERACTIVE:

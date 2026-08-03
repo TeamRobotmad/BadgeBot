@@ -1231,6 +1231,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.message_type = None
         self.message_return_state = None
         self.message_timeout = None
+        self.animation_counter = 0
+
 
 
     def _update_state_message(self, delta: int):
