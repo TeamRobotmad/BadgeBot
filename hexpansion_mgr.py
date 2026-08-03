@@ -82,7 +82,7 @@ _APP_EEPROM_RESULT_SUCCESSFUL_UPGRADE = const(1)
 _APP_EEPROM_RESULT_SUCCESSFUL_WRITE = const(2)
 
 
-_HEXDRIVE_REQUIRED_MESSAGE = ["Requires:","RobotMad HexDrive","github.com","/TeamRobotmad","/BadgeBot"]
+_HEXDRIVE_REQUIRED_MESSAGE = ["Requires:","RobotMad HexDrive","https://github.com","/TeamRobotmad","/BadgeBot"]
 _HEXDRIVE_REQUIRED_MESSAGE_COLOURS = [(1,1,0),(1,1,0),(0,1,1),(0,1,1),(0,1,1)]
 
 # Modes
@@ -1388,6 +1388,7 @@ class HexpansionMgr:
                     if self._logging:
                         print(f"B:Hexpansion [{port}] upgrade to {app.HEXPANSION_TYPES[type_index].app_mpy_version}?")
                     self._upgrade_port = port
+                    self._hexpansion_init_type = type_index # remember what type we are upgrading so we can use it to write the correct app.mpy to the EEPROM
                     self._sub_state = _SUB_UPGRADE_CONFIRM
                     app.refresh = True
             elif _TIME_TO_WAIT_FOR_APP_TO_APPEAR < self._hexpansion_app_startup_timer:
@@ -1396,6 +1397,7 @@ class HexpansionMgr:
                     print(f"B:Hexpansion [{port}] install {app.HEXPANSION_TYPES[type_index].app_mpy_name} app?")
                 self._hexpansion_state_by_slot[port - 1] = _HEXPANSION_STATE_RECOGNISED_NO_APP
                 self._upgrade_port = port
+                self._hexpansion_init_type = type_index # remember what type we are upgrading so we can use it to write the correct app.mpy to the EEPROM
                 self._sub_state = _SUB_UPGRADE_CONFIRM
                 app.refresh = True
             else:
