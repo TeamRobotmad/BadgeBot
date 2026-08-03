@@ -823,7 +823,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 print("B:BadgeBot received RequestStopAppEvent, save settings & releasing resources")
             # Save settings before we exit, so that any changes made during this session are preserved
             platform_settings.save()
-            if self.pattern_status:
+            if not self.pattern_status:
                 eventbus.emit(PatternEnable())
                 self.pattern_status = True
             if self._hexpansion_mgr is not None:
