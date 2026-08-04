@@ -38,9 +38,9 @@ _CALIBRATION_MSG_TIMEOUT_MS = const(4000)  # auto-dismiss the calibration remind
 _DEFAULT_COLOUR_STOP = const(0)  # default colour index to stop on ("Black")
 
 # Automatic Stop based on Range Sensor
-_DEFAULT_MIN_OBSTACLE_DISTANCE = const(100)  # minimum distance in mm to an obstacle before stopping
-_MIN_MIN_OBSTACLE_DISTANCE_MM = const(20)       # Minimum allowed value for the minimum range setting
-_MIN_MAX_OBSTACLE_DISTANCE_MM = const(500)      # Maximum allowed value for the minimum range setting
+_DEFAULT_MIN_OBSTACLE_DISTANCE = const(100)      # minimum distance in mm to an obstacle before stopping
+_MIN_MIN_OBSTACLE_DISTANCE_MM  = const(20)       # Minimum allowed value for the minimum range setting
+_MIN_MAX_OBSTACLE_DISTANCE_MM  = const(800)      # Maximum allowed value for the minimum range setting
 
 # For integer Hue values we use 0.1-degree units, so 360 degrees = 3600 units.
 _DEFAULT_MID_HUE = const(300)      # Default 'mid hue' for colour sensor, midway between red and blue (300 = 300.0 degrees)
@@ -53,26 +53,26 @@ _HUE_COLOUR_UNKNOWN = const(-1)  # special value for unknown hue (Achromatic col
 _HUE_SCALE_FACTOR = const(10)  # scale factor for hue values to allow finer adjustment in settings
 
 # PID Gains for Steering Control (scaled up by 1000 for integer maths)
-_DEFAULT_FOLLOWER_PID_KP = const( 25)
+_DEFAULT_FOLLOWER_PID_KP = const( 60)
 _DEFAULT_FOLLOWER_PID_KI = const(  0)
-_DEFAULT_FOLLOWER_PID_KD = const(200)
-_FOLLOWER_PID_SCALE_FACTOR = const(10)        # if you change the number of digits in this scale factor then update the draw formatting
+_DEFAULT_FOLLOWER_PID_KD = const( 25)
+_FOLLOWER_PID_SCALE_FACTOR = const(1)        # if you change the number of digits in this scale factor then update the draw formatting
 
-# Do not set this too high otherwise there is no scope for one wheel to be given more power than the other to steer. (max is 65536)
-_DEFAULT_FOLLOWER_POWER = const(10) # 20000 // MOTOR_POWER_SCALE_FACTOR   # NB can't wrap inside const()
-_MIN_LINE_POWER = const(2)          #  1000 // MOTOR_POWER_SCALE_FACTOR
-_MAX_LINE_POWER = const(127)        # 65536 // MOTOR_POWER_SCALE_FACTOR
+# Do not set this too high otherwise there is no scope for one wheel to be given more power than the other to steer. (max is 127)
+_DEFAULT_FOLLOWER_POWER = const(60)
+_MIN_LINE_POWER = const(10)
+_MAX_LINE_POWER = const(127)
 
 # Line Follower Modes
 _FOLLOWER_MODE_DIFFERENTIAL = const(0)
 _FOLLOWER_MODE_BINARY       = const(1)    # not implemented
 
 # Plot Selection Modes
-_PLOT_SELECTION_NONE = const(0)
+_PLOT_SELECTION_NONE   = const(0)
 _PLOT_SELECTION_COLOUR = const(1)
-_PLOT_SELECTION_RANGE = const(2)
-_PLOT_SELECTION_PID = const(3)
-_PLOT_SELECTION_POWER = const(4)
+_PLOT_SELECTION_RANGE  = const(2)
+_PLOT_SELECTION_PID    = const(3)
+_PLOT_SELECTION_POWER  = const(4)
 _PLOT_SELECTION_LABELS = ("None", "Colour", "Range", "PID", "Power")
 
 
@@ -86,8 +86,8 @@ _PLOT_SELECTION_LABELS = ("None", "Colour", "Range", "PID", "Power")
 # The structure is explicitly: (Label, Variable, ID, (X, Y, W, H))
 _EDIT_FIELDS: tuple[tuple[str, str, int, tuple[int, int, int, int]], ...] = (
     ("Hue", "mid_hue", 0, (-45, -66, 90, 30)),
-    ("Kp",  "pid_kp",  1, (-92, 33, 82, 22)),
-    ("Kd",  "pid_kd",  1, (10, 33, 82, 22)),
+    ("Kp",  "pid_kp",  0, (-92, 33, 82, 22)),
+    ("Kd",  "pid_kd",  0, (10, 33, 82, 22)),
 )
 
 
@@ -139,15 +139,15 @@ def init_settings(s, MySetting: type):      #pylint: disable=invalid-name
         group=group, order=30, title="Hue range",
         description="Largest hue error accepted as the line")
     s['pid_kp']         = MySetting(
-        s, _DEFAULT_FOLLOWER_PID_KP, 0, 65536,
+        s, _DEFAULT_FOLLOWER_PID_KP, 0, 2000,
         group=group, order=40, title="PID Kp",
         description="Proportional steering gain")
     s['pid_ki']         = MySetting(
-        s, _DEFAULT_FOLLOWER_PID_KI, 0, 65535,
+        s, _DEFAULT_FOLLOWER_PID_KI, 0, 2000,
         group=group, order=45, title="PID Ki",
         description="Accumulated steering correction gain")
     s['pid_kd']         = MySetting(
-        s, _DEFAULT_FOLLOWER_PID_KD, 0, 65535,
+        s, _DEFAULT_FOLLOWER_PID_KD, 0, 2000,
         group=group, order=50, title="PID Kd",
         description="Steering response to error changes")
     s['min_range']      = MySetting(
@@ -181,7 +181,7 @@ class LineFollowMgr:
                  "_last_colour", "_last_colour_hue", "_last_colour_name", "_colour_hexdrive", "_range_hexdrive",
                  "_colour_stop", "_mid_hue", "_max_hue", "_new_sample", "_display_refresh_time", "_display_refresh_interval", "_signed_steering_gain",
                  "_time_since_line_detected", "_selected_field", "_enable_movement", "_min_obstacle_distance", "_obstacle_detection_count", "_calibration_msg_shown",
-                 "_last_range_mm", "_plot_selection", "_last_p_term", "_last_i_term", "_last_d_term")
+                 "_last_range_mm", "_plot_selection", "_last_p_term", "_last_i_term", "_last_d_term", "_time_since_last_update_ms")
 
     def __init__(self, app, logging: bool = True):
         self._app = app
@@ -219,6 +219,7 @@ class LineFollowMgr:
         self._last_p_term: int = 0
         self._last_i_term: int = 0
         self._last_d_term: int = 0
+        self._time_since_last_update_ms: int = 0
         if self._logging:
             print("B:LineFollowMgr initialised")
 
@@ -305,6 +306,7 @@ class LineFollowMgr:
             self.integral_limit = self._app.max_power // self.ki
         else:
             self.integral_limit = 0
+        self._time_since_last_update_ms = 0
 
         # optionally enable range sensor for obstacle detection
         range_hexdrive = sensor_mgr.active_range_hexdrive() if sensor_mgr is not None else None
@@ -341,7 +343,7 @@ class LineFollowMgr:
             #print(f"B:LF:RS={app.sensor_test_mgr.range_sensor_stats.rate_str}")
             pass
 
-        # We don't want to update display every sample, so we use a refresh timer to limit the update rate.
+        # We don't want to update display/plot every sample, so we use a refresh timer to limit the update rate.
         self._display_refresh_time += delta
         if self._display_refresh_time >= self._display_refresh_interval:
             if self._new_sample:
@@ -526,6 +528,7 @@ class LineFollowMgr:
             _ = colour_sensor.read()
 
         new_sample, hue, _, name, _raw = sensor_mgr.read_colour(self._colour_hexdrive)
+        self._time_since_last_update_ms += delta
         if new_sample:
             #if self._logging:
             #    print(f"B:LF:Hue={hue//10}.{hue%10}° Name={name}")
@@ -564,7 +567,8 @@ class LineFollowMgr:
                     if abs(hue_difference_from_mid) < self._max_hue:
                         steering_input = self._signed_steering_gain * hue_difference_from_mid
                         if self._enable_movement:
-                            output = self.compute_differential_output(steering_input)
+                            output = self.compute_differential_output(steering_input, self._time_since_last_update_ms)
+                            self._time_since_last_update_ms = 0
                             self._app.performance_mode = True  # enable performance mode while we are actively following the line
                         else:
                             self._app.performance_mode = False  # disable performance mode if we are not actively following the line
@@ -588,7 +592,72 @@ class LineFollowMgr:
         return output
 
 
-    def compute_differential_output(self, error: int) -> tuple[int, int]:
+    @micropython.viper
+    def _compute_steering_control(self, error: int, delta: int, kp: int, ki:int, kd:int) -> int:
+        """Compute steering control using a full PID controller for differential line following."""
+
+        # Proportional term
+        p_term: int = kp * error
+        i_term: int = 0
+        d_term: int = 0
+
+        # Integral term - accumulate error over time with anti-windup clamping
+        if ki > 0:
+            # Cast object attributes to int before doing math
+            integral: int = int(self._pid_integral) + error
+            limit: int = int(self.integral_limit)
+
+            # Inline _clamp logic (much faster in Viper)
+            if integral < -limit:
+                integral = -limit
+            elif integral > limit:
+                integral = limit
+
+            self._pid_integral = integral
+            i_term = ki * integral
+        else:
+            i_term = 0
+
+        # Derivative term - rate of change of error
+        if delta > 0:
+            prev_error: int = int(self._pid_previous_error)
+            d_term: int = kd * (error - prev_error) * 1000
+            d_term = d_term // delta
+        else:
+            d_term: int = 0
+
+        self._pid_previous_error = error
+        self._last_p_term = p_term
+        self._last_i_term = i_term
+        self._last_d_term = d_term
+
+        # Combined PID output
+        correction: int = p_term + i_term + d_term
+
+        # NOT IN USE AT PRESENT:
+        # adjust forward power to be faster when well aligned with the line, and slower when far from the line, to avoid overshooting
+        # scale the line power based on the absolute error, so that when the error is small the line power is at maximum, and when the error is large the line power is reduced to avoid overshooting
+        #abs_error = abs(error)
+        # scale line power linearly from max to min (25%) based on the error when too far from the line mid point, to avoid overshooting.  When the error is small, use full line power.
+        #if abs_error >= (self._max_hue // 4):
+        #    line_power = (self.line_power * (self._max_hue + (self._max_hue//4) - abs_error)) // self._max_hue
+        #else:
+
+        # limit the maximum correction to 1.5x the line power, so that the robot does not turn too sharply and overshoot the line.
+        line_power: int = int(self.line_power)
+
+        correction_limit: int = (3 * line_power) >> 1
+
+        # Inline _clamp logic for correction output
+        if correction < -correction_limit:
+            correction = -correction_limit
+        elif correction > correction_limit:
+            correction = correction_limit
+
+        return correction
+
+
+    def compute_differential_output(self, error: int, delta: int) -> tuple[int, int]:
         """Compute motor output using a full PID controller for differential line following.
 
         Uses the difference between left and right sensor readings as the error signal,
@@ -596,48 +665,15 @@ class LineFollowMgr:
         Returns a tuple of (left_motor, right_motor) power values, clamped to max_power.
         Uses integer maths for efficiency, scaling down the PID gains and error values to avoid overflow.
         """
-
-        # Proportional term
-        p_term = (self.kp * error) // _FOLLOWER_PID_SCALE_FACTOR  # Scale down the error for the proportional term
-
-        # Integral term - accumulate error over time with anti-windup clamping
-        if self.ki > 0:
-            self._pid_integral += error
-            self._pid_integral = max(min(self._pid_integral, self.integral_limit), -self.integral_limit)
-            i_term = (self.ki * self._pid_integral) // _FOLLOWER_PID_SCALE_FACTOR
-        else:
-            i_term = 0
-
-        # Derivative term - rate of change of error
-        d_term = (self.kd * (error - self._pid_previous_error)) // _FOLLOWER_PID_SCALE_FACTOR
-        self._pid_previous_error = error
-
-        # Combined PID output
-        correction = p_term + i_term + d_term
-
-        self._last_p_term = p_term
-        self._last_i_term = i_term
-        self._last_d_term = d_term
-
-        # adjust forward power to be faster when well aligned with the line, and slower when far from the line, to avoid overshooting
-        # scale the line power based on the absolute error, so that when the error is small the line power is at maximum, and when the error is large the line power is reduced to avoid overshooting
-        #abs_error = abs(error)
-
-        # scale line power linearly from max to min (25%) based on the error when too far from the line mid point, to avoid overshooting.  When the error is small, use full line power.
-        #if abs_error >= (self._max_hue // 4):
-        #    line_power = (self.line_power * (self._max_hue + (self._max_hue//4) - abs_error)) // self._max_hue
-        #else:
-        line_power = self.line_power
-
-        correction_limit = (3 * line_power) // 2
-        correction = _clamp(correction, -correction_limit, correction_limit)  # limit correction
+        correction = self._compute_steering_control(error, delta, self.kp, self.ki, self.kd)
 
         # Combine correction with base forward power to get output for each motor & limit output to max power
+        line_power = self.line_power
         max_power = self._app.max_power
         output = (_clamp(line_power + correction, -max_power, max_power), _clamp(line_power - correction, -max_power, max_power))
 
         if self._logging:
-            print(f"B:LF:PID:Err={error} P={p_term} I={i_term} D={d_term} Corr={correction} Out={output}")
+            print(f"B:LF:PID:Err={error} P={self._last_p_term} I={self._last_i_term} D={self._last_d_term} Corr={correction} Out={output}")
 
         return output
 
@@ -702,8 +738,8 @@ class LineFollowMgr:
             # that line up with the highlight rectangles in _EDIT_FIELDS.
             ctx.font_size = small_font_size
             gains_y = 2 * label_font_size
-            kp_text = f"Kp:{self.kp // _FOLLOWER_PID_SCALE_FACTOR}.{self.kp % _FOLLOWER_PID_SCALE_FACTOR:01d}"
-            kd_text = f"Kd:{self.kd // _FOLLOWER_PID_SCALE_FACTOR}.{self.kd % _FOLLOWER_PID_SCALE_FACTOR:01d}"
+            kp_text = f"Kp:{self.kp}"      # // _FOLLOWER_PID_SCALE_FACTOR}.{self.kp % _FOLLOWER_PID_SCALE_FACTOR:01d}"
+            kd_text = f"Kd:{self.kd}"      # // _FOLLOWER_PID_SCALE_FACTOR}.{self.kd % _FOLLOWER_PID_SCALE_FACTOR:01d}"
             ctx.rgb(1, 1, 0).move_to(-51 - ctx.text_width(kp_text)//2, gains_y).text(kp_text)
             ctx.rgb(1, 1, 0).move_to( 51 - ctx.text_width(kd_text)//2, gains_y).text(kd_text)
 

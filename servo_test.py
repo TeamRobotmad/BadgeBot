@@ -262,7 +262,7 @@ class ServoTestMgr:
                     if self.servo[self.servo_selected] is None:
                         self.servo[self.servo_selected] = 0
                 app.refresh = True
-                app.notification = Notification(f"  Servo {self.servo_selected}:\n {self.servo_mode[self.servo_selected]}")
+                app.notification = Notification(f"Servo {self.servo_selected + 1}: {self.servo_mode[self.servo_selected]}")
 
         if app.refresh:
             self._time_since_last_input = 0
@@ -273,7 +273,7 @@ class ServoTestMgr:
                     app.hexdrive_apps[0].set_power(False)
                     app.hexdrive_apps[0].set_servoposition()
                 app.return_to_menu()
-                app.notification = Notification("  Servo:\n Timeout")
+                app.notification = Notification("Servo: Timeout")
 
         self._time_since_last_update += delta
         if self._time_since_last_update > self.keep_alive_period:
