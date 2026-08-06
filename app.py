@@ -331,6 +331,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         "_hue_hist_buffer",
         "_hue_hist_head",
         "_hue_hist_accum",
+        "_about_leds_enabled",
     )
 
     DEFAULT_MAX_POWER = DEFAULT_MAX_POWER
@@ -564,6 +565,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self._hue_hist_buffer: list = [(0, 0, 0)] * _LED_HUE_BUFFER_LEN
         self._hue_hist_head: int = 0
         self._hue_hist_accum: int = 0
+        self._about_leds_enabled: bool = False
 
         # Hexpansion event handlers registered directly by hexpansion_mgr
         if self._hexpansion_mgr is not None:
@@ -1187,6 +1189,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 self.return_to_menu()
                 return
             else:
+                if self.current_state == STATE_LOGO:
+                    self._set_about_hexdrive2_leds(False)
                 self.button_states.clear()
                 platform_settings.save()  # Save settings before minimising
                 self.minimise()
@@ -1238,11 +1242,19 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
 
     def _update_state_message(self, delta: int):
+        if self.current_state == STATE_LOGO and (self.button_states.get(BUTTONS["A"]) or self.button_states.get(BUTTON_TYPES["UP"])):
+            self.button_states.clear()
+            if self._logging:
+                print("B:About A pressed")
+            self._toggle_about_hexdrive2_leds()
+            return
         if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
             self.button_states.clear()
             if self.message_type == "reboop":
                 # Reboot has been acknowledged by the user - unfortunately we can't actually reboot the badge from Python.
                 return # leave the message on screen.
+            if self.current_state == STATE_LOGO:
+                self._set_about_hexdrive2_leds(False)
             # Message has been acknowledged by the user
             self._dismiss_message()
         else:
@@ -1405,6 +1417,29 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         """Utility function to clear all LEDs. This is used when setting direction LEDs to ensure only the relevant ones are lit."""
         for i in range(1,13):
             tildagonos.leds[i] = (0, 0, 0)
+
+
+    def _set_about_hexdrive2_leds(self, enabled: bool):
+        """Set HexDrive2 flood LEDs used by the About page; ignored for non-HexDrive2 apps."""
+        self._about_leds_enabled = enabled
+        handled = 0
+        for hexdrive_app in self.hexdrive_apps:
+            setter = getattr(hexdrive_app, "set_flood_led", None)
+            if setter is None:
+                continue
+            try:
+                setter(enabled)
+                handled += 1
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                if self._logging:
+                    print(f"B:About LED set failed: {e}")
+        if self._logging:
+            print(f"B:About LED {'ON' if enabled else 'OFF'} apps={handled}")
+
+
+    def _toggle_about_hexdrive2_leds(self):
+        """Toggle HexDrive2 flood LEDs from the About page."""
+        self._set_about_hexdrive2_leds(not self._about_leds_enabled)
 
 
     def apply_motor_calibration(self, output: tuple) -> tuple:
