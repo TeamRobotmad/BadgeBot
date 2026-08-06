@@ -1187,6 +1187,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 self.return_to_menu()
                 return
             else:
+                if self.current_state == STATE_LOGO:
+                    self._set_about_hexdrive2_leds(False)
                 self.button_states.clear()
                 platform_settings.save()  # Save settings before minimising
                 self.minimise()
@@ -1238,11 +1240,19 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
 
     def _update_state_message(self, delta: int):
+        if self.current_state == STATE_LOGO and (self.button_states.get(BUTTONS["A"]) or self.button_states.get(BUTTON_TYPES["UP"])):
+            self.button_states.clear()
+            if self._logging:
+                print("B:About A pressed")
+            self._toggle_about_hexdrive2_leds()
+            return
         if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
             self.button_states.clear()
             if self.message_type == "reboop":
                 # Reboot has been acknowledged by the user - unfortunately we can't actually reboot the badge from Python.
                 return # leave the message on screen.
+            if self.current_state == STATE_LOGO:
+                self._set_about_hexdrive2_leds(False)
             # Message has been acknowledged by the user
             self._dismiss_message()
         else:
@@ -1405,6 +1415,43 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         """Utility function to clear all LEDs. This is used when setting direction LEDs to ensure only the relevant ones are lit."""
         for i in range(1,13):
             tildagonos.leds[i] = (0, 0, 0)
+
+
+    def _set_about_hexdrive2_leds(self, enabled: bool):
+        """Set HexDrive2 flood LEDs used by the About page; ignored for non-HexDrive2 apps."""
+        handled = 0
+        for hexdrive_app in self.hexdrive_apps:
+            setter = getattr(hexdrive_app, "set_flood_led", None)
+            if setter is None:
+                setter = getattr(hexdrive_app, "set_sensor_led", None)
+            if setter is None:
+                continue
+            try:
+                setter(enabled)
+                handled += 1
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                if self._logging:
+                    print(f"B:About LED set failed: {e}")
+        if self._logging:
+            print(f"B:About LED {'ON' if enabled else 'OFF'} apps={handled}")
+
+
+    def _toggle_about_hexdrive2_leds(self):
+        """Toggle HexDrive2 flood LEDs from the About page."""
+        enabled = False
+        for hexdrive_app in self.hexdrive_apps:
+            if not hasattr(hexdrive_app, "flood_led"):
+                continue
+            try:
+                flood_led = getattr(hexdrive_app, "flood_led")
+                state = flood_led() if callable(flood_led) else bool(flood_led)
+                if state:
+                    enabled = True
+                    break
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                if self._logging:
+                    print(f"B:About LED read failed: {e}")
+        self._set_about_hexdrive2_leds(not enabled)
 
 
     def apply_motor_calibration(self, output: tuple) -> tuple:
