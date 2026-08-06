@@ -331,6 +331,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         "_hue_hist_buffer",
         "_hue_hist_head",
         "_hue_hist_accum",
+        "_about_leds_enabled",
     )
 
     DEFAULT_MAX_POWER = DEFAULT_MAX_POWER
@@ -564,6 +565,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self._hue_hist_buffer: list = [(0, 0, 0)] * _LED_HUE_BUFFER_LEN
         self._hue_hist_head: int = 0
         self._hue_hist_accum: int = 0
+        self._about_leds_enabled: bool = False
 
         # Hexpansion event handlers registered directly by hexpansion_mgr
         if self._hexpansion_mgr is not None:
@@ -1419,6 +1421,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
     def _set_about_hexdrive2_leds(self, enabled: bool):
         """Set HexDrive2 flood LEDs used by the About page; ignored for non-HexDrive2 apps."""
+        self._about_leds_enabled = enabled
         handled = 0
         for hexdrive_app in self.hexdrive_apps:
             setter = getattr(hexdrive_app, "set_flood_led", None)
@@ -1438,20 +1441,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
     def _toggle_about_hexdrive2_leds(self):
         """Toggle HexDrive2 flood LEDs from the About page."""
-        enabled = False
-        for hexdrive_app in self.hexdrive_apps:
-            if not hasattr(hexdrive_app, "flood_led"):
-                continue
-            try:
-                flood_led = getattr(hexdrive_app, "flood_led")
-                state = flood_led() if callable(flood_led) else bool(flood_led)
-                if state:
-                    enabled = True
-                    break
-            except Exception as e:  # pylint: disable=broad-exception-caught
-                if self._logging:
-                    print(f"B:About LED read failed: {e}")
-        self._set_about_hexdrive2_leds(not enabled)
+        self._set_about_hexdrive2_leds(not self._about_leds_enabled)
 
 
     def apply_motor_calibration(self, output: tuple) -> tuple:
