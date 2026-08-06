@@ -1426,8 +1426,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         for hexdrive_app in self.hexdrive_apps:
             setter = getattr(hexdrive_app, "set_flood_led", None)
             if setter is None:
-                setter = getattr(hexdrive_app, "set_sensor_led", None)
-            if setter is None:
                 continue
             try:
                 setter(enabled)
