@@ -526,8 +526,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self._settings_mgr     = SettingsMgr(self, logging=self.logging)    if SettingsMgr is not None else None
         self._line_follow_mgr  = LineFollowMgr(self, logging=self.logging)  if LineFollowMgr is not None else None
         self._sensor_test_mgr  = SensorTestMgr(self, logging=self.logging)  if SensorTestMgr is not None else None
-        # Auto Tune and Auto Drive are not available.
-        self._autodrive_mgr    = None # AutoDriveMgr(self, logging=self.logging)   if AutoDriveMgr is not None else None
+        self._autodrive_mgr    = AutoDriveMgr(self, logging=self.logging)   if AutoDriveMgr is not None else None
         self._autotune_mgr     = None # AutotuneMgr(self, self._line_follow_mgr, logging=self.logging) if AutotuneMgr is not None else None
 
         # State -> manager dispatch tables (only include managers that exist)

@@ -31,8 +31,9 @@ class MySetting:
     GROUP_MOTORS = 1
     GROUP_DRIVING = 2
     GROUP_LINE_FOLLOWER = 3
-    GROUP_SERVOS = 4
-    GROUP_NAMES = ("General", "Motors", "Driving", "Line follower", "Servos")
+    GROUP_AUTO_DRIVE = 4
+    GROUP_SERVOS = 5
+    GROUP_NAMES = ("General", "Motors", "Driving", "Line follower", "Auto drive", "Servos")
 
     __slots__ = ("_container", "d", "v", "_min", "_max", "_wrap", "_labels", "group", "order", "title", "description")
 
