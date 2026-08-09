@@ -163,7 +163,7 @@ _LED_CONTROL_STATES    = [STATE_MOTOR_MOVES, STATE_COUNTDOWN, STATE_MESSAGE, STA
 #Misceallaneous Settings
 _DEFAULT_LOGGING = False
 _IS_SIMULATOR = sys.platform != "esp32"  # True when running in the simulator, not on real badge hardware
-_DEFAULT_FWD_DIR = const(0)  # Default forward direction for motors (1=normal, 0=reversed)
+_DEFAULT_FWD_DIR = const(0)  # Default forward direction for motors (0=normal, 1=reversed)
 _DEFAULT_FRONT_FACE = const(5)        # Front Face is Slot 3 on a standard build BadgeBot
 _DEFAULT_MOTOR_DEADBAND = const(1)    # Minimum motor demand output value below which we don't try to move the motor. i.e. only if demand is above this do we apply the compensation below...
 _DEFAULT_MOTOR_MIN = const((64 * 65536) // (512 * 100)) # Minimum motor PWM value (0-65535) for each motor, below which the motor will not move.  This is used to compensate for differences in motors and gearboxes, so that both motors start moving at the same time when given the same power level.
