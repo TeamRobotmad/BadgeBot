@@ -163,7 +163,7 @@ _LED_CONTROL_STATES    = [STATE_MOTOR_MOVES, STATE_COUNTDOWN, STATE_MESSAGE, STA
 #Misceallaneous Settings
 _DEFAULT_LOGGING = False
 _IS_SIMULATOR = sys.platform != "esp32"  # True when running in the simulator, not on real badge hardware
-_DEFAULT_FWD_DIR = const(0)  # Default forward direction for motors (1=normal, 0=reversed)
+_DEFAULT_FWD_DIR = const(0)  # Default forward direction for motors (0=normal, 1=reversed)
 _DEFAULT_FRONT_FACE = const(5)        # Front Face is Slot 3 on a standard build BadgeBot
 _DEFAULT_MOTOR_DEADBAND = const(1)    # Minimum motor demand output value below which we don't try to move the motor. i.e. only if demand is above this do we apply the compensation below...
 _DEFAULT_MOTOR_MIN = const((64 * 65536) // (512 * 100)) # Minimum motor PWM value (0-65535) for each motor, below which the motor will not move.  This is used to compensate for differences in motors and gearboxes, so that both motors start moving at the same time when given the same power level.
@@ -331,6 +331,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         "_hue_hist_buffer",
         "_hue_hist_head",
         "_hue_hist_accum",
+        "_about_leds_enabled",
     )
 
     DEFAULT_MAX_POWER = DEFAULT_MAX_POWER
@@ -564,6 +565,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self._hue_hist_buffer: list = [(0, 0, 0)] * _LED_HUE_BUFFER_LEN
         self._hue_hist_head: int = 0
         self._hue_hist_accum: int = 0
+        self._about_leds_enabled: bool = False
 
         # Hexpansion event handlers registered directly by hexpansion_mgr
         if self._hexpansion_mgr is not None:
@@ -1419,6 +1421,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
     def _set_about_hexdrive2_leds(self, enabled: bool):
         """Set HexDrive2 flood LEDs used by the About page; ignored for non-HexDrive2 apps."""
+        self._about_leds_enabled = enabled
         handled = 0
         for hexdrive_app in self.hexdrive_apps:
             setter = getattr(hexdrive_app, "set_flood_led", None)
@@ -1439,18 +1442,24 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     def _toggle_about_hexdrive2_leds(self):
         """Toggle HexDrive2 flood LEDs from the About page."""
         enabled = False
+        saw_state = False
         for hexdrive_app in self.hexdrive_apps:
-            if not hasattr(hexdrive_app, "flood_led"):
+            reader = getattr(hexdrive_app, "flood_led", None)
+            if reader is None:
+                reader = getattr(hexdrive_app, "sensor_led", None)
+            if reader is None:
                 continue
             try:
-                flood_led = getattr(hexdrive_app, "flood_led")
-                state = flood_led() if callable(flood_led) else bool(flood_led)
+                state = reader() if callable(reader) else bool(reader)
+                saw_state = True
                 if state:
                     enabled = True
                     break
             except Exception as e:  # pylint: disable=broad-exception-caught
                 if self._logging:
                     print(f"B:About LED read failed: {e}")
+        if not saw_state:
+            enabled = self._about_leds_enabled
         self._set_about_hexdrive2_leds(not enabled)
 
 
