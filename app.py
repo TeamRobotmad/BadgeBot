@@ -1245,7 +1245,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             self.button_states.clear()
             if self._logging:
                 print("B:About A pressed")
-            self._toggle_about_hexdrive2_leds()
+            self._toggle_flood_leds()
             return
         if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
             self.button_states.clear()
@@ -1253,7 +1253,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 # Reboot has been acknowledged by the user - unfortunately we can't actually reboot the badge from Python.
                 return # leave the message on screen.
             if self.current_state == STATE_LOGO:
-                self._set_about_hexdrive2_leds(False)
+                self._set_flood_leds(False)
             # Message has been acknowledged by the user
             self._dismiss_message()
         else:
@@ -1418,8 +1418,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             tildagonos.leds[i] = (0, 0, 0)
 
 
-    def _set_about_hexdrive2_leds(self, enabled: bool):
-        """Set HexDrive2 flood LEDs used by the About page; ignored for non-HexDrive2 apps."""
+    def _set_flood_leds(self, enabled: bool):
+        """Set HexDrive2 flood LEDs; ignored for non-HexDrive2 apps."""
         self._about_leds_enabled = enabled
         handled = 0
         for hexdrive_app in self.hexdrive_apps:
@@ -1436,26 +1436,9 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             print(f"B:About LED {'ON' if enabled else 'OFF'} apps={handled}")
 
 
-    def _toggle_about_hexdrive2_leds(self):
-        """Toggle HexDrive2 flood LEDs from the About page."""
-        enabled = False
-        saw_state = False
-        for hexdrive_app in self.hexdrive_apps:
-            reader = getattr(hexdrive_app, "flood_led", None)
-            if reader is None:
-                continue
-            try:
-                state = reader() if callable(reader) else bool(reader)
-                saw_state = True
-                if state:
-                    enabled = True
-                    break
-            except Exception as e:  # pylint: disable=broad-exception-caught
-                if self._logging:
-                    print(f"B:About LED read failed: {e}")
-        if not saw_state:
-            enabled = self._about_leds_enabled
-        self._set_about_hexdrive2_leds(not enabled)
+    def _toggle_flood_leds(self):
+        """Toggle HexDrive2 flood LEDs."""
+        self._set_flood_leds(not self._about_leds_enabled)
 
 
     def apply_motor_calibration(self, output: tuple) -> tuple:
