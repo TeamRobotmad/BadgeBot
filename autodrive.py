@@ -45,7 +45,7 @@ _AUTO_BACKUP_MS = 600
 _AUTO_BACKUP_NEAR_MM = 200
 _AUTO_BACKUP_SPEED_FRAC = 0.7
 _AUTO_OBSTACLE_CONFIRM_SAMPLES = 2
-_AUTO_UI_REFRESH_MS = 100
+_AUTO_PLOT_INTERVAL_MS = 100
 _AUTO_LOG_INTERVAL_MS = 500
 
 # Default settings
@@ -100,13 +100,10 @@ class AutoDriveMgr:
         self.motor_output: tuple[int, int] = (0, 0)
         self.status: str = ""
 
-        self._display_refresh_ms: int = 0
+        self._plot_ms: int = 0
         self._range_age_ms: int = 0
         self._range_log_ms: int = 0
         self._range_samples: int = 0
-        self._last_draw_distance: int | None = None
-        self._last_draw_status: str = ""
-        self._last_draw_sub_state: int = self.sub_state
 
         if self._logging:
             print("A:AutoDriveMgr initialised")
@@ -159,13 +156,10 @@ class AutoDriveMgr:
         self.motor_output = (0, 0)
         self.status = "Starting"
 
-        self._display_refresh_ms = 0
+        self._plot_ms = 0
         self._range_age_ms = 0
         self._range_log_ms = 0
         self._range_samples = 0
-        self._last_draw_distance = None
-        self._last_draw_status = ""
-        self._last_draw_sub_state = self.sub_state
 
         self._enter_drive()
         return True
@@ -193,19 +187,6 @@ class AutoDriveMgr:
             self._update_turn(delta, gyro_delta)
 
         self._apply_output_ramp(delta)
-
-        self._display_refresh_ms += delta
-        if self._display_refresh_ms >= _AUTO_UI_REFRESH_MS:
-            self._display_refresh_ms = 0
-            self._app.refresh = True
-
-        if (self.sub_state != self._last_draw_sub_state
-                or self.distance != self._last_draw_distance
-                or self.status != self._last_draw_status):
-            self._last_draw_sub_state = self.sub_state
-            self._last_draw_distance = self.distance
-            self._last_draw_status = self.status
-            self._app.refresh = True
 
     def draw(self, ctx):
         """Draw the auto-drive UI overlay."""
@@ -278,6 +259,19 @@ class AutoDriveMgr:
 
                 if self.sub_state == _AUTO_SUB_SCAN:
                     self._scan_record_sample()
+
+                self._plot_ms += delta
+                if self._plot_ms >= _AUTO_PLOT_INTERVAL_MS:
+                    self._plot_ms = 0
+                    progress = int(
+                        self.scan_progress_deg if self.sub_state == _AUTO_SUB_SCAN
+                        else self.turn_progress_deg
+                    )
+                    self._app.bluetooth_mgr.send_plotter_data([
+                        self.distance if self.distance is not None else 0,
+                        self.sub_state * 1000,
+                        progress,
+                    ])
             elif self._logging and self._range_log_ms >= _AUTO_LOG_INTERVAL_MS:
                 self._range_log_ms = 0
                 print(f"A:Waiting for range sample age={self._range_age_ms}ms")
@@ -427,6 +421,8 @@ class AutoDriveMgr:
             dist = _AUTO_CLEAR_DIST_MM
         angle = min(self.scan_progress_deg, _AUTO_SCAN_TARGET_DEG)
         self.scan_data.append((angle, dist))
+        if self._logging:
+            print(f"A:ScanSample angle={angle:.1f}deg dist={dist}mm")
 
     def _select_best_scan_heading(self) -> tuple[float, int] | None:
         """Pick the clearest heading using local neighborhood scoring.
@@ -489,7 +485,12 @@ class AutoDriveMgr:
 
         self.best_angle_deg, self.best_dist_mm = best
 
-        turn_dir, turn_deg = self._heading_to_turn(self.best_angle_deg)
+        # best_angle_deg is relative to where the scan started; correct for how far
+        # past that the robot has actually rotated before the scan stopped.
+        scan_overshoot_deg = self.scan_progress_deg % 360.0
+        corrected_heading_deg = (self.best_angle_deg - scan_overshoot_deg) % 360.0
+
+        turn_dir, turn_deg = self._heading_to_turn(corrected_heading_deg)
         self.turn_dir = turn_dir
         self.target_deg = turn_deg
 
@@ -499,6 +500,7 @@ class AutoDriveMgr:
                 "A:Scan done "
                 + reason
                 + f" best={self.best_angle_deg:.1f}deg dist={self.best_dist_mm}mm"
+                + f" overshoot={scan_overshoot_deg:.1f}deg corrected={corrected_heading_deg:.1f}deg"
             )
 
         if self.best_dist_mm >= _AUTO_CLEAR_DIST_MM:
