@@ -163,7 +163,7 @@ _LED_CONTROL_STATES    = [STATE_MOTOR_MOVES, STATE_COUNTDOWN, STATE_MESSAGE, STA
 #Misceallaneous Settings
 _DEFAULT_LOGGING = False
 _IS_SIMULATOR = sys.platform != "esp32"  # True when running in the simulator, not on real badge hardware
-_DEFAULT_FWD_DIR = const(0)
+_DEFAULT_FWD_DIR = const(0)  # Default forward direction for motors (0=normal, 1=reversed)
 _DEFAULT_FRONT_FACE = const(5)        # Front Face is Slot 3 on a standard build BadgeBot
 _DEFAULT_MOTOR_DEADBAND = const(1)    # Minimum motor demand output value below which we don't try to move the motor. i.e. only if demand is above this do we apply the compensation below...
 _DEFAULT_MOTOR_MIN = const((64 * 65536) // (512 * 100)) # Minimum motor PWM value (0-65535) for each motor, below which the motor will not move.  This is used to compensate for differences in motors and gearboxes, so that both motors start moving at the same time when given the same power level.
@@ -429,7 +429,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 group=MySetting.GROUP_MOTORS, order=20, title="Deadband",
                 description="Ignores very small motor demands around zero")
             self.settings['mtr1_dir']      = MySetting(
-                self.settings, _DEFAULT_FWD_DIR, 0, 1, labels=_MOTOR_DIRECTION_LABELS,
+                self.settings, 1 - _DEFAULT_FWD_DIR, 0, 1, labels=_MOTOR_DIRECTION_LABELS,
                 group=MySetting.GROUP_MOTORS, order=40, title="M1 direction",
                 description="Normal or reversed output for motor 1")
             self.settings['mtr2_dir']      = MySetting(
@@ -1438,7 +1438,24 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
     def _toggle_about_hexdrive2_leds(self):
         """Toggle HexDrive2 flood LEDs from the About page."""
-        self._set_about_hexdrive2_leds(not self._about_leds_enabled)
+        enabled = False
+        saw_state = False
+        for hexdrive_app in self.hexdrive_apps:
+            reader = getattr(hexdrive_app, "flood_led", None)
+            if reader is None:
+                continue
+            try:
+                state = reader() if callable(reader) else bool(reader)
+                saw_state = True
+                if state:
+                    enabled = True
+                    break
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                if self._logging:
+                    print(f"B:About LED read failed: {e}")
+        if not saw_state:
+            enabled = self._about_leds_enabled
+        self._set_about_hexdrive2_leds(not enabled)
 
 
     def apply_motor_calibration(self, output: tuple) -> tuple:
