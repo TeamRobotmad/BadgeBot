@@ -8,6 +8,8 @@ Behavior:
 - Repeat.
 """
 
+from math import cos, pi, radians, sin
+
 from events.input import BUTTON_TYPES
 from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
@@ -24,21 +26,22 @@ from .app import MOTOR_ENABLE_USER_STATE
 _AUTO_SUB_DRIVE = 0
 _AUTO_SUB_REVERSE = 1
 _AUTO_SUB_SCAN = 2
-_AUTO_SUB_TURN = 3
+_AUTO_SUB_DECIDE = 3
+_AUTO_SUB_TURN = 4
 
 # Behavior constants
 _TICK_MS = 10
 _AUTO_SENSOR_READ_MS = 100
 _AUTO_MIN_FWD_MS = 400
 _AUTO_CRUISE_MIN_PWM = 36000
-_AUTO_CLEAR_DIST_MM = 800
+_AUTO_CLEAR_DIST_MM = 1800
 _AUTO_SCAN_TARGET_DEG = 360.0
 _AUTO_SCAN_TIMEOUT_MS = 14000
 _AUTO_TURN_STOP_MARGIN_DEG = 5.0
 _AUTO_TURN_SPEED_FRAC = 0.65
 _AUTO_SCAN_SPEED_FRAC = 0.25
 _AUTO_TURN_TIMEOUT_MIN_MS = 1200
-_AUTO_TURN_TIMEOUT_MAX_MS = 7000
+_AUTO_TURN_TIMEOUT_MAX_MS = 10000 # 7000
 _AUTO_SCAN_EXCLUDE_DEG = 45.0
 _AUTO_GYRO_AXIS = 2
 _AUTO_GYRO_DEADBAND_DPS = 3.0
@@ -47,8 +50,10 @@ _AUTO_BACKUP_NEAR_MM = 200
 _AUTO_BACKUP_SPEED_FRAC = 0.7
 _AUTO_OBSTACLE_CONFIRM_SAMPLES = 2
 _AUTO_SCAN_PAUSE_MS = 200
+_AUTO_DECIDE_MS = 10000
 _AUTO_PLOT_INTERVAL_MS = 100
 _AUTO_LOG_INTERVAL_MS = 500
+_AUTO_RADAR_RANGE_MM = 800
 
 # Default settings
 _AUTO_DRIVE_SPEED = 56000    # ~43% max power default for auto driving
@@ -90,19 +95,17 @@ class AutoDriveMgr:
 
         self.forward_hold_ms: int = _AUTO_MIN_FWD_MS
         self.reverse_timer: int = 0
-        self.scan_timer: int = 0
-        self.scan_progress_deg: float = 0.0
-        self.turn_timer: int = 0
         self.turn_progress_deg: float = 0.0
+        self.turn_timer: int = 0
         self.turn_timeout_ms: int = _AUTO_TURN_TIMEOUT_MIN_MS
-        self.turn_dir: int = 1
+        self.decide_timer: int = 0
+        self.turn_dir: int = 1  # positive = clockwise - "right"
+        self.turn_deg: float = 0.0
         self.target_deg: float = 0.0
         self.best_angle_deg: float = 0.0
         self.best_dist_mm: int = 0
         self.scan_trigger_deg: float = 0.0
-        self.scan_start_yaw_deg: float = 0.0
         self.yaw_deg: float = 0.0
-        self.scan_pause_ms: int = 0
         self.obstacle_hits: int = 0
 
         self.gyro_dps: float = 0.0
@@ -114,6 +117,7 @@ class AutoDriveMgr:
         self._range_age_ms: int = 0
         self._range_log_ms: int = 0
         self._range_samples: int = 0
+        self._gyro_delta_ms: int = 0
 
         if self._logging:
             print("A:AutoDriveMgr initialised")
@@ -151,19 +155,17 @@ class AutoDriveMgr:
         self.scan_data = []
         self.forward_hold_ms = _AUTO_MIN_FWD_MS
         self.reverse_timer = 0
-        self.scan_timer = 0
-        self.scan_progress_deg = 0.0
         self.turn_timer = 0
         self.turn_progress_deg = 0.0
         self.turn_timeout_ms = _AUTO_TURN_TIMEOUT_MIN_MS
+        self.decide_timer = 0
         self.turn_dir = 1
+        self.turn_deg = 0.0
         self.target_deg = 0.0
         self.best_angle_deg = 0.0
         self.best_dist_mm = 0
         self.scan_trigger_deg = 0.0
-        self.scan_start_yaw_deg = 0.0
         self.yaw_deg = 0.0
-        self.scan_pause_ms = 0
         self.obstacle_hits = 0
         self.gyro_dps = 0.0
         self._app.refresh = True
@@ -190,35 +192,41 @@ class AutoDriveMgr:
             self._app.return_to_menu()
             return
 
-        gyro_delta = self._read_gyro_delta(delta)
+        #gyro_delta = self._read_gyro_delta(delta)
 
         if self.sub_state == _AUTO_SUB_DRIVE:
             self._update_drive(delta)
         elif self.sub_state == _AUTO_SUB_REVERSE:
             self._update_reverse(delta)
         elif self.sub_state == _AUTO_SUB_SCAN:
-            self._update_scan(delta, gyro_delta)
+            self._update_scan(delta)
+        elif self.sub_state == _AUTO_SUB_DECIDE:
+            self._update_decide(delta)
         elif self.sub_state == _AUTO_SUB_TURN:
-            self._update_turn(delta, gyro_delta)
+            self._update_turn(delta)
 
         self._apply_output_ramp(delta)
 
     def draw(self, ctx):
+        if self.sub_state == _AUTO_SUB_DECIDE:
+            if self.scan_data:
+                self._draw_scan_plot(ctx)
+                return
+            
         """Draw the auto-drive UI overlay."""
         sub_labels = {
             _AUTO_SUB_DRIVE: "Driving",
             _AUTO_SUB_REVERSE: "Reversing",
             _AUTO_SUB_SCAN: "Scanning",
+            _AUTO_SUB_DECIDE: "Deciding",
             _AUTO_SUB_TURN: "Turning",
         }
         sub_label = sub_labels.get(self.sub_state, "?")
         dist_str = f"{self.distance}mm" if self.distance is not None else "---"
 
         deg_info = ""
-        if self.sub_state == _AUTO_SUB_SCAN:
-            deg_info = f"{self.scan_progress_deg:.0f}/{_AUTO_SCAN_TARGET_DEG:.0f}deg"
-        elif self.sub_state == _AUTO_SUB_TURN:
-            deg_info = f"{self.turn_progress_deg:.0f}/{self.target_deg:.0f}deg"
+        if self.sub_state == _AUTO_SUB_SCAN or self.sub_state == _AUTO_SUB_TURN:
+            deg_info = f"{self.turn_progress_deg:.0f}/{self.turn_deg:.0f}deg"
 
         status_line = f"{self.status} Age:{self._range_age_ms}ms N:{self._range_samples}"
         chosen_angle = f"Chosen: {self.best_angle_deg:.0f}deg" if self.best_angle_deg > 0.0 else ""
@@ -242,25 +250,99 @@ class AutoDriveMgr:
             ]
         colours = [(1, 1, 1), (0, 1, 1), (1, 1, 0), (0, 0.9, 0.4), (0.8, 0.8, 0.8)]
         self._app.draw_message(ctx, lines, colours, label_font_size)
-
-        if self.scan_data:
-            max_dist = max(1, max(d for _, d in self.scan_data))
-            ctx.save()
-            ctx.translate(-90, 55)
-            for angle, dist_mm in self.scan_data:
-                x = int((angle % 360.0) / 360.0 * 180)
-                h = int(20 * dist_mm / max_dist)
-                ctx.rgb(0, 0.6, 0.6).rectangle(x, -h, 2, h).fill()
-
-            if self.best_angle_deg > 0.0:
-                bx = int((self.best_angle_deg % 360.0) / 360.0 * 180)
-                ctx.rgb(1, 1, 1).rectangle(bx, -22, 2, 22).fill()
-            ctx.restore()
-
         button_labels(ctx, cancel_label="Stop")
+
+
+    def _scan_angle_to_theta(self, angle_deg: float) -> float:
+        """Convert a range-sensor bearing into screen-space polar angle.
+
+        The range sensor is mounted on a physical badge edge, and the display can
+        be rotated by the configured forward edge via ``front_face``.  Include that
+        rotation here so the drawn arc matches the sensor's real direction.
+        """
+        front_face_setting = None
+        settings = getattr(self._app, "settings", None)
+        if settings is not None:
+            front_face_setting = settings.get("front_face")
+
+        front_face_rotation = 0.0
+        if front_face_setting is not None:
+            try:
+                front_face_rotation = float(front_face_setting.v)
+            except (AttributeError, TypeError, ValueError):
+                try:
+                    front_face_rotation = float(front_face_setting)
+                except (TypeError, ValueError):
+                    front_face_rotation = 0.0
+
+        return radians(float(angle_deg)) - (pi / 2.0) + radians(front_face_rotation * 30.0)
+
+
+    def _draw_scan_plot(self, ctx):
+        """Render a radar-style polar plot with the robot at the screen centre."""
+        if not self.scan_data:
+            return
+
+        display_radius = 120
+        ring_col = (0.2, 0.6, 0.6)
+        ray_col = (0.0, 1.0, 0.8)
+        girth_col = (1.0, 1.0, 1.0)
+
+        ctx.save()
+        ctx.line_width = 1
+
+        # print scan start angle, current angle
+        print(f"A:Draw scan plot start={self.scan_trigger_deg:.1f} current={(self.yaw_deg % 360):.1f}")
+
+        # draw the exclusion sector as a filled wedge
+        start_theta = self._scan_angle_to_theta(-_AUTO_SCAN_EXCLUDE_DEG)
+        end_theta = self._scan_angle_to_theta(_AUTO_SCAN_EXCLUDE_DEG)
+        ctx.rgb(0.4, 0.2, 0.2).move_to(0, 0).arc(0, 0, display_radius, start_theta, end_theta, 0).line_to(0, 0).fill()
+
+        # draw a represtation of the robot body as a circle at the centre of the plot
+        body_radius = (50 * display_radius) // _AUTO_RADAR_RANGE_MM
+        ctx.rgb(*ring_col).arc(0, 0, body_radius, 0, pi * 2, 0).stroke()
+
+        #for arc in range(0, 360, 45):
+        #    theta = radians(float(arc)) - (pi / 2.0)
+        #    x = display_radius * cos(theta)
+        #    y = -display_radius * sin(theta)
+        #    ctx.rgb(*ring_col).move_to(0, 0).line_to(x, y).stroke()
+
+        last_theta = None
+        for angle_deg, dist_mm in self.scan_data:
+            if dist_mm is None or angle_deg is None:
+                continue
+            ray_dist_mm = max(0, min(dist_mm, _AUTO_RADAR_RANGE_MM))
+            theta = self._scan_angle_to_theta(float(angle_deg))
+            if last_theta is not None and ray_dist_mm > 0:
+                ray_len = (ray_dist_mm * display_radius) // float(_AUTO_RADAR_RANGE_MM)
+                ctx.rgb(*ray_col).arc(0,0, ray_len, last_theta, theta, 0).stroke()
+            last_theta = theta
+
+        # draw the chosen heading as a thick line
+        theta = self._scan_angle_to_theta(self.best_angle_deg)
+        ctx.line_width = 3
+        ctx.rgb(*girth_col).move_to(0, 0).line_to(display_radius * cos(theta), display_radius * sin(theta)).stroke()
+
+        ctx.restore()
+
 
     def background_update(self, delta: int) -> tuple[int, int] | None:
         """Poll range sensor and return motor outputs while active."""
+        if _imu:
+            self._gyro_delta_ms += delta
+            try:
+                raw = _imu.gyro_read()
+                self.gyro_dps = -float(raw[_AUTO_GYRO_AXIS])    # IMU Gyro axis 2 is yaw, negative clockwise, but BadgeBot uses positive clockwise convention
+                if abs(self.gyro_dps) > _AUTO_GYRO_DEADBAND_DPS:
+                    delta_deg = self.gyro_dps * (self._gyro_delta_ms / 1000.0)
+                    self.yaw_deg = (self.yaw_deg + delta_deg) % 360.0
+                    self.turn_progress_deg += delta_deg
+                self._gyro_delta_ms = 0
+            except Exception as e:  # pylint: disable=broad-except
+                print(f"A:Gyro read failed: {e}")
+
         if self._active and self._sensor_mgr is not None and self._range_hexdrive is not None:
             self._range_age_ms += delta
             self._range_log_ms += delta
@@ -296,15 +378,13 @@ class AutoDriveMgr:
             self._plot_ms = 0
 
             if self.sub_state == _AUTO_SUB_TURN:
-                plot_angle = self.target_deg if self.target_deg > 0.0 else self.best_angle_deg
-                plot_score = self.target_deg
+                plot_angle = self.turn_deg if self.turn_deg > 0.0 else self.best_angle_deg
+                plot_score = self.turn_deg
             elif self.sub_state == _AUTO_SUB_SCAN:
                 if self.best_angle_deg > 0.0:
                     plot_angle = self.best_angle_deg
-                elif self.target_deg > 0.0:
-                    plot_angle = self.target_deg
-                else:
-                    plot_angle = self.scan_progress_deg
+                elif self.turn_deg > 0.0:
+                    plot_angle = self.turn_progress_deg
 
                 current_dist = self.distance if self.distance is not None else _AUTO_CLEAR_DIST_MM
                 if current_dist > _AUTO_CLEAR_DIST_MM:
@@ -339,6 +419,7 @@ class AutoDriveMgr:
             return None
         return self.motor_output
 
+
     def stop(self):
         """Clean shutdown: zero motors, disable range sensor, cut power."""
         self._active = False
@@ -350,24 +431,26 @@ class AutoDriveMgr:
             self._app.hexdrive_apps[0].set_motors((0, 0))
         self.status = ""
 
-    def _read_gyro_delta(self, delta_ms: int) -> float:
-        """Read gyro yaw and return signed delta degrees for this tick."""
-        if _imu is None:
-            self.gyro_dps = 0.0
-            return 0.0
-        try:
-            raw = _imu.gyro_read()
-            self.gyro_dps = float(raw[_AUTO_GYRO_AXIS])
-        except Exception:  # pylint: disable=broad-except
-            self.gyro_dps = 0.0
-            return 0.0
 
-        if abs(self.gyro_dps) <= _AUTO_GYRO_DEADBAND_DPS:
-            return 0.0
+    #def _read_gyro_delta(self, delta_ms: int) -> float:
+    #    """Read gyro yaw and return signed delta degrees for this tick."""
+    #    if _imu is None:
+    #        self.gyro_dps = 0.0
+    #        return 0.0
+    #    try:
+    #        raw = _imu.gyro_read()
+    #        self.gyro_dps = -float(raw[_AUTO_GYRO_AXIS])    # IMU Gyro axis 2 is yaw, negative clockwise, but BadgeBot uses positive clockwise convention
+    #    except Exception:  # pylint: disable=broad-except
+    #        self.gyro_dps = 0.0
+    #        return 0.0#
+    #
+    #    if abs(self.gyro_dps) <= _AUTO_GYRO_DEADBAND_DPS:
+    #        return 0.0
+    #
+    #    delta_deg = self.gyro_dps * (delta_ms / 1000.0)
+    #    self.yaw_deg += delta_deg
+    #    return delta_deg
 
-        delta_deg = self.gyro_dps * (delta_ms / 1000.0)
-        self.yaw_deg += delta_deg
-        return delta_deg
 
     @staticmethod
     def _slew(current: int, target: int, step: int) -> int:
@@ -376,6 +459,7 @@ class AutoDriveMgr:
         if current > target:
             return max(current - step, target)
         return current
+
 
     def _apply_output_ramp(self, delta: int):
         accel = max(1, int(self._app.acceleration))
@@ -393,23 +477,28 @@ class AutoDriveMgr:
             self._slew(cur_r, target_r, step),
         )
 
+
     def _drive_speed(self) -> int:
         return max(self._app.settings['auto_speed'].v, _AUTO_CRUISE_MIN_PWM)
+
 
     def _turn_speed(self) -> int:
         return max(1, int(self._drive_speed() * _AUTO_TURN_SPEED_FRAC))
 
+
     def _scan_speed(self) -> int:
         return max(1, int(self._app.settings['auto_scan_speed'].v))
 
+
     def _heading_to_turn(self, heading_deg: float) -> tuple[int, float]:
         """Convert a target heading to the shortest signed turn from the current yaw."""
-        target = heading_deg % 360.0
-        current = self.yaw_deg % 360.0
+        target = heading_deg
+        current = self.yaw_deg
         delta = (target - current) % 360.0
         if delta > 180.0:
             return -1, 360.0 - delta
         return 1, delta
+
 
     def _enter_drive(self):
         self.sub_state = _AUTO_SUB_DRIVE
@@ -417,9 +506,11 @@ class AutoDriveMgr:
         self.obstacle_hits = 0
         self.turn_progress_deg = 0.0
         self.target_deg = 0.0
+        self.turn_deg = 0.0
         speed = self._drive_speed()
         self.target_output = (speed, speed)
         self.status = "Fwd"
+
 
     def _update_drive(self, delta: int):
         speed = self._drive_speed()
@@ -445,6 +536,8 @@ class AutoDriveMgr:
 
         dist_label = f"{self.distance}mm" if self.distance is not None else "---"
         self.status = f"Fwd {dist_label}"
+        self._app.refresh = True
+
 
     def _enter_reverse(self):
         self.sub_state = _AUTO_SUB_REVERSE
@@ -455,6 +548,7 @@ class AutoDriveMgr:
         if self._logging:
             print(f"A:Obstacle at {self.distance}mm, reversing")
 
+
     def _update_reverse(self, delta: int):
         back_speed = max(1, int(self._drive_speed() * _AUTO_BACKUP_SPEED_FRAC))
         self.target_output = (-back_speed, -back_speed)
@@ -463,15 +557,18 @@ class AutoDriveMgr:
         if self.reverse_timer >= _AUTO_BACKUP_MS:
             self._enter_scan()
 
+
     def _enter_scan(self):
+        print(f"A:Scan start, obstacle={self.distance}")
         self.sub_state = _AUTO_SUB_SCAN
         self.scan_data = []
-        self.scan_timer = 0
-        self.scan_progress_deg = 0.0
+        self.turn_timer = 0
+        self.turn_timeout_ms = _AUTO_SCAN_TIMEOUT_MS
+        self.turn_progress_deg = 0.0
+        self.turn_deg = _AUTO_SCAN_TARGET_DEG
         self.best_angle_deg = 0.0
         self.best_dist_mm = 0
-        self.scan_trigger_deg = self.yaw_deg % 360.0
-        self.scan_start_yaw_deg = self.yaw_deg
+        self.scan_trigger_deg = self.yaw_deg
 
         spin = self._scan_speed()
         self.target_output = (spin, -spin)
@@ -480,84 +577,117 @@ class AutoDriveMgr:
         if self._logging:
             print(f"A:Scan start, obstacle={self.distance}")
 
+
     @staticmethod
     def _effective_scan_dist(dist_mm: int | float) -> float:
         """Treat saturated sensor values as unknown rather than as a clear opening."""
         if dist_mm is None:
             return 0.0
-        if dist_mm >= _AUTO_CLEAR_DIST_MM:
+        if dist_mm > _AUTO_CLEAR_DIST_MM:
             return 0.0
         return float(dist_mm)
+    
 
     def _scan_record_sample(self):
         dist = self.distance if self.distance is not None else _AUTO_CLEAR_DIST_MM
         if dist > _AUTO_CLEAR_DIST_MM:
             dist = _AUTO_CLEAR_DIST_MM
-        angle = min(self.scan_progress_deg, _AUTO_SCAN_TARGET_DEG)
+        angle = self.turn_progress_deg
         self.scan_data.append((angle, dist))
         if self._logging:
             print(f"A:ScanSample angle={angle:.1f}deg dist={dist}mm")
 
+
     def _select_best_scan_heading(self) -> tuple[float, int] | None:
-        """Pick the clearest heading using a local rolling average and exclude the trigger sector."""
+        """Find the widest gap between obstacles and aim for its centre.
+
+        Contiguous "open" (obstacle-free) samples are grouped into gaps; each gap is
+        scored on its angular width and the turn needed to reach its centre, so a wide
+        clear opening wins over simply reversing back the way we came. The sector
+        around the heading that triggered the scan (relative angle 0) is heavily
+        penalised, but still chosen if it is the only way through.
+        """
         if not self.scan_data:
             return None
-        if len(self.scan_data) == 1:
-            angle, dist_mm = self.scan_data[0]
-            if abs((angle - self.scan_trigger_deg) % 360.0) <= _AUTO_SCAN_EXCLUDE_DEG:
-                return None
-            return self.scan_data[0]
+        if len(self.scan_data) < 10:
+            return None
 
-        best_idx = -1
-        best_score = -1.0
-        best_turn_cost = 9999.0
-        sample_count = len(self.scan_data)
+        width_weight = 1.0
+        turn_weight = 0.5
 
-        for idx, (angle, dist_mm) in enumerate(self.scan_data):
-            delta_to_trigger = abs((angle - self.scan_trigger_deg) % 360.0)
-            if delta_to_trigger > 180.0:
-                delta_to_trigger = 360.0 - delta_to_trigger
+        samples = self.scan_data
+        count = len(samples)
+        obstacle_mm = self._app.settings['auto_obstacle'].v
+        is_open = [self._effective_scan_dist(dist) >= obstacle_mm for _, dist in samples]
 
-            window = []
-            for offset in range(-2, 3):
-                sample_idx = (idx + offset) % sample_count
-                window.append(self._effective_scan_dist(self.scan_data[sample_idx][1]))
-            rolling_avg = sum(window) / len(window)
-            current_dist = self._effective_scan_dist(dist_mm)
-            score = (current_dist * 0.75) + (rolling_avg * 1.25)
+        if not any(is_open):
+            return None
 
-            if delta_to_trigger <= _AUTO_SCAN_EXCLUDE_DEG:
+        if all(is_open):
+            gaps = [list(range(count))]
+        else:
+            start_idx = next(idx for idx in range(count) if not is_open[idx])
+            gaps = []
+            current: list[int] = []
+            for step in range(count):
+                idx = (start_idx + step) % count
+                if is_open[idx]:
+                    current.append(idx)
+                elif current:
+                    gaps.append(current)
+                    current = []
+            if current:
+                gaps.append(current)
+
+        best_angle = None
+        best_dist = 0
+        best_score = -1e9
+
+        for gap in gaps:
+            first_angle = samples[gap[0]][0] % 360.0
+            last_angle = samples[gap[-1]][0] % 360.0
+            width_deg = (last_angle - first_angle) % 360.0
+            centre_deg = (first_angle + width_deg / 2.0) % 360.0
+            turn_deg = centre_deg if centre_deg <= 180.0 else 360.0 - centre_deg
+
+            score = (width_deg * width_weight) - (turn_deg * turn_weight)
+            if turn_deg <= _AUTO_SCAN_EXCLUDE_DEG:
                 score -= 10000.0
 
-            turn_cost = angle % 360.0
-            if turn_cost > 180.0:
-                turn_cost = 360.0 - turn_cost
-
-            if (score > best_score + 0.001
-                    or (abs(score - best_score) <= 0.001 and turn_cost < best_turn_cost)):
-                best_idx = idx
+            if score > best_score:
                 best_score = score
-                best_turn_cost = turn_cost
+                best_angle = centre_deg
 
-        if best_idx < 0:
+                # representative sample nearest the gap centre, for a real distance reading
+                nearest_idx = gap[0]
+                nearest_delta = 360.0
+                for idx in gap:
+                    sample_angle = samples[idx][0] % 360.0
+                    delta = abs(sample_angle - centre_deg)
+                    if delta > 180.0:
+                        delta = 360.0 - delta
+                    if delta < nearest_delta:
+                        nearest_delta = delta
+                        nearest_idx = idx
+                best_dist = samples[nearest_idx][1]
+
+        if best_angle is None:
             return None
-        return self.scan_data[best_idx]
+        return best_angle, best_dist
 
-    def _update_scan(self, delta: int, gyro_delta_deg: float):
-        if self.scan_pause_ms > 0:
-            self._update_scan_pause(delta)
-            return
 
+    def _update_scan(self, delta: int):
         spin = self._scan_speed()
-        self.target_output = (spin, -spin)
+        self.target_output = (spin * self.turn_dir, -spin * self.turn_dir)
 
-        self.scan_timer += delta
-        self.scan_progress_deg += abs(gyro_delta_deg)
+        self.turn_timer += delta
         samples = len(self.scan_data)
-        self.status = f"Scan {self.scan_progress_deg:.0f}deg ({samples}pts)"
+        self.status = f"Scan {self.turn_progress_deg:.0f}deg ({samples}pts)"
 
-        full_turn = self.scan_progress_deg >= _AUTO_SCAN_TARGET_DEG
-        timed_out = self.scan_timer >= _AUTO_SCAN_TIMEOUT_MS
+        unsigned_turn = self.turn_progress_deg * self.turn_dir    # magnitude of turn in the intended direction
+        full_turn = unsigned_turn >= self.turn_deg - _AUTO_TURN_STOP_MARGIN_DEG
+
+        timed_out = self.turn_timer >= self.turn_timeout_ms
         if not (full_turn or timed_out):
             return
 
@@ -577,10 +707,10 @@ class AutoDriveMgr:
         # The selected scan angle is measured relative to the scan start, so convert it
         # to an absolute heading in world space and then choose the shortest signed turn
         # from the robot's current heading.
-        target_heading = (self.scan_start_yaw_deg + self.best_angle_deg) % 360.0
+        target_heading = (self.scan_trigger_deg + self.best_angle_deg) % 360.0
         turn_dir, turn_deg = self._heading_to_turn(target_heading)
         self.turn_dir = turn_dir
-        self.target_deg = turn_deg
+        self.turn_deg = turn_deg
 
         if self._logging:
             reason = "360" if full_turn else "timeout"
@@ -588,59 +718,67 @@ class AutoDriveMgr:
                 "A:Scan done "
                 + reason
                 + f" best={self.best_angle_deg:.1f}deg dist={self.best_dist_mm}mm"
-                + f" target={self.target_deg:.1f}deg"
+                + f" turn={self.turn_deg:.1f}deg"
             )
 
-        if self.best_dist_mm >= _AUTO_CLEAR_DIST_MM:
-            self._enter_drive()
-            self.status = "Clear ahead"
-            return
+        #if self.best_dist_mm >= _AUTO_CLEAR_DIST_MM:
+        #    self._enter_drive()
+        #    self.status = "Clear ahead"
+        #    return
 
-        if self.target_deg <= _AUTO_TURN_STOP_MARGIN_DEG:
-            self._enter_drive()
-            return
+        #if self.target_deg <= _AUTO_TURN_STOP_MARGIN_DEG:
+        #    self._enter_drive()
+        #    return
 
-        self.scan_pause_ms = _AUTO_SCAN_PAUSE_MS
+        self._enter_decide()
+
+
+    def _enter_decide(self):
+        print(f"A:Decide turn {self.turn_dir:+d} {self.turn_deg:.1f}deg")
+        self.sub_state = _AUTO_SUB_DECIDE
+        self.decide_timer = _AUTO_DECIDE_MS
         self.target_output = (0, 0)
-        self.status = f"Pause {self.scan_pause_ms}ms"
+        self.status = "Decide"
         self._app.refresh = True
 
-    def _update_scan_pause(self, delta: int):
-        self.scan_pause_ms = max(0, self.scan_pause_ms - delta)
+
+    def _update_decide(self, delta: int):
+        self.decide_timer = max(0, self.decide_timer - delta)
         self.target_output = (0, 0)
-        self.status = f"Pause {self.scan_pause_ms}ms"
-        self._app.refresh = True
-        if self.scan_pause_ms <= 0:
+        self.status = f"Decide {self.decide_timer}ms"
+        if self.decide_timer <= 0:
             self._enter_turn()
 
+
     def _enter_turn(self):
+        print(f"A:Turn {self.turn_dir:+d} {self.turn_deg:.1f}deg")
         self.sub_state = _AUTO_SUB_TURN
         self.turn_timer = 0
         self.turn_progress_deg = 0.0
 
-        spin = self._turn_speed()
+        spin = self._scan_speed() # self._turn_speed()
         self.target_output = (spin * self.turn_dir, -spin * self.turn_dir)
-
-        frac = self.target_deg / 180.0
-        self.turn_timeout_ms = int(_AUTO_TURN_TIMEOUT_MIN_MS + frac * 2500)
+        frac = self.turn_deg / 180.0
+        self.turn_timeout_ms = int(_AUTO_TURN_TIMEOUT_MIN_MS + frac * 8000)
         if self.turn_timeout_ms > _AUTO_TURN_TIMEOUT_MAX_MS:
             self.turn_timeout_ms = _AUTO_TURN_TIMEOUT_MAX_MS
 
         lbl = "right" if self.turn_dir > 0 else "left"
-        self.status = f"Turn {lbl} {self.target_deg:.0f}deg"
+        self.status = f"Turn {lbl} {self.turn_deg:.0f}deg"
+        self._app.refresh = True
 
-    def _update_turn(self, delta: int, gyro_delta_deg: float):
-        spin = self._turn_speed()
+
+    def _update_turn(self, delta: int):
+        spin = self._scan_speed() # _turn_speed()
         self.target_output = (spin * self.turn_dir, -spin * self.turn_dir)
 
         self.turn_timer += delta
-        self.turn_progress_deg += gyro_delta_deg
 
         lbl = "right" if self.turn_dir > 0 else "left"
-        self.status = f"Turn {lbl} {self.turn_progress_deg:.0f}/{self.target_deg:.0f}deg"
+        self.status = f"Turn {lbl} {self.turn_progress_deg:.0f}/{self.turn_deg:.0f}deg"
 
-        signed_turn = self.turn_progress_deg * self.turn_dir
-        gyro_done = signed_turn >= max(0.0, self.target_deg - _AUTO_TURN_STOP_MARGIN_DEG)
+        signed_turn = self.turn_progress_deg * self.turn_dir    # magnitude of turn in the intended direction
+        gyro_done = signed_turn >= max(0.0, self.turn_deg - _AUTO_TURN_STOP_MARGIN_DEG)
         time_done = self.turn_timer >= self.turn_timeout_ms
 
         if gyro_done or time_done:
@@ -648,9 +786,10 @@ class AutoDriveMgr:
                 reason = "gyro" if gyro_done else "timeout"
                 print(
                     f"A:Turn done {reason} turned={self.turn_progress_deg:.1f} "
-                    f"target={self.target_deg:.1f} signed={signed_turn:.1f}"
+                    f"turn={self.turn_deg:.1f} signed={signed_turn:.1f}"
                 )
             self._enter_drive()
+
 
     def _enable_sensors(self) -> bool:
         """Enable range sensing through SensorTestMgr polling APIs."""
@@ -672,6 +811,7 @@ class AutoDriveMgr:
 
         self._range_hexdrive = range_hexdrive
         return True
+
 
     def _disable_sensors(self):
         """Disable range sensing via SensorTestMgr APIs."""
