@@ -1,6 +1,9 @@
 import re
 import sys
+from math import pi, radians
 from pathlib import Path
+
+import pytest
 
 # Add badge software to pythonpath
 sys.path.append("../../../")
@@ -14,6 +17,16 @@ def _extract_version_from_source(path: Path) -> int:
     match = re.search(r"^\s*VERSION\s*=\s*(\d+)", content, re.MULTILINE)
     assert match is not None, f"Could not find VERSION in {path}"
     return int(match.group(1))
+
+
+def test_parse_version_handles_dev_and_git_suffixes():
+    from sim.apps.BadgeBot.utils import parse_version
+
+    assert parse_version("v2.2.0") == (2, 2, 0)
+    assert parse_version("v2.2.0-dev") == (2, 2, 0)
+    assert parse_version("v2.2.0-20-gabcdef") == (2, 2, 0)
+    assert parse_version("v2.2.1-rc1") == (2, 2, 1)
+    assert parse_version("v2.2.1-rc1+build.7") == (2, 2, 1)
 
 
 def test_import_badgebot_app_and_app_export():
@@ -124,12 +137,70 @@ def test_autodrive_settings_need_hexpansion():
         )
 
 
+def test_autodrive_decide_state_and_turn_transition():
+    """Auto-drive should pause to display the scan before entering the turn state."""
+    import types
+    import sim.apps.BadgeBot.autodrive as autodrive
+
+    class DummyApp:
+        def __init__(self):
+            self.sensor_test_mgr = None
+            self.bluetooth_mgr = None
+            self.acceleration = 20000
+            self.max_power = 55000
+            self.button_states = {}
+            self.settings = {
+                "auto_speed": types.SimpleNamespace(v=56000),
+                "auto_scan_speed": types.SimpleNamespace(v=14000),
+                "auto_obstacle": types.SimpleNamespace(v=250),
+            }
+            self.refresh = False
+            self.hexdrive_apps = []
+            self.notification = None
+
+        def enable_motors(self, *args, **kwargs):
+            return True
+
+        def set_menu(self, *args, **kwargs):
+            return None
+
+        def return_to_menu(self, *args, **kwargs):
+            return None
+
+        def draw_message(self, *args, **kwargs):
+            return None
+
+    mgr = autodrive.AutoDriveMgr(DummyApp(), logging=False)
+    mgr._active = True
+    mgr.sub_state = autodrive._AUTO_SUB_DECIDE
+    mgr.decide_timer = 10
+    mgr.turn_dir = 1
+    mgr.target_deg = 90.0
+    mgr._app.button_states = {}
+
+    mgr.update(100)
+
+    assert mgr.sub_state == autodrive._AUTO_SUB_TURN
+
+
 def test_front_face_labels_complete():
     """Verify _FRONT_FACE_LABELS has one entry for each valid front_face value (0-11)."""
     import sim.apps.BadgeBot.app as BadgeBot
     front_face_labels = getattr(BadgeBot, '_FRONT_FACE_LABELS', None)
     assert front_face_labels is not None
     assert len(front_face_labels) == 12
+
+
+def test_autodrive_scan_theta_uses_front_face_rotation():
+    """Scan plot angles should rotate with the configured front face, not a fixed 90° offset."""
+    import types
+    import sim.apps.BadgeBot.autodrive as autodrive
+
+    app = types.SimpleNamespace(settings={"front_face": types.SimpleNamespace(v=5)})
+    mgr = autodrive.AutoDriveMgr(app, logging=False)
+
+    expected = radians(0.0) - (pi / 2.0) + radians(5 * 30.0)
+    assert mgr._scan_angle_to_theta(0.0) == pytest.approx(expected)
 
 
 def test_menu_items_include_sensor_and_auto():
