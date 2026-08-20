@@ -581,14 +581,13 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
 
         # Check what version of the Badge s/w we are running on
-        ver: list[int | str] | None = None
+        ver: tuple[int, ...] | None = None
         try:
             ver = parse_version(ota.get_version())
-            if ver is not None:
+            if ver:
                 if self.logging:
                     print(f"B:BadgeSW V{ver}")
-                version_triplet = tuple(part if isinstance(part, int) else 0 for part in (ver[:3] if ver is not None else []))
-                if len(version_triplet) == 3 and version_triplet >= _MIN_BADGEOS_VERSION:
+                if ver >= _MIN_BADGEOS_VERSION:
                     # Potential to do things differently based on badge s/w version
                     pass
                 else:

@@ -1,4 +1,5 @@
 #utils.py
+import re
 from math import pi
 
 from display import hexagon
@@ -87,25 +88,26 @@ def draw_QRCode(ctx, qr_code, size=240, colour=(1,1,1)):        # pylint: disabl
 
 
 def parse_version(version):
-    """Parse a version string into a list of components for comparison.  Components are converted to integers where possible, to allow correct ordering (e.g. 1.10 > 1.2).  Pre-release and build metadata are ignored for simplicity, as they are not currently used."""
-    #pre_components = ["final"]
-    #build_components = ["0", "000000z"]
-    #build = ""
-    components = []
-    if "+" in version:
-        version, build = version.split("+", 1)          # pylint: disable=unused-variable
-        #build_components = build.split(".")
-    if "-" in version:
-        version, pre_release = version.split("-", 1)    # pylint: disable=unused-variable
-        #if pre_release.startswith("rc"):
-        #    # Re-write rc as c, to support a1, b1, rc1, final ordering
-        #    pre_release = pre_release[1:]
-        #pre_components = pre_release.split(".")
-    version = version.strip("v").split(".")
-    components = [int(item) if item.isdigit() else item for item in version]
-    #components.append([int(item) if item.isdigit() else item for item in pre_components])
-    #components.append([int(item) if item.isdigit() else item for item in build_components])
-    return components
+    """Parse a BadgeOS version string into a numeric triplet for ordering comparisons.
+
+    Only the leading release components are used, so development, rc, and git
+    metadata such as ``-dev``, ``-rc1``, and ``-20-gabcdef`` do not interfere with
+    compatibility checks.
+    """
+    if version is None:
+        return ()
+
+    raw = str(version).strip()
+    if not raw:
+        return ()
+
+    parts = [int(part) for part in re.findall(r"\d+", raw)[:3]]
+    if not parts:
+        return ()
+
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts)
 
 
 def chain(*iterables):
