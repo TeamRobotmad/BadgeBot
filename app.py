@@ -149,10 +149,12 @@ MOTOR_ENABLE_USER_STATE = const(1)
 # update().  Keeping these transport-agnostic lets new input sources reuse them.
 REMOTE_CMD_LINE_FOLLOW_TOGGLE = const(1)     # enter Line Follower / toggle start-stop
 REMOTE_CMD_LINE_FOLLOW_DIRECTION = const(2)  # toggle Line Follower steering direction
+REMOTE_CMD_AUTO_DRIVE_TOGGLE = const(3)      # enter Auto Drive / toggle active state
 
 # States from which a remote command may switch the app into Line Follower.
 # Extend this tuple to permit remote activation from additional states.
 _REMOTE_LINE_FOLLOW_STATES = (STATE_BLUETOOTH, STATE_FOLLOWER, STATE_MENU)
+_REMOTE_AUTO_DRIVE_STATES = (STATE_BLUETOOTH, STATE_AUTODRIVE, STATE_MENU)
 
 # App states where user can minimise app (Menu, Message, Logo)
 MINIMISE_VALID_STATES = [STATE_MENU, STATE_MESSAGE, STATE_LOGO]
@@ -766,6 +768,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 self._remote_line_follow_toggle()
             elif command == REMOTE_CMD_LINE_FOLLOW_DIRECTION:
                 self._remote_line_follow_direction()
+            elif command == REMOTE_CMD_AUTO_DRIVE_TOGGLE:
+                self._remote_auto_drive_toggle()
             elif self._logging:
                 print(f"B:Ignoring unknown remote command {command}")
 
@@ -793,6 +797,20 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         elif self._logging:
             print(f"B:Remote direction toggle ignored in state {self.current_state}")
 
+    def _remote_auto_drive_toggle(self):
+        """Remote 'button 3': enter Auto Drive from an allowed state, or stop it
+        when already running."""
+        if self.current_state == STATE_AUTODRIVE:
+            if self._autodrive_mgr is not None:
+                self._autodrive_mgr.stop()
+                self.return_to_menu()
+            return
+        if self.current_state in _REMOTE_AUTO_DRIVE_STATES:
+            if self._logging:
+                print("B:Remote activating Auto Drive")
+            self.start_autodrive()
+        elif self._logging:
+            print(f"B:Remote Auto Drive activation ignored in state {self.current_state}")
 
     def start_line_follow(self) -> bool:
         """Enter the Line Follower state, checking for the required motor hardware.
@@ -812,7 +830,22 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             return True
         return False
 
-
+    def start_autodrive(self) -> bool:
+        """Enter the Auto Drive state, checking for the required motor and sensor hardware.
+        Centralised so the menu and remote (BLE) control share one entry path."""
+        if self.num_motors == 0:
+            self.notification = Notification("No Motors")
+            return False
+        if self.num_motors == 1:
+            self.notification = Notification("2 Motors Required")
+            return False
+        if self._autodrive_mgr is None:
+            return False
+        self._autodrive_mgr.logging = self._logging
+        if self._autodrive_mgr.start():
+            self.current_state = STATE_AUTODRIVE
+            return True
+        return False
 
     ### ASYNC EVENT HANDLERS ###
 

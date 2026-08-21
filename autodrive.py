@@ -57,7 +57,7 @@ _AUTO_RADAR_RANGE_MM = 800
 
 # Default settings
 _AUTO_DRIVE_SPEED = 56000    # ~43% max power default for auto driving
-_AUTO_OBSTACLE_MM = 250      # mm — trigger scan below this distance
+_AUTO_OBSTACLE_MM = 180      # mm — trigger scan below this distance
 
 
 # ---- Settings initialisation -----------------------------------------------
@@ -536,7 +536,7 @@ class AutoDriveMgr:
 
         dist_label = f"{self.distance}mm" if self.distance is not None else "---"
         self.status = f"Fwd {dist_label}"
-        self._app.refresh = True
+        #self._app.refresh = True
 
 
     def _enter_reverse(self):
@@ -556,7 +556,8 @@ class AutoDriveMgr:
         self.status = f"Reverse {self.reverse_timer}ms"
         if self.reverse_timer >= _AUTO_BACKUP_MS:
             self._enter_scan()
-
+        self._app.refresh = True
+        
 
     def _enter_scan(self):
         print(f"A:Scan start, obstacle={self.distance}")
@@ -566,12 +567,13 @@ class AutoDriveMgr:
         self.turn_timeout_ms = _AUTO_SCAN_TIMEOUT_MS
         self.turn_progress_deg = 0.0
         self.turn_deg = _AUTO_SCAN_TARGET_DEG
+        self.turn_dir = 1 if self.turn_dir < 0 else -1
         self.best_angle_deg = 0.0
         self.best_dist_mm = 0
         self.scan_trigger_deg = self.yaw_deg
 
         spin = self._scan_speed()
-        self.target_output = (spin, -spin)
+        self.target_output = (spin * self.turn_dir, -spin * self.turn_dir)
         self.status = "Scan 0deg"
 
         if self._logging:
@@ -624,6 +626,7 @@ class AutoDriveMgr:
             return None
 
         if all(is_open):
+            print("A:All scan samples are open, choosing forward")
             gaps = [list(range(count))]
         else:
             start_idx = next(idx for idx in range(count) if not is_open[idx])
@@ -643,11 +646,15 @@ class AutoDriveMgr:
         best_dist = 0
         best_score = -1e9
 
-        for gap in gaps:
-            first_angle = samples[gap[0]][0] % 360.0
-            last_angle = samples[gap[-1]][0] % 360.0
-            width_deg = (last_angle - first_angle) % 360.0
-            centre_deg = (first_angle + width_deg / 2.0) % 360.0
+        for gap_idx, gap in enumerate(gaps):
+            # Use raw (unwrapped) angles: a scan never exceeds 360 degrees, so
+            # turn_progress_deg is monotonic within it and wrapping first/last
+            # independently before taking the difference picks the wrong (short)
+            # arc whenever the scan direction makes the angle decrease.
+            first_raw = samples[gap[0]][0]
+            last_raw = samples[gap[-1]][0]
+            width_deg = abs(last_raw - first_raw)
+            centre_deg = ((first_raw + last_raw) / 2.0) % 360.0
             turn_deg = centre_deg if centre_deg <= 180.0 else 360.0 - centre_deg
 
             score = (width_deg * width_weight) - (turn_deg * turn_weight)
@@ -670,7 +677,9 @@ class AutoDriveMgr:
                         nearest_delta = delta
                         nearest_idx = idx
                 best_dist = samples[nearest_idx][1]
+            print(f"A:Gap:{first_raw % 360.0:.1f}-{last_raw % 360.0:.1f}deg width={width_deg:.1f} centre={centre_deg:.1f}  score={score:.1f} best={best_score:.1f}")
 
+            
         if best_angle is None:
             return None
         return best_angle, best_dist

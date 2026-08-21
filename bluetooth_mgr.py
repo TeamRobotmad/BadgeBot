@@ -8,7 +8,7 @@ from events.input import BUTTON_TYPES
 from app_components.tokens import label_font_size, button_labels
 from app_components.notification import Notification
 
-from .app import REMOTE_CMD_LINE_FOLLOW_TOGGLE, REMOTE_CMD_LINE_FOLLOW_DIRECTION, STATE_BLUETOOTH
+from .app import REMOTE_CMD_LINE_FOLLOW_TOGGLE, REMOTE_CMD_LINE_FOLLOW_DIRECTION, REMOTE_CMD_AUTO_DRIVE_TOGGLE, STATE_BLUETOOTH
 
 try:
     from machine import mem32
@@ -306,6 +306,7 @@ _CONTROL_BUTTONS = frozenset('0123')
 _CONTROL_BUTTON_COMMANDS = {
     '1': REMOTE_CMD_LINE_FOLLOW_TOGGLE,     # activate Line Follower / toggle start-stop
     '2': REMOTE_CMD_LINE_FOLLOW_DIRECTION,  # toggle Line Follower direction
+    '3': REMOTE_CMD_AUTO_DRIVE_TOGGLE,      # activate Auto Drive / toggle start-stop
 }
 
 # Currently-held BLE drive button, or None when no button is pressed.

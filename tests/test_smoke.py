@@ -210,6 +210,33 @@ def test_menu_items_include_sensor_and_auto():
     assert "Auto Drive" in BadgeBot.MAIN_MENU_ITEMS
 
 
+def test_remote_autodrive_button_3_maps_and_starts():
+    """Bluefruit button 3 should trigger Auto Drive start/stop via the same remote command path."""
+    import sim.apps.BadgeBot.app as BadgeBot
+    from sim.apps.BadgeBot.bluetooth_mgr import _CONTROL_BUTTON_COMMANDS
+
+    app = BadgeBot.BadgeBotApp()
+    app.current_state = BadgeBot.STATE_MENU
+    seen = {}
+
+    class DummyAutoDriveMgr:
+        def start(self):
+            seen["start"] = True
+            return True
+
+        def stop(self):
+            seen["stop"] = True
+
+    app._autodrive_mgr = DummyAutoDriveMgr()
+
+    assert _CONTROL_BUTTON_COMMANDS["3"] == BadgeBot.REMOTE_CMD_AUTO_DRIVE_TOGGLE
+    app.post_remote_command(BadgeBot.REMOTE_CMD_AUTO_DRIVE_TOGGLE)
+    app._process_remote_commands()
+
+    assert app.current_state == BadgeBot.STATE_AUTODRIVE
+    assert seen["start"] is True
+
+
 def test_sensor_base_interface():
     """Verify SensorBase class has the expected interface."""
     from sim.apps.BadgeBot.sensors.sensor_base import SensorBase
