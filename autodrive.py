@@ -8,7 +8,8 @@ Behavior:
 - Repeat.
 """
 
-from math import cos, pi, radians, sin
+from math import cos, pi, radians, sin, sqrt
+from random import choice
 
 from events.input import BUTTON_TYPES
 from app_components.tokens import label_font_size, button_labels
@@ -45,7 +46,7 @@ _AUTO_TURN_TIMEOUT_MAX_MS = 10000 # 7000
 _AUTO_SCAN_EXCLUDE_DEG = 45.0
 _AUTO_GYRO_AXIS = 2
 _AUTO_GYRO_DEADBAND_DPS = 3.0
-_AUTO_BACKUP_MS = 600
+_AUTO_BACKUP_MS = 1000
 _AUTO_BACKUP_NEAR_MM = 200
 _AUTO_BACKUP_SPEED_FRAC = 0.7
 _AUTO_OBSTACLE_CONFIRM_SAMPLES = 2
@@ -53,7 +54,10 @@ _AUTO_SCAN_PAUSE_MS = 200
 _AUTO_DECIDE_MS = 10000
 _AUTO_PLOT_INTERVAL_MS = 100
 _AUTO_LOG_INTERVAL_MS = 500
-_AUTO_RADAR_RANGE_MM = 800
+_AUTO_RADAR_RANGE_MM = 1200
+_AUTO_ROBOT_HALF_WIDTH_MM = 70.0   # half of robot width + tolerance, for path clearance checks
+_AUTO_ROBOT_HALF_WIDTH_INC_TOLERANCE_MM = 100.0   # additional tolerance for path clearance checks
+_AUTO_MIN_VIABLE_MM = 250           # minimum expected clear path for a quadrant to count as viable
 
 # Default settings
 _AUTO_DRIVE_SPEED = 56000    # ~43% max power default for auto driving
@@ -92,6 +96,8 @@ class AutoDriveMgr:
         self.sub_state: int = _AUTO_SUB_DRIVE
         self.distance: int | None = None
         self.scan_data: list[tuple[float, int]] = []
+        self.quadrant_candidates: list[tuple[str, float, float, bool]] = []
+        self.selected_quadrant: str | None = None
 
         self.forward_hold_ms: int = _AUTO_MIN_FWD_MS
         self.reverse_timer: int = 0
@@ -153,6 +159,8 @@ class AutoDriveMgr:
         self.sub_state = _AUTO_SUB_DRIVE
         self.distance = None
         self.scan_data = []
+        self.quadrant_candidates = []
+        self.selected_quadrant = None
         self.forward_hold_ms = _AUTO_MIN_FWD_MS
         self.reverse_timer = 0
         self.turn_timer = 0
@@ -280,13 +288,14 @@ class AutoDriveMgr:
 
     def _draw_scan_plot(self, ctx):
         """Render a radar-style polar plot with the robot at the screen centre."""
-        if not self.scan_data:
+        if not self.scan_data or not self.quadrant_candidates:
             return
 
         display_radius = 120
-        ring_col = (0.2, 0.6, 0.6)
-        ray_col = (0.0, 1.0, 0.8)
-        girth_col = (1.0, 1.0, 1.0)
+        body_col = (0.2, 0.6, 0.6)      # outline of robot body
+        ray_col = (1.0, 1.0, 1.0)       # LiDAR return
+        path_col = (0.0, 0.8, 0.8)     # candidate path corridor
+        exclude_col = (0.4, 0.2, 0.2)       # forward exclusion arc
 
         ctx.save()
         ctx.line_width = 1
@@ -297,19 +306,14 @@ class AutoDriveMgr:
         # draw the exclusion sector as a filled wedge
         start_theta = self._scan_angle_to_theta(-_AUTO_SCAN_EXCLUDE_DEG)
         end_theta = self._scan_angle_to_theta(_AUTO_SCAN_EXCLUDE_DEG)
-        ctx.rgb(0.4, 0.2, 0.2).move_to(0, 0).arc(0, 0, display_radius, start_theta, end_theta, 0).line_to(0, 0).fill()
+        ctx.rgb(*exclude_col).move_to(0, 0).arc(0, 0, display_radius, start_theta, end_theta, 0).line_to(0, 0).fill()
 
         # draw a represtation of the robot body as a circle at the centre of the plot
         body_radius = (50 * display_radius) // _AUTO_RADAR_RANGE_MM
-        ctx.rgb(*ring_col).arc(0, 0, body_radius, 0, pi * 2, 0).stroke()
-
-        #for arc in range(0, 360, 45):
-        #    theta = radians(float(arc)) - (pi / 2.0)
-        #    x = display_radius * cos(theta)
-        #    y = -display_radius * sin(theta)
-        #    ctx.rgb(*ring_col).move_to(0, 0).line_to(x, y).stroke()
+        ctx.rgb(*body_col).arc(0, 0, body_radius, 0, pi * 2, 0).stroke()
 
         last_theta = None
+        ctx.line_width = 2
         for angle_deg, dist_mm in self.scan_data:
             if dist_mm is None or angle_deg is None:
                 continue
@@ -320,10 +324,32 @@ class AutoDriveMgr:
                 ctx.rgb(*ray_col).arc(0,0, ray_len, last_theta, theta, 0).stroke()
             last_theta = theta
 
-        # draw the chosen heading as a thick line
-        theta = self._scan_angle_to_theta(self.best_angle_deg)
-        ctx.line_width = 3
-        ctx.rgb(*girth_col).move_to(0, 0).line_to(display_radius * cos(theta), display_radius * sin(theta)).stroke()
+        # draw each viable quadrant's candidate path: corridor width and expected clear distance
+        half_width_screen = (_AUTO_ROBOT_HALF_WIDTH_MM * display_radius) / float(_AUTO_RADAR_RANGE_MM)
+        for name, angle_deg, dist_mm, viable in self.quadrant_candidates:
+            if not viable:
+                continue
+            theta = self._scan_angle_to_theta(angle_deg)
+            path_len = (max(0.0, min(dist_mm, _AUTO_RADAR_RANGE_MM)) * display_radius) / float(_AUTO_RADAR_RANGE_MM)
+            fwd_x, fwd_y = cos(theta), sin(theta)
+            side_x, side_y = -sin(theta), cos(theta)
+            near_x, near_y = side_x * half_width_screen, side_y * half_width_screen
+            far_x, far_y = fwd_x * path_len + near_x, fwd_y * path_len + near_y
+            far2_x, far2_y = fwd_x * path_len - near_x, fwd_y * path_len - near_y
+
+            colour = path_col
+            alpha = 0.50 if name == self.selected_quadrant else 0.25
+            # fill the corridor as a solid area rather than an outline, since a
+            # wireframe rectangle reads oddly against the polar radar background
+            (
+                ctx.rgba(colour[0], colour[1], colour[2], alpha)
+                .move_to(near_x, near_y)
+                .line_to(far_x, far_y)
+                .line_to(far2_x, far2_y)
+                .line_to(-near_x, -near_y)
+                .line_to(near_x, near_y)
+                .fill()
+            )
 
         ctx.restore()
 
@@ -430,26 +456,6 @@ class AutoDriveMgr:
         if len(self._app.hexdrive_apps) > 0:
             self._app.hexdrive_apps[0].set_motors((0, 0))
         self.status = ""
-
-
-    #def _read_gyro_delta(self, delta_ms: int) -> float:
-    #    """Read gyro yaw and return signed delta degrees for this tick."""
-    #    if _imu is None:
-    #        self.gyro_dps = 0.0
-    #        return 0.0
-    #    try:
-    #        raw = _imu.gyro_read()
-    #        self.gyro_dps = -float(raw[_AUTO_GYRO_AXIS])    # IMU Gyro axis 2 is yaw, negative clockwise, but BadgeBot uses positive clockwise convention
-    #    except Exception:  # pylint: disable=broad-except
-    #        self.gyro_dps = 0.0
-    #        return 0.0#
-    #
-    #    if abs(self.gyro_dps) <= _AUTO_GYRO_DEADBAND_DPS:
-    #        return 0.0
-    #
-    #    delta_deg = self.gyro_dps * (delta_ms / 1000.0)
-    #    self.yaw_deg += delta_deg
-    #    return delta_deg
 
 
     @staticmethod
@@ -563,6 +569,8 @@ class AutoDriveMgr:
         print(f"A:Scan start, obstacle={self.distance}")
         self.sub_state = _AUTO_SUB_SCAN
         self.scan_data = []
+        self.quadrant_candidates = []
+        self.selected_quadrant = None
         self.turn_timer = 0
         self.turn_timeout_ms = _AUTO_SCAN_TIMEOUT_MS
         self.turn_progress_deg = 0.0
@@ -588,7 +596,42 @@ class AutoDriveMgr:
         if dist_mm > _AUTO_CLEAR_DIST_MM:
             return 0.0
         return float(dist_mm)
-    
+
+
+    @staticmethod
+    def _classify_quadrant(rel_angle_deg: float) -> str | None:
+        """Bucket a scan bearing into right/back/left, excluding the forward arc already avoided."""
+        angle = rel_angle_deg % 360.0
+        if angle > 180.0:
+            angle -= 360.0
+        if abs(angle) <= _AUTO_SCAN_EXCLUDE_DEG:
+            return None
+        if _AUTO_SCAN_EXCLUDE_DEG < angle <= 180.0 - _AUTO_SCAN_EXCLUDE_DEG:
+            return "right"
+        if angle > 180.0 - _AUTO_SCAN_EXCLUDE_DEG or angle <= -(180.0 - _AUTO_SCAN_EXCLUDE_DEG):
+            return "back"
+        return "left"
+
+
+    def _corridor_clear_dist(self, theta_deg: float) -> float:
+        """Distance the robot could travel on heading theta before its body clips a scan point."""
+        best = float(_AUTO_CLEAR_DIST_MM)
+        for angle, dist in self.scan_data:
+            d = self._effective_scan_dist(dist)
+            if d <= 0.0:
+                continue
+            rel_rad = radians((angle - theta_deg + 180.0) % 360.0 - 180.0)
+            along = d * cos(rel_rad)
+            if along <= 0.0:
+                continue
+            perp = abs(d * sin(rel_rad))
+            if perp >= _AUTO_ROBOT_HALF_WIDTH_INC_TOLERANCE_MM:
+                continue
+            clearance = along - sqrt(_AUTO_ROBOT_HALF_WIDTH_INC_TOLERANCE_MM ** 2 - perp ** 2)
+            if clearance < best:
+                best = clearance
+        return max(0.0, best)
+
 
     def _scan_record_sample(self):
         dist = self.distance if self.distance is not None else _AUTO_CLEAR_DIST_MM
@@ -601,88 +644,52 @@ class AutoDriveMgr:
 
 
     def _select_best_scan_heading(self) -> tuple[float, int] | None:
-        """Find the widest gap between obstacles and aim for its centre.
+        """Pick a heading using per-quadrant path clearance, randomised among viable quadrants.
 
-        Contiguous "open" (obstacle-free) samples are grouped into gaps; each gap is
-        scored on its angular width and the turn needed to reach its centre, so a wide
-        clear opening wins over simply reversing back the way we came. The sector
-        around the heading that triggered the scan (relative angle 0) is heavily
-        penalised, but still chosen if it is the only way through.
+        The scan is split into a forward exclusion arc plus three 90-degree quadrants
+        (right/back/left). Each quadrant keeps its candidate bearing with the longest
+        expected travel distance before the robot's body (modelled as a circle of radius
+        _AUTO_ROBOT_HALF_WIDTH_MM) would clip a scanned point, so a distant reading behind
+        a too-narrow gap can't win. One viable quadrant is then chosen at random rather
+        than always the single best, to avoid bouncing between the same two headings.
         """
-        if not self.scan_data:
-            return None
-        if len(self.scan_data) < 10:
-            return None
-
-        width_weight = 1.0
-        turn_weight = 0.5
-
-        samples = self.scan_data
-        count = len(samples)
-        obstacle_mm = self._app.settings['auto_obstacle'].v
-        is_open = [self._effective_scan_dist(dist) >= obstacle_mm for _, dist in samples]
-
-        if not any(is_open):
+        if not self.scan_data or len(self.scan_data) < 10:
+            self.quadrant_candidates = []
+            self.selected_quadrant = None
             return None
 
-        if all(is_open):
-            print("A:All scan samples are open, choosing forward")
-            gaps = [list(range(count))]
-        else:
-            start_idx = next(idx for idx in range(count) if not is_open[idx])
-            gaps = []
-            current: list[int] = []
-            for step in range(count):
-                idx = (start_idx + step) % count
-                if is_open[idx]:
-                    current.append(idx)
-                elif current:
-                    gaps.append(current)
-                    current = []
-            if current:
-                gaps.append(current)
+        quadrant_best: dict[str, tuple[float, float]] = {}
+        for angle, _dist in self.scan_data:
+            quad = self._classify_quadrant(angle)
+            if quad is None:
+                continue
+            clearance = self._corridor_clear_dist(angle)
+            if quad not in quadrant_best or clearance > quadrant_best[quad][1]:
+                quadrant_best[quad] = (angle % 360.0, clearance)
 
-        best_angle = None
-        best_dist = 0
-        best_score = -1e9
+        self.quadrant_candidates = [
+            (name, angle, dist, dist >= _AUTO_MIN_VIABLE_MM)
+            for name, (angle, dist) in quadrant_best.items()
+        ]
 
-        for gap_idx, gap in enumerate(gaps):
-            # Use raw (unwrapped) angles: a scan never exceeds 360 degrees, so
-            # turn_progress_deg is monotonic within it and wrapping first/last
-            # independently before taking the difference picks the wrong (short)
-            # arc whenever the scan direction makes the angle decrease.
-            first_raw = samples[gap[0]][0]
-            last_raw = samples[gap[-1]][0]
-            width_deg = abs(last_raw - first_raw)
-            centre_deg = ((first_raw + last_raw) / 2.0) % 360.0
-            turn_deg = centre_deg if centre_deg <= 180.0 else 360.0 - centre_deg
-
-            score = (width_deg * width_weight) - (turn_deg * turn_weight)
-            if turn_deg <= _AUTO_SCAN_EXCLUDE_DEG:
-                score -= 10000.0
-
-            if score > best_score:
-                best_score = score
-                best_angle = centre_deg
-
-                # representative sample nearest the gap centre, for a real distance reading
-                nearest_idx = gap[0]
-                nearest_delta = 360.0
-                for idx in gap:
-                    sample_angle = samples[idx][0] % 360.0
-                    delta = abs(sample_angle - centre_deg)
-                    if delta > 180.0:
-                        delta = 360.0 - delta
-                    if delta < nearest_delta:
-                        nearest_delta = delta
-                        nearest_idx = idx
-                best_dist = samples[nearest_idx][1]
-            print(f"A:Gap:{first_raw % 360.0:.1f}-{last_raw % 360.0:.1f}deg width={width_deg:.1f} centre={centre_deg:.1f}  score={score:.1f} best={best_score:.1f}")
-
-            
-        if best_angle is None:
+        candidates = [(name, a, d) for name, a, d, ok in self.quadrant_candidates if ok]
+        if not candidates:
+            candidates = [(name, a, d) for name, a, d, _ok in self.quadrant_candidates]
+        if not candidates:
+            self.selected_quadrant = None
             return None
-        return best_angle, best_dist
+
+        name, best_angle, best_dist = choice(candidates)
+        self.selected_quadrant = name
+
+        if self._logging:
+            summary = " ".join(
+                f"{n}={a:.0f}deg/{d:.0f}mm{'*' if ok else ''}"
+                for n, a, d, ok in self.quadrant_candidates
+            )
+            print(f"A:Quadrants {summary} -> chose {name} {best_angle:.0f}deg {best_dist:.0f}mm")
+
+        return best_angle, int(best_dist)
 
 
     def _update_scan(self, delta: int):
@@ -700,50 +707,24 @@ class AutoDriveMgr:
         if not (full_turn or timed_out):
             return
 
-        if not self.scan_data:
-            if self._logging:
-                print("A:Scan done but no range samples, continuing forward")
-            self._enter_drive()
-            return
-
-        best = self._select_best_scan_heading()
-        if best is None:
-            self._enter_drive()
-            return
-
-        self.best_angle_deg, self.best_dist_mm = best
-
-        # The selected scan angle is measured relative to the scan start, so convert it
-        # to an absolute heading in world space and then choose the shortest signed turn
-        # from the robot's current heading.
-        target_heading = (self.scan_trigger_deg + self.best_angle_deg) % 360.0
-        turn_dir, turn_deg = self._heading_to_turn(target_heading)
-        self.turn_dir = turn_dir
-        self.turn_deg = turn_deg
-
         if self._logging:
             reason = "360" if full_turn else "timeout"
             print(
                 "A:Scan done "
                 + reason
-                + f" best={self.best_angle_deg:.1f}deg dist={self.best_dist_mm}mm"
-                + f" turn={self.turn_deg:.1f}deg"
             )
 
-        #if self.best_dist_mm >= _AUTO_CLEAR_DIST_MM:
-        #    self._enter_drive()
-        #    self.status = "Clear ahead"
-        #    return
-
-        #if self.target_deg <= _AUTO_TURN_STOP_MARGIN_DEG:
-        #    self._enter_drive()
-        #    return
-
+        if not self.scan_data:
+            if self._logging:
+                print("A:Scan done but no range samples, continuing forward")
+            self._enter_drive()
+            return
+       
         self._enter_decide()
 
 
     def _enter_decide(self):
-        print(f"A:Decide turn {self.turn_dir:+d} {self.turn_deg:.1f}deg")
+        print(f"A:Decide turn...") # {self.turn_dir:+d} {self.turn_deg:.1f}deg")
         self.sub_state = _AUTO_SUB_DECIDE
         self.decide_timer = _AUTO_DECIDE_MS
         self.target_output = (0, 0)
@@ -753,6 +734,27 @@ class AutoDriveMgr:
 
     def _update_decide(self, delta: int):
         self.decide_timer = max(0, self.decide_timer - delta)
+
+        if not self.quadrant_candidates and self.decide_timer < (_AUTO_DECIDE_MS - 100):
+            # first time through - process the scan data to select a heading (now that we are stationary)
+            best = self._select_best_scan_heading()
+            if best is None:
+                self._enter_drive()
+                return
+
+            self.best_angle_deg, self.best_dist_mm = best
+
+            # The selected scan angle is measured relative to the scan start, so convert it
+            # to an absolute heading in world space and then choose the shortest signed turn
+            # from the robot's current heading.
+            target_heading = (self.scan_trigger_deg + self.best_angle_deg) % 360.0
+            turn_dir, turn_deg = self._heading_to_turn(target_heading)
+            self.turn_dir = turn_dir
+            self.turn_deg = turn_deg
+
+            if self._logging:
+                print(f"A:Decided best={self.best_angle_deg:.1f}deg dist={self.best_dist_mm}mm turn={self.turn_deg:.1f}deg")
+
         self.target_output = (0, 0)
         self.status = f"Decide {self.decide_timer}ms"
         if self.decide_timer <= 0:
@@ -764,6 +766,7 @@ class AutoDriveMgr:
         self.sub_state = _AUTO_SUB_TURN
         self.turn_timer = 0
         self.turn_progress_deg = 0.0
+        self.quadrant_candidates = []
 
         spin = self._scan_speed() # self._turn_speed()
         self.target_output = (spin * self.turn_dir, -spin * self.turn_dir)
