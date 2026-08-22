@@ -8,8 +8,10 @@ Behavior:
 - Repeat.
 """
 
-from math import cos, pi, radians, sin, sqrt
+from math import cos, pi, radians, sin
 from random import choice
+
+import micropython
 
 from events.input import BUTTON_TYPES
 from app_components.tokens import label_font_size, button_labels
@@ -58,6 +60,8 @@ _AUTO_RADAR_RANGE_MM = 1200
 _AUTO_ROBOT_HALF_WIDTH_MM = 70.0   # half of robot width + tolerance, for path clearance checks
 _AUTO_ROBOT_HALF_WIDTH_INC_TOLERANCE_MM = 100.0   # additional tolerance for path clearance checks
 _AUTO_MIN_VIABLE_MM = 250           # minimum expected clear path for a quadrant to count as viable
+_AUTO_TRIG_FP_SHIFT = 14            # Q14 fixed-point scale used to pass cos/sin into the viper helper as ints
+_AUTO_TRIG_FP_ONE = 1 << _AUTO_TRIG_FP_SHIFT
 
 # Default settings
 _AUTO_DRIVE_SPEED = 56000    # ~43% max power default for auto driving
@@ -81,6 +85,40 @@ def init_settings(s, MySetting: type):
         group=MySetting.GROUP_AUTO_DRIVE, order=30, title="Scan speed",
         description="Motor power used while spinning to scan for a clear heading")
 
+
+@micropython.viper
+def _corridor_pair_clearance_mm(dx: int, dy: int, fwd_x_fp: int, fwd_y_fp: int,
+                                 side_x_fp: int, side_y_fp: int,
+                                 half_width_mm: int, clear_dist_mm: int) -> int:
+    """Integer-only clearance (mm) of one scan point against one candidate heading.
+
+    dx/dy are the scan point's Cartesian offset in mm; fwd/side are the heading's unit
+    vectors scaled to Q14 fixed point (see _AUTO_TRIG_FP_ONE). Runs as viper native code
+    since it's called once per (candidate heading, scan point) pair -- avoid the builtin
+    max()/min(), which viper does not support, in favour of explicit comparisons.
+    """
+    along = (dx * fwd_x_fp + dy * fwd_y_fp) // 16384  # 16384 == _AUTO_TRIG_FP_ONE, inlined so viper sees a literal
+    if along <= 0:
+        return clear_dist_mm
+    perp = (dx * side_x_fp + dy * side_y_fp) // 16384
+    if perp < 0:
+        perp = -perp
+    if perp >= half_width_mm:
+        return clear_dist_mm
+
+    # Integer sqrt (Newton's method) of the remaining half-chord length squared.
+    rem = half_width_mm * half_width_mm - perp * perp
+    x = rem
+    y = (x + 1) // 2
+    while y < x:
+        x = y
+        y = (x + rem // x) // 2
+
+    clearance = along - x
+    if clearance < 0:
+        clearance = 0
+    return clearance
+
 # ---- Auto Drive manager ----------------------------------------------------
 
 class AutoDriveMgr:
@@ -95,7 +133,9 @@ class AutoDriveMgr:
 
         self.sub_state: int = _AUTO_SUB_DRIVE
         self.distance: int | None = None
-        self.scan_data: list[tuple[float, int]] = []
+        self.scan_data: list[tuple[float, float]] = []
+        self._scan_dx: list[int] = []   # Cartesian mm offsets parallel to scan_data, precomputed once per sample
+        self._scan_dy: list[int] = []
         self.quadrant_candidates: list[tuple[str, float, float, bool]] = []
         self.selected_quadrant: str | None = None
 
@@ -159,6 +199,8 @@ class AutoDriveMgr:
         self.sub_state = _AUTO_SUB_DRIVE
         self.distance = None
         self.scan_data = []
+        self._scan_dx = []
+        self._scan_dy = []
         self.quadrant_candidates = []
         self.selected_quadrant = None
         self.forward_hold_ms = _AUTO_MIN_FWD_MS
@@ -569,6 +611,8 @@ class AutoDriveMgr:
         print(f"A:Scan start, obstacle={self.distance}")
         self.sub_state = _AUTO_SUB_SCAN
         self.scan_data = []
+        self._scan_dx = []
+        self._scan_dy = []
         self.quadrant_candidates = []
         self.selected_quadrant = None
         self.turn_timer = 0
@@ -589,8 +633,13 @@ class AutoDriveMgr:
 
 
     @staticmethod
-    def _effective_scan_dist(dist_mm: int | float) -> float:
-        """Treat saturated sensor values as unknown rather than as a clear opening."""
+    def _effective_scan_dist(dist_mm: int | float | None) -> float:
+        """Treat saturated sensor values as unknown rather than as a clear opening.
+
+        Applied exactly once, when a sample is recorded (see _scan_record_sample);
+        every other consumer (drawing, corridor clearance, ...) reuses that stored
+        result rather than recomputing it.
+        """
         if dist_mm is None:
             return 0.0
         if dist_mm > _AUTO_CLEAR_DIST_MM:
@@ -614,31 +663,42 @@ class AutoDriveMgr:
 
 
     def _corridor_clear_dist(self, theta_deg: float) -> float:
-        """Distance the robot could travel on heading theta before its body clips a scan point."""
-        best = float(_AUTO_CLEAR_DIST_MM)
-        for angle, dist in self.scan_data:
-            d = self._effective_scan_dist(dist)
-            if d <= 0.0:
-                continue
-            rel_rad = radians((angle - theta_deg + 180.0) % 360.0 - 180.0)
-            along = d * cos(rel_rad)
-            if along <= 0.0:
-                continue
-            perp = abs(d * sin(rel_rad))
-            if perp >= _AUTO_ROBOT_HALF_WIDTH_INC_TOLERANCE_MM:
-                continue
-            clearance = along - sqrt(_AUTO_ROBOT_HALF_WIDTH_INC_TOLERANCE_MM ** 2 - perp ** 2)
+        """Distance the robot could travel on heading theta before its body clips a scan point.
+
+        The heading's unit vector (fwd/side) is only computed once here, in Q14 fixed
+        point; the per-point along/perp/clearance maths -- run once per scan point --
+        is delegated to the viper-compiled _corridor_pair_clearance_mm so it executes
+        as native integer machine code instead of per-pair Python float trig.
+        """
+        theta_rad = radians(theta_deg)
+        fwd_x_fp = round(cos(theta_rad) * _AUTO_TRIG_FP_ONE)
+        fwd_y_fp = round(sin(theta_rad) * _AUTO_TRIG_FP_ONE)
+        side_x_fp = -fwd_y_fp
+        side_y_fp = fwd_x_fp
+        half_width_mm = int(_AUTO_ROBOT_HALF_WIDTH_INC_TOLERANCE_MM)
+        clear_dist_mm = int(_AUTO_CLEAR_DIST_MM)
+
+        best = clear_dist_mm
+        dxs = self._scan_dx
+        dys = self._scan_dy
+        for i in range(len(dxs)):
+            clearance = _corridor_pair_clearance_mm(
+                dxs[i], dys[i], fwd_x_fp, fwd_y_fp, side_x_fp, side_y_fp, half_width_mm, clear_dist_mm
+            )
             if clearance < best:
                 best = clearance
-        return max(0.0, best)
+        if best < 0:
+            best = 0
+        return float(best)
 
 
     def _scan_record_sample(self):
-        dist = self.distance if self.distance is not None else _AUTO_CLEAR_DIST_MM
-        if dist > _AUTO_CLEAR_DIST_MM:
-            dist = _AUTO_CLEAR_DIST_MM
+        dist = self._effective_scan_dist(self.distance)
         angle = self.turn_progress_deg
         self.scan_data.append((angle, dist))
+        rad = radians(angle)
+        self._scan_dx.append(round(dist * cos(rad)))
+        self._scan_dy.append(round(dist * sin(rad)))
         if self._logging:
             print(f"A:ScanSample angle={angle:.1f}deg dist={dist}mm")
 
@@ -729,7 +789,6 @@ class AutoDriveMgr:
         self.decide_timer = _AUTO_DECIDE_MS
         self.target_output = (0, 0)
         self.status = "Decide"
-        self._app.refresh = True
 
 
     def _update_decide(self, delta: int):
@@ -754,6 +813,7 @@ class AutoDriveMgr:
 
             if self._logging:
                 print(f"A:Decided best={self.best_angle_deg:.1f}deg dist={self.best_dist_mm}mm turn={self.turn_deg:.1f}deg")
+            self._app.refresh = True
 
         self.target_output = (0, 0)
         self.status = f"Decide {self.decide_timer}ms"
