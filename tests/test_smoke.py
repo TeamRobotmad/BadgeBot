@@ -1,14 +1,8 @@
 import re
-import sys
 from math import pi, radians
 from pathlib import Path
 
 import pytest
-
-# Add badge software to pythonpath
-sys.path.append("../../../")
-
-import sim.run as _sim_run
 from system.hexpansion.config import HexpansionConfig
 
 
@@ -41,7 +35,8 @@ def test_import_hexdrive_app_and_app_export():
 
 def test_hexdrive_instance_exposes_version():
     from sim.apps.BadgeBot.vendor.HexDrive.hexdrive import HexDriveApp
-    assert getattr(HexDriveApp(), "VERSION", None) == HexDriveApp.VERSION
+    app_instance = HexDriveApp(HexpansionConfig(1))
+    assert getattr(app_instance, "VERSION", None) == HexDriveApp.VERSION
 
 def test_badgebot_app_init():
     from sim.apps.BadgeBot import BadgeBotApp
@@ -74,6 +69,7 @@ def test_hexdrive2_metadata_matches_vendor_source():
     for entry in hexdrive2_entries:
         assert entry.app_mpy_name == "hexdrive2"
         assert entry.app_mpy_version == BadgeBot.HEXDRIVE2_APP_VERSION
+
 
 def test_hexdrive_type_pids_consistent():
     """Verify HexDriveType PIDs in hexdrive.py are consistent with HexpansionType PIDs in app.py.
@@ -119,10 +115,10 @@ def test_hexdrive_type_pids_consistent():
 
 
 def test_new_settings_registered():
-    """Verify motor1_dir, motor2_dir, and front_face base settings are always registered."""
+    """Verify motor direction and front-face base settings are always registered."""
     from sim.apps.BadgeBot import BadgeBotApp
     app_instance = BadgeBotApp()
-    for key in ('motor1_dir', 'motor2_dir', 'front_face'):
+    for key in ('mtr1_dir', 'mtr2_dir', 'front_face'):
         assert key in app_instance.settings, f"Missing setting: {key}"
 
 
@@ -174,8 +170,9 @@ def test_autodrive_decide_state_and_turn_transition():
     mgr._active = True
     mgr.sub_state = autodrive._AUTO_SUB_DECIDE
     mgr.decide_timer = 10
+    mgr.quadrant_candidates = [("front", 0.0, 0.0, True)]
     mgr.turn_dir = 1
-    mgr.target_deg = 90.0
+    mgr.turn_deg = 90.0
     mgr._app.button_states = {}
 
     mgr.update(100)
@@ -196,7 +193,10 @@ def test_autodrive_scan_theta_uses_front_face_rotation():
     import types
     import sim.apps.BadgeBot.autodrive as autodrive
 
-    app = types.SimpleNamespace(settings={"front_face": types.SimpleNamespace(v=5)})
+    app = types.SimpleNamespace(
+        sensor_test_mgr=None,
+        settings={"front_face": types.SimpleNamespace(v=5)},
+    )
     mgr = autodrive.AutoDriveMgr(app, logging=False)
 
     expected = radians(0.0) - (pi / 2.0) + radians(5 * 30.0)
@@ -217,6 +217,7 @@ def test_remote_autodrive_button_3_maps_and_starts():
 
     app = BadgeBot.BadgeBotApp()
     app.current_state = BadgeBot.STATE_MENU
+    app.num_motors = 2
     seen = {}
 
     class DummyAutoDriveMgr:
@@ -248,10 +249,7 @@ def test_sensor_base_interface():
     assert sensor.is_ready is False
 
 
-def test_all_sensor_classes_populated():
-    """Verify ALL_SENSOR_CLASSES contains the expected sensor drivers."""
+def test_legacy_sensor_registry_is_disabled():
+    """HexDrive2 owns sensor polling; the old app-level registry stays empty."""
     from sim.apps.BadgeBot.sensors import ALL_SENSOR_CLASSES
-    assert len(ALL_SENSOR_CLASSES) >= 2
-    names = {cls.NAME for cls in ALL_SENSOR_CLASSES}
-    assert 'VL53L0X' in names or 'VL6180X' in names  # at least one ToF sensor
-    assert 'OPT4060' in names  # OPT4060 RGBW colour sensor
+    assert ALL_SENSOR_CLASSES == []

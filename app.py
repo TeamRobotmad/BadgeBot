@@ -40,7 +40,7 @@ micropython.alloc_emergency_exception_buf(1024)
 from .utils import draw_logo_animated, parse_version
 
 HEXDRIVE_APP_VERSION = 6
-HEXDRIVE2_APP_VERSION = 3
+HEXDRIVE2_APP_VERSION = 4
 
 SETTINGS_NAME_PREFIX = "badgebot"  # Prefix for settings keys in EEPROM
 APP_VERSION = "2.8" # BadgeBot App Version Number

@@ -16,12 +16,16 @@ class TestNoHexpansion:
 
     def test_base_settings_present(self, badgebot_app):
         """Base settings are always registered in __init__."""
-        for key in ('brightness', 'logging', 'motor1_dir', 'motor2_dir', 'front_face'):
+        for key in (
+            'brightness', 'logging', 'acceleration', 'max_power',
+            'mtr_deadband', 'mtr1_dir', 'mtr2_dir', 'mtr1_min',
+            'mtr2_min', 'front_face',
+        ):
             assert key in badgebot_app.settings, f"Missing base setting: {key}"
 
-    def test_motor_settings_absent_without_hexpansion(self, badgebot_app):
-        """Motor-dependent settings must not exist without a HexDrive."""
-        for key in ('acceleration', 'max_power', 'drive_step_ms', 'turn_step_ms'):
+    def test_motor_move_settings_absent_without_hexpansion(self, badgebot_app):
+        """Motor-move settings must not exist without a HexDrive."""
+        for key in ('drive_step_ms', 'turn_step_ms'):
             assert key not in badgebot_app.settings, (
                 f"Setting '{key}' should not be registered without a HexDrive"
             )
@@ -78,7 +82,7 @@ class TestTwoMotorHexDrive:
 
     def test_autodrive_settings_registered(self, badgebot_app_with_hexpansion):
         s = badgebot_app_with_hexpansion.settings
-        for key in ('auto_speed', 'auto_obstacle'):
+        for key in ('auto_speed', 'auto_obstacle', 'auto_scan_speed'):
             assert key in s, f"Missing auto-drive setting: {key}"
 
     def test_menu_includes_motor_moves(self, badgebot_app_with_hexpansion):
@@ -106,17 +110,17 @@ class TestTwoMotorHexDrive:
         items = [item for item in app.menu.menu_items]
         assert "Line Follower" not in items
 
-    def test_menu_includes_sensor_test(self, badgebot_app_with_hexpansion):
+    def test_menu_excludes_sensor_test_without_sensors(self, badgebot_app_with_hexpansion):
         app = badgebot_app_with_hexpansion
         app.set_menu("main")
         items = [item for item in app.menu.menu_items]
-        assert "Sensor Test" in items
+        assert "Sensor Test" not in items
 
     def test_menu_includes_common_items(self, badgebot_app_with_hexpansion):
         app = badgebot_app_with_hexpansion
         app.set_menu("main")
         items = [item for item in app.menu.menu_items]
-        for expected in ("Hexpansions", "Settings", "About", "Exit"):
+        for expected in ("Settings", "About", "Exit"):
             assert expected in items, f"Missing common menu item: {expected}"
 
     def test_background_update_applies_motor_output_without_bluetooth(self, badgebot_app_with_hexpansion, monkeypatch):
@@ -156,7 +160,7 @@ class TestFourServoHexDrive:
 
     def test_motor_settings_absent(self, badgebot_app_with_hexpansion):
         s = badgebot_app_with_hexpansion.settings
-        for key in ('acceleration', 'max_power', 'drive_step_ms', 'turn_step_ms'):
+        for key in ('drive_step_ms', 'turn_step_ms'):
             assert key not in s, f"Setting '{key}' should not exist for 4-Servo"
 
     def test_autodrive_settings_absent(self, badgebot_app_with_hexpansion):
@@ -208,7 +212,7 @@ class TestOneMotorTwoServoHexDrive:
     def test_motor_moves_settings_absent(self, badgebot_app_with_hexpansion):
         """Motor Moves requires num_motors > 1; 1-Motor variant has only 1."""
         s = badgebot_app_with_hexpansion.settings
-        for key in ('acceleration', 'max_power', 'drive_step_ms', 'turn_step_ms'):
+        for key in ('drive_step_ms', 'turn_step_ms'):
             assert key not in s, f"Setting '{key}' should not exist for 1-Motor"
 
     def test_menu_includes_servo_test(self, badgebot_app_with_hexpansion):
@@ -252,13 +256,13 @@ class TestFullHexDrive:
         s = badgebot_app_with_hexpansion.settings
         expected = (
             # base
-            'brightness', 'logging', 'motor1_dir', 'motor2_dir', 'front_face',
+            'brightness', 'logging', 'acceleration', 'max_power',
+            'mtr_deadband', 'mtr1_dir', 'mtr2_dir', 'mtr1_min',
+            'mtr2_min', 'front_face',
             # motor moves
-            'acceleration', 'max_power', 'drive_step_ms', 'turn_step_ms',
+            'drive_step_ms', 'turn_step_ms',
             # servo test
             'servo_step', 'servo_range', 'servo_period',
-            # auto drive
-            'auto_speed', 'auto_obstacle',
         )
         for key in expected:
             assert key in s, f"Missing setting: {key}"

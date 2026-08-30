@@ -29,22 +29,25 @@ test raises.  Specific HexDrive sub-types are configured through
 
 .. note::
 
-   We do **not** import ``sim.run`` at module level.  ``sim/run.py``
-   replaces ``sys.meta_path`` entirely, which would break pytest's
-   ``faulthandler`` plugin during the early configuration phase.  All
-   simulator-dependent imports are deferred to :func:`_ensure_sim_initialized`,
-   which is called lazily from fixtures at test-execution time.
+    We do **not** import ``sim.run`` at module level.  ``sim/run.py``
+    replaces ``sys.meta_path`` entirely, which would break pytest's
+    ``faulthandler`` plugin during early configuration.  Simulator setup runs
+    from ``pytest_sessionstart``, after plugin setup and before collection.
 """
 
+import asyncio as _asyncio  # Preload before sim.run replaces import finders.
 import contextlib
 import sys
+from pathlib import Path
 
 from unittest.mock import patch
 
 import pytest
 
-# ---- path setup (harmless; just extends sys.path) --------------------------
-sys.path.append("../../../")
+# ---- path setup -------------------------------------------------------------
+REPO_ROOT = Path(__file__).resolve().parents[4]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 # ---------------------------------------------------------------------------
 #  Lazy simulator initialisation
@@ -65,6 +68,20 @@ def _ensure_sim_initialized():
     if not _sim_initialized:
         import sim.run  # noqa: F401 – side effect: configures sys.path & fakes
         _sim_initialized = True
+
+
+def pytest_sessionstart(session):
+    """Install simulator shims after plugin setup and before test collection."""
+    _ensure_sim_initialized()
+
+
+@pytest.fixture(autouse=True)
+def supported_badge_version(monkeypatch):
+    """Run app tests against the minimum supported BadgeOS API level."""
+    _ensure_sim_initialized()
+    import ota
+
+    monkeypatch.setattr(ota, "get_version", lambda: "2.2.0")
 
 
 # ---------------------------------------------------------------------------

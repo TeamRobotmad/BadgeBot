@@ -190,16 +190,14 @@ python -m pip install -r .\dev\dev_requirements.txt
 
 
 ### Running tests
-Tests must be run from the `tests/` directory:
+Run tests from the BadgeBot directory. The test configuration locates the parent badge repository automatically:
 ```
-cd tests
-python -m pytest test_smoke.py test_autotune.py -v
+.venv/bin/python -m pytest tests -v
 ```
 
-If BadgeBot is checked out inside the `badge-2024-software` repo, set `PYTHONPATH` to the parent repo root so `sim.run` can be imported. For the WSL helper's default environment this looks like:
+On Windows PowerShell, use:
 ```
-cd tests
-PYTHONPATH=/path/to/badge-2024-software ../.venv-wsl310/bin/python -m pytest test_smoke.py test_autotune.py -v
+.\.venv\Scripts\python.exe -m pytest tests -v
 ```
 
 ### Best practise
