@@ -922,9 +922,9 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         while True:
             cur_time = time.ticks_ms()
             delta_ticks = time.ticks_diff(cur_time, last_time)
-            diagnostics_output(0, 1)
+            #diagnostics_output(1, 1)
             self.background_update(delta_ticks)
-            diagnostics_output(0, 0)
+            #diagnostics_output(1, 0)
             await asyncio.sleep_ms(max (1, self._update_period - (time.ticks_ms() - cur_time)))  # sleep for the remainder of the update period, accounting for time taken by background_update
             last_time = cur_time
 
@@ -1112,9 +1112,9 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
     ### MAIN APP CONTROL FUNCTIONS ###
 
-    def update(self, delta: int):
+    def update(self, delta: int) -> bool:
         """Main update function called from the main loop. Handles state transitions, user input, and delegates to functional area managers."""
-        #diagnostics_output(1, 1)
+        #self.diagnostics_output(2, 1)
 
         if self.notification:
             self.notification.update(delta)
@@ -1194,8 +1194,10 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 tildagonos.leds.write()
             except OSError as e:
                 print(f"Error writing to LEDs: {e}")
-        #diagnostics_output(1, 0)
-
+        #self.diagnostics_output(2, 0)
+        if 2 == self._performance_mode:
+            return False
+        return self.refresh
 
 
     def _update_main_application(self, delta: int) -> None:
@@ -1366,22 +1368,26 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             self._ring_refresh = True
 
 
+    @micropython.native
+    def draw_performance(self) -> bool:
+        ##diagnostics_output(3, 1)
+        """Handle drawing the display in performance mode, which may skip certain updates to maintain high update rates for robot control."""
+        if 2 == self._performance_mode:
+            #diagnostics_output(3, 0)
+            return False
+        return True
+
+
     def draw(self, ctx):
         """Main draw function called from the main loop. Handles drawing the current state, including any notifications."""
-
-        # diagnostics output for measuring draw time on a scope - pin 2 is high while draw() is running, low when it is finished
-        diagnostics_output(2, 1)
-
-        if 2 != self._performance_mode and self.refresh:
+        if not self.draw_performance():
+            return
+        
+        if self.refresh:
             # Clear the Screen - before drawing on it
             clear_background(ctx)
 
-        if 2 == self._performance_mode:
-            # Drawing the screen takes a VERY long time - so when trying to run robot control algorithms as fast as possible
-            # we skip drawing the screen to avoid stalling the background updates
-            diagnostics_output(2, 0)
-            return
-        elif 1 == self._performance_mode:
+        if 1 == self._performance_mode:
             # Allow this refresh cycle then stop updating the screen
             self._performance_mode = 2
 
@@ -1439,7 +1445,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if self.notification:
             self.notification.draw(ctx)
 
-        diagnostics_output(2, 0)
+        #diagnostics_output(3, 0)
 
 
 
