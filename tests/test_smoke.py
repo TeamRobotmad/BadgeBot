@@ -23,6 +23,39 @@ def test_parse_version_handles_dev_and_git_suffixes():
     assert parse_version("v2.2.1-rc1+build.7") == (2, 2, 1)
 
 
+def test_parse_version_works_without_re_findall(monkeypatch):
+    import sim.apps.BadgeBot.utils as badge_utils
+
+    class NoFindallModule:
+        pass
+
+    monkeypatch.setattr(badge_utils, "re", NoFindallModule())
+
+    assert badge_utils.parse_version("v2.3.4-rc1+build.7") == (2, 3, 4)
+
+
+def test_ctx_fake_imports_without_wasmtime(monkeypatch):
+    import builtins
+    import importlib
+    import sys
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "wasmtime":
+            raise ModuleNotFoundError("No module named 'wasmtime'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    sys.modules.pop("sim.fakes.ctx", None)
+
+    mod = importlib.import_module("sim.fakes.ctx")
+    assert mod.wasmtime is None
+    assert mod._wasm is None
+    with pytest.raises(RuntimeError, match="wasmtime"):
+        mod._require_wasm()
+
+
 def test_import_badgebot_app_and_app_export():
     import sim.apps.BadgeBot.app as BadgeBot
     from sim.apps.BadgeBot import BadgeBotApp
