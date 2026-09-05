@@ -645,9 +645,11 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     @performance_mode.setter
     def performance_mode(self, value: bool):
         """Convenience property to set performance_mode setting."""
-        if value and 0 == self._performance_mode:
+        if value and self._performance_mode == 0:
             self.refresh = True  # force a refresh when we enter performance mode to ensure the screen is cleared
-        self._performance_mode = 1 if value else 0
+            self._performance_mode = 1
+        if not value and self._performance_mode != 0:
+            self._performance_mode = 0
 
 
     @property
