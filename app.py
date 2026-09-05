@@ -1372,11 +1372,14 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
     @micropython.native
     def draw_performance(self) -> bool:
-        ##diagnostics_output(3, 1)
         """Handle drawing the display in performance mode, which may skip certain updates to maintain high update rates for robot control."""
-        if 2 == self._performance_mode:
-            #diagnostics_output(3, 0)
+        diagnostics_output(3, 1)
+        if 2 == self._performance_mode:       
+            diagnostics_output(3, 0)
             return False
+        elif 1 == self._performance_mode:
+            # Allow this refresh cycle then stop updating the screen
+            self._performance_mode = 2        
         return True
 
 
@@ -1389,12 +1392,8 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             # Clear the Screen - before drawing on it
             clear_background(ctx)
 
-        if 1 == self._performance_mode:
-            # Allow this refresh cycle then stop updating the screen
-            self._performance_mode = 2
-
         if self._ring_refresh or self.refresh:
-            if self._ring_colour is not None and 0 == self._performance_mode:
+            if self._ring_colour is not None:
                 self._ring_refresh = False
                 # The ring can be updated without redrawing the entire display
                 # Draw an 8-pixel colour ring around the edge of the display
@@ -1407,7 +1406,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         elif self.refresh:
             self.refresh = False
 
-            #ctx.save()
             #if in a mode where rotated display is desirable:
             #    ctx.rotate(self.front_face * 2.0 * pi / _FRONT_FACE_NUM_ORIENTATIONS)  # Rotate the entire display based on the front_face setting, so that "forward" is always at the top of the display regardless of how the badge is oriented
             ctx.font_size = label_font_size
@@ -1416,13 +1414,11 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
 
             if self.current_state == STATE_LOGO:
                 draw_logo_animated(ctx, self.rpm, self.animation_counter, [self.b_msg, self.t_msg], self.qr_code)
-            elif self.scroll_mode_enabled and self.is_scroll and self._performance_mode != 2:
+            elif self.scroll_mode_enabled and self.is_scroll:
                 # Scroll mode indicator border
                 ctx.rgb(0,0.2,0).rectangle(     -120,-120, 115+H_START,240).fill()
                 ctx.rgb(0,0  ,0).rectangle(H_START-5,-120,10-2*H_START,240).fill()
                 ctx.rgb(0,0.2,0).rectangle(5-H_START,-120, 115+H_START,240).fill()
-            #else:
-            #    ctx.rgb(0,0,0).rectangle(-120,-120,240,240).fill()
 
             # Common states for messages and errors, which can be triggered by any functional area manager and are displayed in a consistent way
             if self.current_state == STATE_MESSAGE:
@@ -1439,7 +1435,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                     draw_fn = self._state_draw_dispatch.get(self.current_state)
                     if draw_fn is not None:
                         draw_fn(ctx)
-            #ctx.restore()
 
         # Notifications are drawn on top of everything else, so that they are visible regardless of the current state.
         # They also contain animations, so need to be drawn every frame when active.
@@ -1447,7 +1442,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         if self.notification:
             self.notification.draw(ctx)
 
-        #diagnostics_output(3, 0)
+        diagnostics_output(3, 0)
 
 
 
