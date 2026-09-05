@@ -1805,11 +1805,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             self.current_state = STATE_LOGO
             self.refresh = True
         elif item == MAIN_MENU_ITEMS[MENU_ITEM_EXIT]:       # Exit
-            #if self._hexpansion_mgr is not None:
-            #    self._hexpansion_mgr.unregister_events()
-            #eventbus.remove(RequestForegroundPushEvent, self._gain_focus, self)
-            #eventbus.remove(RequestForegroundPopEvent, self._lose_focus, self)
-            eventbus.emit(RequestStopAppEvent(self))
+            self.terminate()
 
 
     def _menu_back_handler(self):
