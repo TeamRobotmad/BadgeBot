@@ -1,5 +1,4 @@
 #utils.py
-import re
 from math import pi
 
 from display import hexagon
@@ -93,6 +92,9 @@ def parse_version(version):
     Only the leading release components are used, so development, rc, and git
     metadata such as ``-dev``, ``-rc1``, and ``-20-gabcdef`` do not interfere with
     compatibility checks.
+
+    This avoids ``re.findall()`` because some MicroPython builds expose a minimal
+    ``re`` module without that method.
     """
     if version is None:
         return ()
@@ -101,13 +103,26 @@ def parse_version(version):
     if not raw:
         return ()
 
-    parts = [int(part) for part in re.findall(r"\d+", raw)[:3]]
+    parts = []
+    current = ""
+    for ch in raw:
+        if ch.isdigit():
+            current += ch
+        elif current:
+            parts.append(int(current))
+            current = ""
+            if len(parts) >= 3:
+                break
+
+    if current:
+        parts.append(int(current))
+
     if not parts:
         return ()
 
     while len(parts) < 3:
         parts.append(0)
-    return tuple(parts)
+    return tuple(parts[:3])
 
 
 def chain(*iterables):
