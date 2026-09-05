@@ -1223,7 +1223,7 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 return
             else:
                 if self.current_state == STATE_LOGO:
-                    self._set_about_hexdrive2_leds(False)
+                    self._set_flood_leds(False)
                 self.button_states.clear()
                 platform_settings.save()  # Save settings before minimising
                 self.minimise()
