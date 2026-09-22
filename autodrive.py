@@ -856,10 +856,8 @@ class AutoDriveMgr:
         if gyro_done or time_done:
             if self._logging:
                 reason = "gyro" if gyro_done else "timeout"
-                print(
-                    f"A:Turn done {reason} turned={self.turn_progress_deg:.1f} "
-                    f"turn={self.turn_deg:.1f} signed={signed_turn:.1f}"
-                )
+                # mpy-cross rejects multi-line implicit f-string concatenation; keep this on one line.
+                print(f"A:Turn done {reason} turned={self.turn_progress_deg:.1f} turn={self.turn_deg:.1f} signed={signed_turn:.1f}")
             self._enter_drive()
 
 

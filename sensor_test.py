@@ -1374,9 +1374,9 @@ class _PCNTUnitBase:
         _pcnt_reset_counter(unit)
         self._configured = True
 
+        # mpy-cross rejects multi-line implicit f-string concatenation; keep this on one line.
         self._log(
-            f"PCNT U{unit}: configured OK, CONF0=0x{mem32[conf0_addr]:08X}, "
-            f"CTRL=0x{mem32[_PCNT_CTRL_REG]:08X}, CNT={mem32[cnt_addr] & _PCNT_COUNTER_MASK}"
+            f"PCNT U{unit}: configured OK, CONF0=0x{mem32[conf0_addr]:08X}, CTRL=0x{mem32[_PCNT_CTRL_REG]:08X}, CNT={mem32[cnt_addr] & _PCNT_COUNTER_MASK}"
         )
 
     def deinit(self):

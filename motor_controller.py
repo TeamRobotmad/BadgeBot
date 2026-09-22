@@ -319,8 +319,8 @@ class MotorController:
                 # Periodic progress (every ~250 ms)
                 if loop_count % 25 == 0 and self._logging:
                     remaining = target_deg - self.integrated_deg
-                    print(f"[MC-DIAG]   turn progress: {self.integrated_deg:.1f} / {target_deg:.1f} deg  "
-                          f"gyro={self.gyro_dps:.1f} dps  elapsed={elapsed_ms} ms  remaining={remaining:.1f} deg")
+                    # mpy-cross rejects multi-line implicit f-string concatenation; keep this on one line.
+                    print(f"[MC-DIAG]   turn progress: {self.integrated_deg:.1f} / {target_deg:.1f} deg  gyro={self.gyro_dps:.1f} dps  elapsed={elapsed_ms} ms  remaining={remaining:.1f} deg")
 
                 if self.integrated_deg >= target_deg:
                     break
@@ -344,8 +344,8 @@ class MotorController:
                 await asyncio.sleep_ms(self._update_ms)
             coast_deg = self.integrated_deg - post_stop_deg
             if self._logging:
-                print(f"[MC-DIAG] turn done: integrated={self.integrated_deg:.2f} deg  target={target_deg:.1f} deg  "
-                    f"overshoot={overshoot:.2f} deg")
+                # mpy-cross rejects multi-line implicit f-string concatenation; keep this on one line.
+                print(f"[MC-DIAG] turn done: integrated={self.integrated_deg:.2f} deg  target={target_deg:.1f} deg  overshoot={overshoot:.2f} deg")
                 print(f"[MC-DIAG]   elapsed={elapsed_ms} ms  loops={loop_count}  avg_loop={avg_loop:.1f} ms")
                 print(f"[MC-DIAG]   peak_dps={peak_dps:.1f}  coast_after_stop={coast_deg:.2f} deg")
                 if timed_out:
