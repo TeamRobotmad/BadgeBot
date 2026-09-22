@@ -429,6 +429,9 @@ def _compile_changed_modules(
             _log("SKP", f"compile {spec.source} (source unchanged)")
             continue
 
+        if not dry_run:
+            spec.artifact.parent.mkdir(parents=True, exist_ok=True)
+
         if spec.minify:
             _log("INFO", f"minify+compile {spec.source} -> {spec.artifact}")
             _run_command(
