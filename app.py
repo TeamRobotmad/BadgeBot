@@ -1370,7 +1370,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             self._ring_refresh = True
 
 
-    @micropython.native
     def draw_performance(self) -> bool:
         """Handle drawing the display in performance mode, which may skip certain updates to maintain high update rates for robot control."""
         diagnostics_output(3, 1)

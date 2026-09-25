@@ -116,7 +116,7 @@ class RobotBLE:
         self.start_advertising()
 
 
-    @micropython.native
+    #@micropython.native
     def _irq(self, event, data):
         """
         PERFECT STATE: Zero memory lookups, zero allocations, zero object referencing.

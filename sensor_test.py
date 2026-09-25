@@ -1636,7 +1636,11 @@ class SensorStats():
         self._missed_samples: int = 0
         self._last_sequence_number: int = -1
 
-
+    def __repr__(self):
+        return (
+            f"SensorStats(name={self._name!r}, count={self._sample_count}, timer={self._sample_timer}, rate={self._sample_rate})"
+        )
+    
     @property
     def name(self) -> str:
         """Return the name of the sensor."""
@@ -1649,7 +1653,6 @@ class SensorStats():
         return self._missed_samples
 
 
-    @micropython.native
     def update(self, delta: int) -> bool:
         """Update the sample timer and calculate the sample rate."""
         self._sample_timer += delta
