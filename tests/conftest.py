@@ -37,6 +37,7 @@ test raises.  Specific HexDrive sub-types are configured through
 
 import asyncio as _asyncio  # Preload before sim.run replaces import finders.
 import contextlib
+import importlib
 import sys
 from pathlib import Path
 
@@ -56,6 +57,14 @@ if str(REPO_ROOT) not in sys.path:
 _sim_initialized = False
 
 
+def _identity_decorator(function):
+    return function
+
+
+def _noop(*args, **kwargs):
+    return None
+
+
 def _ensure_sim_initialized():
     """Import ``sim.run`` exactly once to set up simulator shims.
 
@@ -67,6 +76,15 @@ def _ensure_sim_initialized():
     global _sim_initialized
     if not _sim_initialized:
         import sim.run  # noqa: F401 – side effect: configures sys.path & fakes
+        # Initialize scheduler before eventbus to avoid their package-init cycle.
+        importlib.import_module("system.scheduler")
+        micropython = importlib.import_module("micropython")
+        for name in ("native", "viper"):
+            if not hasattr(micropython, name):
+                setattr(micropython, name, _identity_decorator)
+        for name in ("alloc_emergency_exception_buf", "mem_info"):
+            if not hasattr(micropython, name):
+                setattr(micropython, name, _noop)
         _sim_initialized = True
 
 

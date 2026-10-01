@@ -75,6 +75,513 @@ def test_badgebot_app_init():
     from sim.apps.BadgeBot import BadgeBotApp
     BadgeBotApp()
 
+
+def test_line_follow_gc_heap_probe_retries_in_100_kib_steps(monkeypatch):
+    import sim.apps.BadgeBot.app as BadgeBot
+
+    requested_sizes = []
+
+    def allocate(size):
+        requested_sizes.append(size)
+        if size > 300 * 1024:
+            raise MemoryError
+        return object()
+
+    monkeypatch.setattr(BadgeBot, "bytearray", allocate, raising=False)
+
+    assert BadgeBot._preallocate_gc_heap_for_line_follow() == 300 * 1024
+    assert requested_sizes == [size * 1024 for size in range(1000, 200, -100)]
+
+
+def test_line_follow_calibration_reminder_is_shown_once():
+    from types import SimpleNamespace
+    from sim.apps.BadgeBot.line_follow import LineFollowMgr, STATE_FOLLOWER
+
+    messages = []
+    app = SimpleNamespace(
+        show_message=lambda *args, **kwargs: messages.append((args, kwargs)),
+        button_states={},
+    )
+    manager = LineFollowMgr(app, logging=False)
+
+    assert manager.update(1) is True
+    assert manager.update(1) is True
+    assert len(messages) == 1
+    assert messages[0][0][0][0] == "Line Follower:"
+    assert messages[0][1] == {"return_state": STATE_FOLLOWER, "timeout": 4000}
+
+
+@pytest.mark.parametrize("error", [-1800, -90, 0, 90, 1800])
+def test_line_follow_differential_output_preserves_buffer_and_limits(error):
+    from types import SimpleNamespace
+    from sim.apps.BadgeBot.line_follow import LineFollowMgr
+
+    manager = LineFollowMgr(SimpleNamespace(max_power=70), logging=False)
+    result = [0, 0]
+    correction = manager._steering_correction(error, 50)
+    expected = (
+        max(-70, min(70, manager.line_power + correction)),
+        max(-70, min(70, manager.line_power - correction)),
+    )
+    manager.clear_pid()
+    assert manager.compute_differential_output(error, 50, result) is result
+    assert tuple(result) == expected
+    manager.clear_pid()
+    assert manager.compute_differential_output(error, 50) == expected
+
+
+def test_sensor_polling_reuses_buffers_and_contains_errors():
+    from types import SimpleNamespace
+    from sim.apps.BadgeBot.sensor_test import SensorTestMgr
+
+    ring = []
+    manager = SensorTestMgr(SimpleNamespace(set_ring_colour=lambda *rgb: ring.append(rgb)))
+    range_sensor = SimpleNamespace(sequence=1, range=150)
+    range_hexdrive = SimpleNamespace(range_sensor=range_sensor)
+    range_result = [False, None]
+    assert manager.read_range(range_hexdrive, range_result) is range_result
+    assert range_result == [True, 150]
+    manager.read_range(range_hexdrive, range_result)
+    assert range_result == [False, 150]
+    manager.read_range(None, range_result)
+    assert range_result == [False, None]
+
+    def colour_into(destination):
+        destination[:] = [100, 20, 10, 100]
+        return destination
+
+    colour_sensor = SimpleNamespace(sequence=1, colour_into=colour_into,
+                                    colour_hue=30, colour_saturation=90, colour_name="Red")
+    colour_hexdrive = SimpleNamespace(colour_sensor=colour_sensor)
+    colour_result = [False, 0, 0, "unknown", None]
+    assert manager.read_colour(colour_hexdrive, True, colour_result) is colour_result
+    assert colour_result[0] is True
+    assert colour_result[4] is manager._colour_raw_buffer
+    assert len(ring) == 1
+    manager.read_colour(colour_hexdrive, True, colour_result)
+    assert colour_result[0] is False
+    assert len(ring) == 1
+
+    class BrokenSensor:
+        @property
+        def sequence(self):
+            raise OSError("sensor disconnected")
+
+    manager.read_range(SimpleNamespace(range_sensor=BrokenSensor()), range_result)
+    assert range_result == [False, None]
+    manager.read_colour(SimpleNamespace(colour_sensor=BrokenSensor()), True, colour_result)
+    assert colour_result[0] is False
+
+
+def test_line_follow_obstacle_stop_preserves_reusable_output():
+    from types import SimpleNamespace
+    from sim.apps.BadgeBot.line_follow import LineFollowMgr
+
+    def read_range(_hexdrive, result):
+        result[0] = True
+        result[1] = 50
+        return result
+
+    app = SimpleNamespace(sensor_test_mgr=SimpleNamespace(read_range=read_range),
+                          performance_mode=False, notification=None)
+    manager = LineFollowMgr(app, logging=False)
+    manager._colour_hexdrive = object()
+    manager._range_hexdrive = SimpleNamespace(config=SimpleNamespace(port=4))
+    manager._enable_movement = True
+    for _ in range(3):
+        assert manager.background_update(50) is manager._output_buffer
+        assert manager._output_buffer == [0, 0]
+    assert manager._enable_movement is False
+    assert app.notification is not None
+
+
+@pytest.mark.parametrize("source, targets", [
+    ("app.py", "update background_update _update_notifications _update_background_managers _record_main_update _update_state_foreground _update_main_application _update_state_transition _record_state_background _update_state_background _update_state_leds _scale_state_leds _scale_state_led _write_state_leds _log_state_led_error _send_motor_output apply_motor_calibration draw _draw_state_ring"),
+    ("line_follow.py", "update background_update _obstacle_detected _follow_colour compute_differential_output _steering_correction _differential_output draw draw_tracker _draw_tracker_box _draw_selected_field _draw_tracker_bands _draw_tracker_band_range _draw_tracker_band _tracker_band_hue _draw_tracker_band_line _draw_tracker_reading _draw_tracker_labels _draw_tracker_heading _draw_tracker_gains _draw_tracker_deviation _draw_idle_button_labels _draw_active_button_labels _draw_sensor_rate"),
+    ("sensor_test.py", "read_range read_colour _read_range_checked _poll_range _read_colour_checked _poll_colour _count_colour_sample_checked _update_colour_ring_checked _update_colour_ring _store_range_result _store_colour_result"),
+    ("vendor/HexDrive2/hexdrive2.py", "background_update _poll_range_background _poll_colour_background _update_keep_alive _stop_timed_out_outputs _stop_pwm_checked _stop_pwm set_motors _set_motor_checked _set_motor _disable_motor_channel _set_pwmoutput _write_pwm_checked _write_pwm read read_into poll _job_poll _read_values colour_into colour_name rgbw_to_str _lookup_colour_math_viper _colour_hsv_into _colour_hue _colour_id apply_white_reference _white_channel _scaled_white_value"),
+])
+def test_line_follow_hot_bytecode_states_fit_stack_cutoff(source, targets, tmp_path):
+    import shutil
+    import subprocess
+    import sys
+
+    compiler = shutil.which("mpy-cross")
+    if compiler is None:
+        pytest.skip("mpy-cross is required for bytecode frame checks")
+    app_root = Path(__file__).resolve().parents[1]
+    inspector = app_root.parents[2] / "micropython" / "tools" / "mpy-tool.py"
+    if not inspector.exists():
+        pytest.skip("MicroPython bytecode inspector is unavailable")
+    artifact = tmp_path / "stack-check.mpy"
+    subprocess.run([compiler, "-march=xtensawin", "-O2", "-o", str(artifact), str(app_root / source)], check=True, capture_output=True)
+    dump = subprocess.run([sys.executable, "-X", "utf8", str(inspector), "-d", str(artifact)], check=True, capture_output=True, encoding="utf-8").stdout
+    wanted = set(targets.split())
+    measured = {}
+    function = None
+    for line in dump.splitlines():
+        if line.startswith("simple_name: "):
+            function = line.split(": ", 1)[1]
+        match = re.match(r"\s+prelude: \((\d+), (\d+),", line)
+        if match and function in wanted:
+            measured[function] = 4 * int(match[1]) + 12 * int(match[2])
+    assert measured.keys() == wanted
+    assert all(size <= 44 for size in measured.values()), measured
+
+
+def test_eeprom_partition_writes_cross_pages_with_byteslike_buffers(monkeypatch):
+    import importlib.util
+    import sys
+    from sim.apps.BadgeBot.hexpansion_mgr import _EEPROMProgrammingI2C
+
+    root = Path(__file__).resolve().parents[4]
+    loaded = {}
+    for name, relative in (("bdevice", "lib/bdevice.py"),
+                           ("eeprom_i2c", "lib/eeprom_i2c.py"),
+                           ("eeprom_partition", "eeprom_partition.py")):
+        spec = importlib.util.spec_from_file_location(name, root / "modules" / relative)
+        module = importlib.util.module_from_spec(spec)
+        monkeypatch.setitem(sys.modules, name, module)
+        spec.loader.exec_module(module)
+        loaded[name] = module
+    monkeypatch.setattr(loaded["eeprom_i2c"].time, "sleep_ms", lambda delay: None, raising=False)
+
+    class StrictI2C:
+        def __init__(self):
+            self.writes = []
+            self.memory = bytearray(32768)
+
+        def scan(self, addresses):
+            return [0x50]
+
+        def writeto(self, address, data):
+            if not isinstance(data, (bytes, bytearray, memoryview)):
+                raise TypeError("a bytes-like object is required")
+            if len(data) > 1:
+                offset = (data[0] << 8) | data[1]
+                self.writeto_mem(address, offset, memoryview(data)[2:], 16)
+            return len(data)
+
+        def writeto_mem(self, address, offset, data, addrsize):
+            self.writes.append((address, offset, bytes(data), addrsize))
+            self.memory[offset:offset + len(data)] = data
+
+        def readfrom_mem_into(self, address, offset, data, addrsize):
+            data[:] = self.memory[offset:offset + len(data)]
+
+    i2c = StrictI2C()
+    eeprom = loaded["eeprom_i2c"].EEPROM(_EEPROMProgrammingI2C(i2c), chip_size=32768, page_size=64, addrsize=16, verbose=False)
+    partition = loaded["eeprom_partition"].EEPROMPartition(eeprom, 64, 32704)
+    payload = bytearray(range(100))
+    partition.writeblocks(0, memoryview(payload), offset=60)
+    assert [(offset, len(data), width) for _, offset, data, width in i2c.writes] == [
+        (124, 4, 16), (128, 64, 16), (192, 32, 16),
+    ]
+    actual = bytearray(100)
+    partition.readblocks(0, actual, offset=60)
+    assert actual == payload
+
+def test_eeprom_programming_remounts_existing_filesystem(monkeypatch):
+    import sim.apps.BadgeBot.hexpansion_mgr as manager
+
+    calls = []
+    partition = object()
+
+    def mount(device, path, readonly):
+        calls.append(("mount", device, path, readonly))
+        if len(calls) == 1:
+            raise OSError(1)
+
+    monkeypatch.setattr(manager.vfs, "mount", mount, raising=False)
+    monkeypatch.setattr(manager.vfs, "umount", lambda path: calls.append(("umount", path)), raising=False)
+    assert manager._mount_eeprom_for_programming(partition, "/hexpansion_4") is True
+    assert calls == [
+        ("mount", partition, "/hexpansion_4", False),
+        ("umount", "/hexpansion_4"),
+        ("mount", partition, "/hexpansion_4", False),
+    ]
+
+def test_eeprom_programming_identifies_new_mount(monkeypatch):
+    import sim.apps.BadgeBot.hexpansion_mgr as manager
+
+    calls = []
+    partition = object()
+    monkeypatch.setattr(manager.vfs, "mount", lambda *args, **kwargs: calls.append(args), raising=False)
+    monkeypatch.setattr(manager.vfs, "umount", lambda path: pytest.fail("New mounts must not be remounted"), raising=False)
+    assert manager._mount_eeprom_for_programming(partition, "/hexpansion_4") is False
+    assert calls == [(partition, "/hexpansion_4")]
+
+
+def test_gc_alloc_probe_records_sampled_growth(monkeypatch):
+    from system import gc_alloc_probe
+
+    monkeypatch.setattr(gc_alloc_probe, "_enabled", True)
+    monkeypatch.setattr(gc_alloc_probe, "_calls", [0] * len(gc_alloc_probe._NAMES))
+    monkeypatch.setattr(gc_alloc_probe, "_samples", [0] * len(gc_alloc_probe._NAMES))
+    monkeypatch.setattr(gc_alloc_probe, "_bytes", [0] * len(gc_alloc_probe._NAMES))
+    monkeypatch.setattr(gc_alloc_probe, "_max_bytes", [0] * len(gc_alloc_probe._NAMES))
+    monkeypatch.setattr(gc_alloc_probe, "_gc_overlap", [0] * len(gc_alloc_probe._NAMES))
+
+    gc_alloc_probe._calls[gc_alloc_probe.APP_UPDATE] = 1
+    gc_alloc_probe.record(gc_alloc_probe.APP_UPDATE, 100, 132)
+
+    assert gc_alloc_probe._calls[gc_alloc_probe.APP_UPDATE] == 1
+    assert gc_alloc_probe._samples[gc_alloc_probe.APP_UPDATE] == 1
+    assert gc_alloc_probe._bytes[gc_alloc_probe.APP_UPDATE] == 32
+    assert gc_alloc_probe._max_bytes[gc_alloc_probe.APP_UPDATE] == 32
+
+
+def test_gc_alloc_probe_marks_samples_that_span_collection(monkeypatch):
+    from system import gc_alloc_probe
+
+    monkeypatch.setattr(gc_alloc_probe, "_gc_overlap", [0] * len(gc_alloc_probe._NAMES))
+    gc_alloc_probe.record(gc_alloc_probe.APP_UPDATE, 100, 100, 4, 5)
+
+    assert gc_alloc_probe._gc_overlap[gc_alloc_probe.APP_UPDATE] == 1
+    assert gc_alloc_probe._samples[gc_alloc_probe.APP_UPDATE] == 0
+
+
+@pytest.mark.parametrize("was_enabled", [False, True])
+def test_gc_churn_pattern_test_restores_previous_state(monkeypatch, was_enabled):
+    import types
+    import sim.apps.BadgeBot.app as BadgeBot
+
+    pattern_app_type = type("PatternDisplay", (), {})
+    pattern_app = pattern_app_type()
+    pattern_app.enabled = was_enabled
+    test_app = types.SimpleNamespace(
+        _gc_churn_pattern_app=None,
+        _gc_churn_pattern_was_enabled=False,
+    )
+    monkeypatch.setattr(BadgeBot.scheduler, "apps", [pattern_app])
+
+    BadgeBot.BadgeBotApp._disable_pattern_for_gc_churn_test(test_app)
+    assert pattern_app.enabled is False
+
+    BadgeBot.BadgeBotApp._restore_pattern_after_gc_churn_test(test_app)
+    assert pattern_app.enabled is was_enabled
+
+
+def test_neopixel_dim_correction_reuses_output_buffer(monkeypatch):
+    import importlib.util
+    import types
+
+    machine_stub = types.ModuleType("machine")
+    machine_stub.bitstream = lambda *args: None
+    monkeypatch.setitem(__import__("sys").modules, "machine", machine_stub)
+
+    repo_root = Path(__file__).resolve().parents[4]
+    neopixel_path = (
+        repo_root
+        / "micropython"
+        / "lib"
+        / "micropython-lib"
+        / "micropython"
+        / "drivers"
+        / "led"
+        / "neopixel"
+        / "neopixel.py"
+    )
+    spec = importlib.util.spec_from_file_location("_test_neopixel", neopixel_path)
+    neopixel = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(neopixel)
+
+    class PixelSink:
+        n = 1
+
+        def __init__(self):
+            self.value = None
+
+        def __setitem__(self, index, value):
+            self.value = tuple(value)
+
+    sink = PixelSink()
+    correction = neopixel.DimCorrection(0.5)
+    pixels = neopixel.CorrectedNeoPixel(sink, [correction])
+
+    pixels[0] = (100, 40, 3)
+    buffer = pixels._correction_buffer
+    assert sink.value == (50, 20, 1)
+
+    pixels[0] = (200, 80, 5)
+    assert pixels._correction_buffer is buffer
+    assert sink.value == (100, 40, 2)
+
+    first_result = correction((100, 40, 3))
+    second_result = correction((200, 80, 5))
+    assert first_result == [50, 20, 1]
+    assert second_result == [100, 40, 2]
+    assert first_result is not second_result
+
+    raw_pixels = object.__new__(neopixel.NeoPixel)
+    raw_pixels.n = 1
+    raw_pixels.bpp = 3
+    raw_pixels.buf = bytearray((20, 10, 30))
+    raw_result = [0, 0, 0]
+    raw_pixels.get_into(0, raw_result)
+    assert raw_result == [10, 20, 30]
+
+    composed_pixels = neopixel.ComposedNeoPixel(raw_pixels)
+    corrected_pixels = neopixel.CorrectedNeoPixel(
+        composed_pixels, [neopixel.DimCorrection(0.5)]
+    )
+    corrected_pixels.get_into(0, raw_result)
+    assert raw_result == [5, 10, 15]
+
+    raw_pixels.n = 2
+    raw_pixels.buf = bytearray(6)
+    batch_pixels = neopixel.CorrectedNeoPixel(
+        neopixel.ComposedNeoPixel(raw_pixels),
+        [neopixel.DimCorrection(0.5)] * 2,
+    )
+    frame = [(100, 40, 3), (200, 80, 5)]
+    batch_pixels.set_many(0, frame, 2)
+    batch_buffer = batch_pixels._batch_buffer
+    assert list(raw_pixels.buf) == [20, 50, 1, 40, 100, 2]
+
+    frame[0] = (20, 60, 8)
+    batch_pixels.set_many(0, frame, 2)
+    assert batch_pixels._batch_buffer is batch_buffer
+    assert list(raw_pixels.buf) == [30, 10, 4, 40, 100, 2]
+
+    first_strip = object.__new__(neopixel.NeoPixel)
+    first_strip.n = 3
+    first_strip.bpp = 3
+    first_strip.buf = bytearray(9)
+    second_strip = object.__new__(neopixel.NeoPixel)
+    second_strip.n = 3
+    second_strip.bpp = 3
+    second_strip.buf = bytearray(9)
+    composed_strips = neopixel.ComposedNeoPixel(first_strip, 0)
+    composed_strips.add_string(second_strip, 1)
+    composed_strips.set_many(0, [(1, 2, 3), (4, 5, 6), (7, 8, 9)], 3)
+    assert list(first_strip.buf) == [2, 1, 3, 5, 4, 6, 8, 7, 9]
+    assert list(second_strip.buf) == [5, 4, 6, 8, 7, 9, 0, 0, 0]
+
+
+@pytest.mark.parametrize("mirror_pattern", [False, True])
+def test_backled_manager_skips_unchanged_pixel_writes(monkeypatch, mirror_pattern):
+    import types
+    from system.backleds import app as backleds
+
+    class PixelSink:
+        def __init__(self):
+            self.front = [(10, 20, 30)] * 12
+            self.back = {}
+            self.set_calls = 0
+            self.write_calls = 0
+            self.read_buffers = []
+
+        def get_into(self, index, result):
+            self.read_buffers.append(id(result))
+            colour = self.front[index]
+            result[0] = colour[0]
+            result[1] = colour[1]
+            result[2] = colour[2]
+            return result
+
+        def __getitem__(self, index):
+            raise AssertionError("mirrored reads must use get_into")
+
+        def __setitem__(self, index, colour):
+            self.set_calls += 1
+            self.back[index] = tuple(colour)
+
+        def write(self):
+            self.write_calls += 1
+
+    pixels = PixelSink()
+    active = [False] * 6
+    if mirror_pattern:
+        active[0] = True
+
+    monkeypatch.setattr(backleds.tildagonos, "leds", pixels)
+    monkeypatch.setattr(backleds.tildagonos, "set_led_power", lambda _enabled: None)
+    monkeypatch.setattr(backleds.eventbus, "on_async", lambda *args: None)
+    monkeypatch.setattr(backleds.settings, "get", lambda key, default=None: (
+        mirror_pattern if key == "pattern_mirror_hexpansions" else default
+    ))
+    monkeypatch.setattr(backleds, "active_back_leds", active)
+
+    manager = backleds.BackLEDManager()
+    manager.background_update(50)
+    assert pixels.set_calls == 6
+    assert pixels.write_calls == 1
+
+    manager.background_update(50)
+    assert pixels.set_calls == 6
+    assert pixels.write_calls == 1
+
+    if mirror_pattern:
+        pixels.front[1] = (40, 50, 60)
+        manager.background_update(50)
+        assert pixels.back[13] == (40, 50, 60)
+        assert len(set(pixels.read_buffers)) == 1
+    else:
+        active[2] = True
+        manager.background_update(50)
+        assert pixels.back[15] == backleds.led_colours[2]
+
+    assert pixels.set_calls == 7
+    assert pixels.write_calls == 2
+
+
+def test_notification_wrap_uses_few_width_checks_and_preserves_splits():
+    from app_components.notification import Notification
+
+    class TextContext:
+        def __init__(self):
+            self.width_checks = 0
+
+        def text_width(self, text):
+            self.width_checks += 1
+            return len(text)
+
+    notification = Notification("", open=False)
+    notification.width_limits = [5]
+    ctx = TextContext()
+
+    assert notification.get_text_for_line(ctx, "red blue green", 0) == (
+        "red", "blue green"
+    )
+    assert notification.get_text_for_line(ctx, "abcdefgh", 0) == ("abcde", "fgh")
+    assert notification.get_text_for_line(ctx, "abcde", 0) == ("abcde", "")
+
+    ctx.width_checks = 0
+    notification.width_limits = [512]
+    notification.get_text_for_line(ctx, "x" * 1024, 0)
+    assert ctx.width_checks <= 12
+
+
+def test_notification_service_skips_settled_closed_slots():
+    from system.notification.app import NotificationService
+
+    class FakeNotification:
+        def __init__(self, opened, animation_state):
+            self._open = opened
+            self._animation_state = animation_state
+            self.update_calls = 0
+            self.draw_calls = 0
+
+        def update(self, _delta):
+            self.update_calls += 1
+
+        def draw(self, _ctx):
+            self.draw_calls += 1
+
+    service = NotificationService()
+    settled = FakeNotification(False, 0)
+    closing = FakeNotification(False, 0.1)
+    opening = FakeNotification(True, 0.5)
+    service.notifications = [settled, closing, opening]
+
+    assert service.update(10) is True
+    assert (settled.update_calls, closing.update_calls, opening.update_calls) == (0, 1, 1)
+
+    service.draw(None)
+    assert (settled.draw_calls, closing.draw_calls, opening.draw_calls) == (0, 1, 1)
+
+
 def test_hexdrive_app_init(port):
     from sim.apps.BadgeBot.vendor.HexDrive.hexdrive import HexDriveApp
     config = HexpansionConfig(port)

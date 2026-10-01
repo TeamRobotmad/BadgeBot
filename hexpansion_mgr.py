@@ -46,6 +46,34 @@ _TIME_TO_WAIT_FOR_APP_TO_APPEAR = const(5000)  # ms to wait for the hexpansion a
 
 _IS_SIMULATOR = sys.platform != "esp32"
 
+class _EEPROMProgrammingI2C:
+    """Adapt legacy EEPROM scatter writes without changing the badge driver."""
+    def __init__(self, i2c):
+        self._i2c = i2c
+
+    def __getattr__(self, name):
+        return getattr(self._i2c, name)
+
+    def writeto(self, address, data):
+        if isinstance(data, tuple):
+            combined = bytearray()
+            for part in data:
+                combined.extend(part)
+            data = combined
+        return self._i2c.writeto(address, data)
+
+
+def _mount_eeprom_for_programming(partition, mountpoint):
+    try:
+        vfs.mount(partition, mountpoint, readonly=False)
+        return False
+    except OSError as error:
+        if not error.args or error.args[0] != 1:
+            raise
+        vfs.umount(mountpoint)
+        vfs.mount(partition, mountpoint, readonly=False)
+        return True
+
 # Local sub-states (internal to Hexpansion Mgr)
 _SUB_INIT            = 0           # Initial state on app startup, before first port scan
 _SUB_CHECK           = 1           # Checks for EEPROMs and HexDrives
@@ -1157,7 +1185,7 @@ class HexpansionMgr:
         try:
             if self._logging:
                 print(f"B:Getting block devices for port {port}, addr_len={self._hexpansion_eeprom_addr_len[port-1]}, addr={hex(self._hexpansion_eeprom_addr[port-1])}...")
-            _, partition = get_hexpansion_block_devices(i2c, hexpansion_header, self._hexpansion_eeprom_addr[port-1], addr_len=self._hexpansion_eeprom_addr_len[port-1])
+            _, partition = get_hexpansion_block_devices(_EEPROMProgrammingI2C(i2c), hexpansion_header, self._hexpansion_eeprom_addr[port-1], addr_len=self._hexpansion_eeprom_addr_len[port-1])
         except RuntimeError as e:
             print(f"B:Error getting block devices: {e}")
             return _APP_EEPROM_RESULT_FAILURE
@@ -1167,13 +1195,7 @@ class HexpansionMgr:
             if self._logging:
                 print(f"B:Mounting {partition} at {mountpoint}")
             try:
-                vfs.mount(partition, mountpoint, readonly=False)
-            except OSError as e:
-                if e.args[0] == 1:
-                    already_mounted = True
-                else:
-                    print(f"B:Error mounting: {e}")
-                    return _APP_EEPROM_RESULT_FAILURE
+                already_mounted = _mount_eeprom_for_programming(partition, mountpoint)
             except Exception as e:      # pylint: disable=broad-except
                 print(f"B:Error mounting: {e}")
                 return _APP_EEPROM_RESULT_FAILURE
@@ -1272,7 +1294,7 @@ class HexpansionMgr:
             print(f"B:Error reading header back: {e}")
             return False
         try:
-            _, partition = get_hexpansion_block_devices(i2c, hexpansion_header, addr, addr_len=addr_len)
+            _, partition = get_hexpansion_block_devices(_EEPROMProgrammingI2C(i2c), hexpansion_header, addr, addr_len=addr_len)
         except RuntimeError as e:
             print(f"B:Error getting block devices: {e}")
             return False

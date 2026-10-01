@@ -15,7 +15,7 @@
 
 from events.input import BUTTON_TYPES
 from app_components.notification import Notification
-from app_components.tokens import label_font_size, small_font_size, button_labels
+from app_components.tokens import label_font_size, small_font_size, heading_font_size, button_labels
 import micropython
 
 from .app import MOTOR_POWER_SCALE_FACTOR, STATE_FOLLOWER, DEFAULT_ACTIVE_UPDATE_PERIOD, MOTOR_ENABLE_USER_STATE
@@ -44,7 +44,7 @@ _MIN_MAX_OBSTACLE_DISTANCE_MM  = const(800)      # Maximum allowed value for the
 
 # For integer Hue values we use 0.1-degree units, so 360 degrees = 3600 units.
 _DEFAULT_MID_HUE = const(300)      # Default 'mid hue' for colour sensor, midway between red and blue (300 = 300.0 degrees)
-_DEFAULT_MAX_HUE = const( 70)      # Clamp steering input to this hue-distance from neutral (degree units)
+_DEFAULT_MAX_HUE = const( 90)      # Clamp steering input to this hue-distance from neutral (degree units)
                                    # if the detected Hue is further away than this from the mid hue then we consider it to be off the line and stop moving.
 
 _HUE_CIRCLE = const(3600)
@@ -53,7 +53,7 @@ _HUE_COLOUR_UNKNOWN = const(-1)  # special value for unknown hue (Achromatic col
 _HUE_SCALE_FACTOR = const(10)  # scale factor for hue values to allow finer adjustment in settings
 
 # PID Gains for Steering Control (scaled up by 1000 for integer maths)
-_DEFAULT_FOLLOWER_PID_KP = const( 60)
+_DEFAULT_FOLLOWER_PID_KP = const(100)
 _DEFAULT_FOLLOWER_PID_KI = const(  0)
 _DEFAULT_FOLLOWER_PID_KD = const( 25)
 _FOLLOWER_PID_SCALE_FACTOR = const(1)        # if you change the number of digits in this scale factor then update the draw formatting
@@ -89,6 +89,8 @@ _EDIT_FIELDS: tuple[tuple[str, str, int, tuple[int, int, int, int]], ...] = (
     ("Kp",  "pid_kp",  0, (-92, 33, 82, 22)),
     ("Kd",  "pid_kd",  0, (10, 33, 82, 22)),
 )
+_EDIT_UP_LABELS = ("+Hue", "+Kp", "+Kd")
+_EDIT_DOWN_LABELS = ("-Hue", "-Kp", "-Kd")
 
 
 _EDIT_FIELDS_LABEL_INDEX = const(0)        # index into each _EDIT_FIELDS entry for the label
@@ -177,8 +179,9 @@ class LineFollowMgr:
     """
     __slots__ = ("_app", "_logging", "sensor_rate", "follower_mode",
                  "line_power", "_pid_integral", "_pid_previous_error",
-                 "kp", "ki", "kd", "integral_limit", "motor_output",
+                 "kp", "ki", "kd", "integral_limit", "motor_output", "_output_buffer",
                  "_last_colour", "_last_colour_hue", "_last_colour_name", "_colour_hexdrive", "_range_hexdrive",
+                 "_colour_result", "_range_result", "_plot_colour_data", "_plot_range_data", "_plot_pid_data", "_plot_power_data",
                  "_colour_stop", "_mid_hue", "_max_hue", "_new_sample", "_display_refresh_time", "_display_refresh_interval", "_signed_steering_gain",
                  "_time_since_line_detected", "_selected_field", "_enable_movement", "_min_obstacle_distance", "_obstacle_detection_count", "_calibration_msg_shown",
                  "_last_range_mm", "_plot_selection", "_last_p_term", "_last_i_term", "_last_d_term", "_time_since_last_update_ms")
@@ -195,7 +198,14 @@ class LineFollowMgr:
         self.ki: int = _DEFAULT_FOLLOWER_PID_KI
         self.kd: int = _DEFAULT_FOLLOWER_PID_KD
         self.integral_limit: int = 0
-        self.motor_output = (0, 0)
+        self.motor_output = [0, 0]
+        self._output_buffer = [0, 0]
+        self._colour_result = [False, 0, 0, "unknown", None]
+        self._range_result = [False, None]
+        self._plot_colour_data = [0]
+        self._plot_range_data = [0]
+        self._plot_pid_data = [0, 0, 0]
+        self._plot_power_data = [0, 0]
         self._last_colour_hue: int = 0
         self._last_colour: tuple[int, int, int] = (0, 0, 0)
         self._last_colour_name: str = "unknown"
@@ -256,6 +266,7 @@ class LineFollowMgr:
         # Load any persisted colour calibration, then enable the colour sensor for polling
         # (no events, no interrupts).
         if sensor_mgr is not None:
+            # set the colour sensor update period slightly below the default active update period so that there is always fresh data available.
             if not sensor_mgr.enable_colour_sensor(colour_hexdrive, period=DEFAULT_ACTIVE_UPDATE_PERIOD):
                 app.enable_motors(False, MOTOR_ENABLE_USER_STATE)
                 app.notification = Notification("Colour Sensor not available")
@@ -325,44 +336,56 @@ class LineFollowMgr:
     # Per-tick update
     # ------------------------------------------------------------------
 
+    def _show_calibration_reminder(self):
+        self._app.show_message(["Line Follower:", "For best tracking", "ensure Colour", "Sensor calibration", "is recent"], [(0.5,1.0,0.5),(1,1,1),(1,1,1),(1,1,1),(1,1,1)], return_state = STATE_FOLLOWER, timeout = _CALIBRATION_MSG_TIMEOUT_MS)
+        self._calibration_msg_shown = True
+
     def update(self, delta) -> bool:
         """Handle Line Follower UI.  Returns True if handled."""
         app = self._app
 
         #Remind User to calibrate Colour Sensor if this is the first time the Line Follower has been started since the app was launched.
         if not self._calibration_msg_shown:
-            self._app.show_message(["Line Follower:", "For best tracking", "ensure Colour", "Sensor calibration", "is recent"], [(0.5,1.0,0.5),(1,1,1),(1,1,1),(1,1,1),(1,1,1)], return_state = STATE_FOLLOWER, timeout = _CALIBRATION_MSG_TIMEOUT_MS)
-            self._calibration_msg_shown = True
+            self._show_calibration_reminder()
             return True
-
-        if app.sensor_test_mgr.colour_sensor_stats.update(delta):
-            #if self._logging:
-            print(f"B:LF:CS={app.sensor_test_mgr.colour_sensor_stats.rate_str}")
-        if app.sensor_test_mgr.range_sensor_stats.update(delta):
-            #if self._logging:
-            #print(f"B:LF:RS={app.sensor_test_mgr.range_sensor_stats.rate_str}")
-            pass
 
         # We don't want to update display/plot every sample, so we use a refresh timer to limit the update rate.
         self._display_refresh_time += delta
         if self._display_refresh_time >= self._display_refresh_interval:
             if self._new_sample:
                 self._new_sample = False
+                if app.sensor_test_mgr.colour_sensor_stats.update(self._display_refresh_time):
+                    #if self._logging:
+                    print(f"B:LF:CS={app.sensor_test_mgr.colour_sensor_stats.rate_str}")
+                    # push the sensor sample frequency to the display with one non-performance update cycle
+                    app.performance_mode = False
+                    app.performance_mode = True
+                if app.sensor_test_mgr.range_sensor_stats.update(self._display_refresh_time):
+                    #if self._logging:
+                    #print(f"B:LF:RS={app.sensor_test_mgr.range_sensor_stats.rate_str}")
+                    pass                
                 self._display_refresh_time = 0
                 app.refresh = True
                 if app.bluetooth_mgr is not None and app.bluetooth_mgr.is_connected and self._last_range_mm >= 0:
                     # send data according to which is selected for transmission (colour, range or PID output).
                     if self._plot_selection == _PLOT_SELECTION_COLOUR:
                         # send the colour sensor hue to the phone app via BLE for plotting
-                        app.bluetooth_mgr.send_plotter_data([self._last_colour_hue])
+                        self._plot_colour_data[0] = self._last_colour_hue
+                        app.bluetooth_mgr.send_plotter_data(self._plot_colour_data)
                     elif self._plot_selection == _PLOT_SELECTION_RANGE:
                         # send the range sensor distance to the phone app via BLE for plotting
-                        app.bluetooth_mgr.send_plotter_data([self._last_range_mm])
+                        self._plot_range_data[0] = self._last_range_mm
+                        app.bluetooth_mgr.send_plotter_data(self._plot_range_data)
                     elif self._plot_selection == _PLOT_SELECTION_PID:
                         # send the PID values to the phone app via BLE for plotting
-                        app.bluetooth_mgr.send_plotter_data([self._last_p_term, self._last_i_term, self._last_d_term])
+                        self._plot_pid_data[0] = self._last_p_term
+                        self._plot_pid_data[1] = self._last_i_term
+                        self._plot_pid_data[2] = self._last_d_term
+                        app.bluetooth_mgr.send_plotter_data(self._plot_pid_data)
                     elif self._plot_selection == _PLOT_SELECTION_POWER:
-                        app.bluetooth_mgr.send_plotter_data([self.motor_output[0], self.motor_output[1]])
+                        self._plot_power_data[0] = self.motor_output[0]
+                        self._plot_power_data[1] = self.motor_output[1]
+                        app.bluetooth_mgr.send_plotter_data(self._plot_power_data)
 
         if app.button_states.get(BUTTON_TYPES["CANCEL"]):
             app.button_states.clear()
@@ -375,7 +398,7 @@ class LineFollowMgr:
             if sensor_mgr is not None and self._range_hexdrive is not None:
                 sensor_mgr.disable_range_sensor(self._range_hexdrive)
             self._range_hexdrive = None
-            app.set_ring_colour(None)
+            app.clear_ring_colour()
             self.clear_pid()
             self._last_range_mm = -1
 
@@ -457,7 +480,8 @@ class LineFollowMgr:
         self.clear_pid()
         self._enable_movement = False
         self._app.performance_mode = False
-        self.motor_output = (0, 0)  # Stop
+        self.motor_output[0] = 0
+        self.motor_output[1] = 0
 
 
     def _adjust_selected_field(self, direction: int):
@@ -490,18 +514,28 @@ class LineFollowMgr:
     # Background update (called from the fast loop)
     # ------------------------------------------------------------------
 
-    def background_update(self, delta) -> tuple[int, int] | None:  # pylint: disable=unused-argument
-        """Line follower motor control based on the colour sensor hue.
-        Returns motor output tuple, or None if not active."""
+    def background_update(self, delta) -> list[int] | None:  # pylint: disable=unused-argument
+        """Line follower motor control; return its reusable motor buffer if active."""
         sensor_mgr = self._app.sensor_test_mgr
         if sensor_mgr is None or self._colour_hexdrive is None:
             return None
 
-        output = (0, 0)
+        output = self._output_buffer
+        output[0] = 0
+        output[1] = 0
 
-        # Poll the shared range sensor if we are allowed to move
+        if self._obstacle_detected(sensor_mgr):
+            return output
+        sensor_mgr.read_colour(self._colour_hexdrive, True, self._colour_result)
+        self._follow_colour(delta, output)
+        return output
+
+    def _obstacle_detected(self, sensor_mgr):
+        # Poll the shared range sensor
         if self._range_hexdrive:
-            new_sample, range_mm = sensor_mgr.read_range(self._range_hexdrive)
+            range_result = sensor_mgr.read_range(self._range_hexdrive, self._range_result)
+            new_sample = range_result[0]
+            range_mm = range_result[1]
             if new_sample:
                 self._last_range_mm = range_mm
                 if range_mm < self._min_obstacle_distance and self._enable_movement:
@@ -516,25 +550,21 @@ class LineFollowMgr:
                         # start to slow down while we wait for the next sample to confirm the obstacle is still there
                         if self._logging:
                             print(f"B:LF:Obstacle detected @{range_mm}mm, slowing down ({self._obstacle_detection_count})")
-                    self.motor_output = output
-                    return output
+                    self.motor_output[0] = 0
+                    self.motor_output[1] = 0
+                    return True
                 else:
                     self._obstacle_detection_count = 0
+        return False
 
-        # Poll the shared colour sensor; read_colour also updates the ring colour on change.
-        # Force a read to ensure we get the latest sample, as the colour sensor is only polled in the background by the HexDrive.
-        colour_sensor = getattr(self._colour_hexdrive, "colour_sensor", None)
-        if colour_sensor is not None:
-            _ = colour_sensor.read()
-
-        new_sample, hue, _, name, _raw = sensor_mgr.read_colour(self._colour_hexdrive)
+    def _follow_colour(self, delta, output):
         self._time_since_last_update_ms += delta
-        if new_sample:
+        if self._colour_result[0]:
             #if self._logging:
             #    print(f"B:LF:Hue={hue//10}.{hue%10}° Name={name}")
-            self._last_colour_hue = hue
-            self._last_colour_name = name
-            self._last_colour = _raw
+            self._last_colour_hue = self._colour_result[1]
+            self._last_colour_name = self._colour_result[3]
+            self._last_colour = self._colour_result[4]
             self._new_sample = True
 
             if self._last_colour_name == self._colour_stop:
@@ -544,7 +574,7 @@ class LineFollowMgr:
                         print(f"B:LF:{self._colour_stop} detected, auto stop")
                     self.stop_movement()
                     self._time_since_line_detected = _MAX_TIME_WITHOUT_LINE
-                    self._app.notification = Notification(f"Stop On {self._colour_stop}", self._colour_hexdrive.config.port)
+                    self._app.notification = Notification(f"Stop On {self._colour_stop}", self._colour_hexdrive.config.port if self._colour_hexdrive is not None else 0)
             if self._last_colour_name in ("White", "Grey", "Black"):
                 self._last_colour_hue = _HUE_COLOUR_UNKNOWN
                 # Colours with no hue (achromatic) are treated as "no line detected" and we allow a short period to pick up the line again.
@@ -552,7 +582,8 @@ class LineFollowMgr:
                     # Allow a short period to pick up the line again if the colour is white or grey (i.e. no line detected)
                     self._time_since_line_detected += delta
                     if self._time_since_line_detected < _MAX_TIME_WITHOUT_LINE:
-                        output = self.motor_output
+                        output[0] = self.motor_output[0]
+                        output[1] = self.motor_output[1]
                     else:
                         self._time_since_line_detected = _MAX_TIME_WITHOUT_LINE  # clamp to max so we don't overflow
                         self._app.performance_mode = False  # stop performance mode if we have lost the line for a while
@@ -567,7 +598,7 @@ class LineFollowMgr:
                     if abs(hue_difference_from_mid) < self._max_hue:
                         steering_input = self._signed_steering_gain * hue_difference_from_mid
                         if self._enable_movement:
-                            output = self.compute_differential_output(steering_input, self._time_since_last_update_ms)
+                            self.compute_differential_output(steering_input, self._time_since_last_update_ms, output)
                             self._time_since_last_update_ms = 0
                             self._app.performance_mode = True  # enable performance mode while we are actively following the line
                         else:
@@ -576,7 +607,8 @@ class LineFollowMgr:
                     else:
                         self._time_since_line_detected += delta
                         if self._time_since_line_detected < _MAX_TIME_WITHOUT_LINE:
-                            output = self.motor_output  # continue with last output while we see a colour that is too far from the mid hue, to allow the robot to continue on its path until it finds the line again.
+                            output[0] = self.motor_output[0]  # continue with last output while we see a colour that is too far from the mid hue, to allow the robot to continue on its path until it finds the line again.
+                            output[1] = self.motor_output[1]
                         else:
                             self._time_since_line_detected = _MAX_TIME_WITHOUT_LINE  # clamp to max so we don't overflow
                             self._app.performance_mode = False  # stop performance mode if we have lost the line for a while
@@ -586,9 +618,11 @@ class LineFollowMgr:
                     # Unknown follower mode, so stop the motors
                     self._app.performance_mode = False  # disable performance mode if we are not actively following the line
 
-            self.motor_output = output
+            self.motor_output[0] = output[0]
+            self.motor_output[1] = output[1]
         else:
-            output = self.motor_output
+            output[0] = self.motor_output[0]
+            output[1] = self.motor_output[1]
         return output
 
 
@@ -657,7 +691,7 @@ class LineFollowMgr:
         return correction
 
 
-    def compute_differential_output(self, error: int, delta: int) -> tuple[int, int]:
+    def compute_differential_output(self, error: int, delta: int, result: list | None = None) -> tuple[int, int] | list:
         """Compute motor output using a full PID controller for differential line following.
 
         Uses the difference between left and right sensor readings as the error signal,
@@ -665,17 +699,21 @@ class LineFollowMgr:
         Returns a tuple of (left_motor, right_motor) power values, clamped to max_power.
         Uses integer maths for efficiency, scaling down the PID gains and error values to avoid overflow.
         """
-        correction = self._compute_steering_control(error, delta, self.kp, self.ki, self.kd)
+        return self._differential_output(self._steering_correction(error, delta), result)
 
-        # Combine correction with base forward power to get output for each motor & limit output to max power
-        line_power = self.line_power
+    def _steering_correction(self, error: int, delta: int) -> int:
+        return self._compute_steering_control(error, delta, self.kp, self.ki, self.kd)
+
+    def _differential_output(self, correction: int, result: list | None):
         max_power = self._app.max_power
-        output = (_clamp(line_power + correction, -max_power, max_power), _clamp(line_power - correction, -max_power, max_power))
-
-        if self._logging:
-            print(f"B:LF:PID:Err={error} P={self._last_p_term} I={self._last_i_term} D={self._last_d_term} Corr={correction} Out={output}")
-
-        return output
+        if result is None:
+            return (
+                _clamp(self.line_power + correction, -max_power, max_power),
+                _clamp(self.line_power - correction, -max_power, max_power),
+            )
+        result[0] = _clamp(self.line_power + correction, -max_power, max_power)
+        result[1] = _clamp(self.line_power - correction, -max_power, max_power)
+        return result
 
 
     # ------------------------------------------------------------------
@@ -684,80 +722,81 @@ class LineFollowMgr:
 
     def draw_tracker(self, ctx):
         """Draw the line follower tracker UI element."""
-        # ================================================
-        # draw a box to show the deviation from mid hue:
-        # ================================================
         half_height = label_font_size
         half_width = 100
-
-        # outer box shows the maximum hue deviation possible, inner box shows the maximum hue deviation used, and a line shows the current deviation position
-        ctx.rgb(0.25,0.25,0.25).rectangle(-half_width, -half_height, 2 * half_width, label_font_size * 2).fill()
-
-        # grey highlight behind the currently selected editable field
-        selected_field = _EDIT_FIELDS[self._selected_field]
-        hx, hy, hw, hh = selected_field[3]
-        ctx.rgb(0.33, 0.33, 0.33).rectangle(hx, hy, hw, hh).fill()
-
-        # 'rainbow' like bands to show the hue ranges for the different colours between the minimum and maximum hue deviation, with the neutral hue in the centre
-        width = 2
-        ctx.line_width = width
-        max_deviation_x = (half_width * self._max_hue) // (180 * _HUE_SCALE_FACTOR)
-        # only need to draw lines every line_width pixels, so we can skip some to reduce the number of lines drawn
-        for x in range(-max_deviation_x, max_deviation_x + 1, width):
-            pixel_x = x + width // 2
-            hue_offset = (x * 180 * _HUE_SCALE_FACTOR) // half_width
-            if self._signed_steering_gain < 0:
-                # reverse the hue direction if the steering gain is negative
-                hue_offset = -hue_offset
-            hue = (self._mid_hue + hue_offset) % _HUE_CIRCLE
-            ctx.rgb(*hue_to_rgb(hue)).move_to(pixel_x, -half_height).line_to(pixel_x, half_height).stroke()
-
-        # if we have a valid colour reading, draw the current deviation line and the hue value
+        self._draw_tracker_box(ctx, half_width, half_height)
+        self._draw_tracker_bands(ctx, half_height)
         if self._last_colour is not None:
-            # 'mid XXX° hue' label in the middle of the box, with the hue value in the colour of the mid hue
-            hue_y = -(3 * label_font_size)//2
-            ctx.font_size = small_font_size
-            mid_rgb = hue_to_rgb(self._mid_hue)
-            ctx.rgb(*mid_rgb)
-            ctx.move_to(-80, hue_y).text("Mid")
-            ctx.move_to( 50, hue_y).text("Hue")
-
-            # draw the mid hue value in the colour of the mid hue, centred in the box
-            ctx.font_size = label_font_size
-            mid_hue_text = f"{self._mid_hue // _HUE_SCALE_FACTOR}°"
-            mid_rgb = hue_to_rgb(self._mid_hue)
-            ctx.rgb(*mid_rgb).move_to(-ctx.text_width(mid_hue_text)//2, hue_y).text(mid_hue_text)
-
-            # You can see the current colour in the outer ring - so no need to duplicate with this...
-            # 'last colour' label in the middle of the box, with the colour name in the colour of the last detected hue
-            #ctx.font_size = small_font_size
-            #display_rgb = self._app.sensor_test_mgr.colour_card_rgb(self._last_colour_name) if self._app.sensor_test_mgr is not None else (0.5, 0.5, 0.5)
-            #ctx.rgb(*display_rgb).move_to(-ctx.text_width(f"{self._last_colour_name}")//2, 2 * label_font_size).text(f"{self._last_colour_name}")
-
-            # Kp / Kd gains in yellow, centred below the box at fixed positions
-            # that line up with the highlight rectangles in _EDIT_FIELDS.
-            ctx.font_size = small_font_size
-            gains_y = 2 * label_font_size
-            kp_text = f"Kp:{self.kp}"      # // _FOLLOWER_PID_SCALE_FACTOR}.{self.kp % _FOLLOWER_PID_SCALE_FACTOR:01d}"
-            kd_text = f"Kd:{self.kd}"      # // _FOLLOWER_PID_SCALE_FACTOR}.{self.kd % _FOLLOWER_PID_SCALE_FACTOR:01d}"
-            ctx.rgb(1, 1, 0).move_to(-51 - ctx.text_width(kp_text)//2, gains_y).text(kp_text)
-            ctx.rgb(1, 1, 0).move_to( 51 - ctx.text_width(kd_text)//2, gains_y).text(kd_text)
-
-            if self._last_colour_hue != _HUE_COLOUR_UNKNOWN:
-                # If the last colour was sufficiently saturated to have a hue (hue is known) then draw a line to show the current deviation from the mid hue, in white.
-                deviation = _signed_hue_delta(self._last_colour_hue, self._mid_hue)
-                deviation_x = (half_width * deviation) // (180 * _HUE_SCALE_FACTOR)
-                if self._signed_steering_gain < 0:
-                    # reverse the deviation direction if the steering gain is negative
-                    deviation_x = -deviation_x
-
-                # current deviation line in white
-                ctx.line_width = 4
-                ctx.rgb(1,1,1).move_to(deviation_x, -half_height-10).line_to(deviation_x, half_height+10).stroke()
-
-        # tick mark for the centre in black
+            self._draw_tracker_reading(ctx, half_width, half_height)
         ctx.line_width = 2
         ctx.rgb(0,0,0).move_to(0, -half_height).line_to(0, 0).stroke()
+
+    def _draw_tracker_box(self, ctx, half_width, half_height):
+        ctx.rgb(0.25,0.25,0.25).rectangle(-half_width, -half_height, 2 * half_width, label_font_size * 2).fill()
+        self._draw_selected_field(ctx)
+
+    def _draw_selected_field(self, ctx):
+        rect = _EDIT_FIELDS[self._selected_field][3]
+        ctx.rgb(0.33, 0.33, 0.33).rectangle(rect[0], rect[1], rect[2], rect[3]).fill()
+
+    def _draw_tracker_bands(self, ctx, half_height):
+        self._draw_tracker_band_range(ctx, half_height)
+
+    def _draw_tracker_band_range(self, ctx, half_height):
+        ctx.line_width = 2
+        max_deviation_x = (100 * self._max_hue) // (180 * _HUE_SCALE_FACTOR)
+        x = -max_deviation_x
+        while x <= max_deviation_x:
+            self._draw_tracker_band(ctx, x, half_height)
+            x += 2
+
+    def _draw_tracker_band(self, ctx, x, half_height):
+        hue = self._tracker_band_hue(x)
+        self._draw_tracker_band_line(ctx, x + 1, half_height, hue)
+
+    def _tracker_band_hue(self, x):
+        hue_offset = (x * 180 * _HUE_SCALE_FACTOR) // 100
+        if self._signed_steering_gain < 0:
+            hue_offset = -hue_offset
+        return (self._mid_hue + hue_offset) % _HUE_CIRCLE
+
+    def _draw_tracker_band_line(self, ctx, pixel_x, half_height, hue):
+        ctx.rgb(*hue_to_rgb(hue)).move_to(pixel_x, -half_height).line_to(pixel_x, half_height).stroke()
+
+    def _draw_tracker_reading(self, ctx, half_width, half_height):
+        self._draw_tracker_labels(ctx)
+        self._draw_tracker_deviation(ctx, half_width, half_height)
+
+    def _draw_tracker_labels(self, ctx):
+        self._draw_tracker_heading(ctx)
+        self._draw_tracker_gains(ctx)
+
+    def _draw_tracker_heading(self, ctx):
+        hue_y = -(3 * label_font_size)//2
+        ctx.font_size = small_font_size
+        ctx.rgb(*hue_to_rgb(self._mid_hue))
+        ctx.move_to(-80, hue_y).text("Mid")
+        ctx.move_to(50, hue_y).text("Hue")
+        ctx.font_size = label_font_size
+        mid_hue_text = f"{self._mid_hue // _HUE_SCALE_FACTOR}°"
+        ctx.rgb(*hue_to_rgb(self._mid_hue)).move_to(-ctx.text_width(mid_hue_text)//2, hue_y).text(mid_hue_text)
+
+    def _draw_tracker_gains(self, ctx):
+        ctx.font_size = small_font_size
+        gains_y = 2 * label_font_size
+        kp_text = f"Kp:{self.kp}"
+        kd_text = f"Kd:{self.kd}"
+        ctx.rgb(1, 1, 0).move_to(-51 - ctx.text_width(kp_text)//2, gains_y).text(kp_text)
+        ctx.rgb(1, 1, 0).move_to(51 - ctx.text_width(kd_text)//2, gains_y).text(kd_text)
+
+    def _draw_tracker_deviation(self, ctx, half_width, half_height):
+        if self._last_colour_hue == _HUE_COLOUR_UNKNOWN:
+            return
+        deviation_x = (half_width * _signed_hue_delta(self._last_colour_hue, self._mid_hue)) // (180 * _HUE_SCALE_FACTOR)
+        if self._signed_steering_gain < 0:
+            deviation_x = -deviation_x
+        ctx.line_width = 4
+        ctx.rgb(1,1,1).move_to(deviation_x, -half_height-10).line_to(deviation_x, half_height+10).stroke()
 
 
     def draw(self, ctx) -> bool:
@@ -768,17 +807,28 @@ class LineFollowMgr:
             self.draw_tracker(ctx)
 
             # draw the button labels - up/down adjust the selected field, left/right cycle fields
-            sel_label = _EDIT_FIELDS[self._selected_field][_EDIT_FIELDS_LABEL_INDEX]
-            confirm_label = "Start" if not self._enable_movement else "Stop"
-
-            button_labels(ctx, cancel_label="Back", confirm_label=confirm_label,
-                        up_label=f"+{sel_label}", down_label=f"-{sel_label}",
-                        left_label="Direction", right_label="\u25B6")
+            self._draw_idle_button_labels(ctx)
         else:
+            # show the sensor update rate in Hz in the middle of the display
+            if 0 < self._app.sensor_test_mgr.colour_sensor_stats.rate:
+                self._draw_sensor_rate(ctx)
+
             # draw the button labels - confirm to stop, left/right to reverse direction
-            button_labels(ctx, confirm_label="Stop", left_label="Direction")
+            self._draw_active_button_labels(ctx)
 
         return True
+
+    def _draw_idle_button_labels(self, ctx):
+        index = self._selected_field
+        button_labels(ctx, _EDIT_UP_LABELS[index], _EDIT_DOWN_LABELS[index],
+                      "Direction", "\u25B6", "Back", "Start")
+
+    def _draw_active_button_labels(self, ctx):
+        button_labels(ctx, confirm_label="Stop", left_label="Direction")
+
+    def _draw_sensor_rate(self, ctx):
+        ctx.font_size = heading_font_size
+        ctx.rgb(0.2,1.0,0.4).move_to(-70, 20).text(self._app.sensor_test_mgr.colour_sensor_stats.rate_str)
 
 
 def hue_to_rgb(h: int) -> tuple[float, float, float]:

@@ -55,6 +55,12 @@ except ImportError:
 
 _TIME_SLEEP_MS = getattr(time, "sleep_ms", None)
 
+def _report_range_read_error():
+    print("B:Error reading range sensor")
+
+def _report_colour_read_error():
+    print("B:Error reading colour sensor")
+
 def _sleep_ms(delay_ms: int) -> None:
     if _TIME_SLEEP_MS is not None:
         _TIME_SLEEP_MS(delay_ms)
@@ -163,7 +169,8 @@ class SensorTestMgr:
                  "_display_data", "_page_selected", "_page_count", "_test_card", "_logging", "_draw_stats",
                  "_last_range", "_last_colour", "_last_colour_name", "_last_colour_hue", "_last_colour_saturation", "_display_colour", "range_sensor_stats",
                  "colour_sensor_stats", "_range_sensor", "_colour_sensor", "_sensor_list",
-                 "_last_colour_sequence", "_last_range_sequence")
+                 "_last_colour_sequence", "_last_range_sequence", "_range_result_buffer", "_colour_result_buffer",
+                 "_colour_raw_buffer", "_last_colour_tuple", "_ring_rgb_buffer")
 
     def __init__(self, app, logging: bool = False):
         self._app = app
@@ -189,7 +196,10 @@ class SensorTestMgr:
         self._last_range: int | None = None
 
         # Colour sensor specifics
-        self._last_colour: tuple[int, int, int, int] | None = None
+        self._last_colour: tuple[int, int, int, int] | list[int] | None = None
+        self._last_colour_tuple: tuple[int, int, int, int] | None = None
+        self._colour_raw_buffer = [0, 0, 0, 0]
+        self._ring_rgb_buffer = [0.0, 0.0, 0.0]
         self._last_colour_name: str = "unknown"
         self._last_colour_hue: int = 0
         self._last_colour_saturation: int = 0
@@ -200,6 +210,8 @@ class SensorTestMgr:
         self._colour_sensor = None
         self._last_range_sequence: int = 0
         self._last_colour_sequence: int = 0
+        self._range_result_buffer = [False, None]
+        self._colour_result_buffer = [False, 0, 0, "unknown", None]
 
         # Ultimately this list needs to be populated dynamically based on the sensors detected on the selected HexDrive, but for now we hardcode the known sensor types.
         self._sensor_list: list[SensorEntry] = [
@@ -257,6 +269,7 @@ class SensorTestMgr:
 
         self._display_data = {}
         self._last_colour = None
+        self._last_colour_tuple = None
         self._last_colour_name = "unknown"
         self._last_colour_hue = 0
         self._last_colour_saturation = 0
@@ -294,11 +307,11 @@ class SensorTestMgr:
             if self._hexdrive_app is not None:
                 # Poll the sensors for new readings
                 if self._sensor_type == _SENSOR_RANGE:
-                    if self.read_range(self._hexdrive_app)[0]:
+                    if self.read_range(self._hexdrive_app, self._range_result_buffer)[0]:
                         self._new_sample = True
                 elif self._sensor_type == _SENSOR_COLOUR:
                     # Poll the colour sensor via the shared reader (also updates the ring colour).
-                    if self.read_colour(self._hexdrive_app)[0]:
+                    if self.read_colour(self._hexdrive_app, True, self._colour_result_buffer)[0]:
                         self._new_sample = True
         return None
 
@@ -507,25 +520,38 @@ class SensorTestMgr:
         self.range_sensor_stats.reset()
 
 
-    def read_range(self, hexdrive_app) -> tuple[bool, int | None]:
-        """Read the range sensor on hexdrive_app.
-        Returns a tuple (success, range_mm) where success is True if the reading was successful,
-        and range_mm is the measured distance in millimeters (or None if unsuccessful)."""
+    def read_range(self, hexdrive_app, result: list | None = None) -> tuple[bool, int | None] | list:
+        """Read the range sensor, optionally storing the result in a reusable buffer."""
         range_sensor = getattr(hexdrive_app, "range_sensor", None) if hexdrive_app is not None else None
         if range_sensor is None:
-            return (False, None)
+            return self._store_range_result(result, False, None)
+        status = self._read_range_checked(range_sensor)
+        return self._store_range_result(result, status == 1, self._last_range if status >= 0 else None)
+
+    def _read_range_checked(self, range_sensor):
         try:
-            s = range_sensor.sequence
-            if s == self._last_range_sequence:
-                # No new reading available
-                return (False, self._last_range)
-            self._last_range_sequence = s
-            self._last_range = range_sensor.range
-            self.range_sensor_stats.new_sample(s)
-            return (True, self._last_range)
-        except Exception as e:          # pylint: disable=broad-except
-            print(f"B:Error reading range sensor: {e}")
-            return (False, None)
+            return self._poll_range(range_sensor)
+        except Exception:  # pylint: disable=broad-exception-caught
+            _report_range_read_error()
+            return -1
+
+    def _poll_range(self, range_sensor):
+        sequence = range_sensor.sequence
+        if sequence == self._last_range_sequence:
+            return 0
+        self._last_range_sequence = sequence
+        self._last_range = range_sensor.range
+        self.range_sensor_stats.new_sample(sequence)
+        return 1
+
+
+    @staticmethod
+    def _store_range_result(result: list | None, new_sample: bool, range_mm: int | None):
+        if result is None:
+            return (new_sample, range_mm)
+        result[0] = new_sample
+        result[1] = range_mm
+        return result
 
 
 
@@ -535,9 +561,12 @@ class SensorTestMgr:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def colour_card_rgb(name: str) -> tuple:
-        """Return the display (r, g, b) tuple (0.0-1.0) for a named colour, defaulting to grey."""
-        return _COLOUR_CARD_RGB.get(name, (0.5, 0.5, 0.5))
+    def colour_card_rgb(name: str, result: list[float]) -> None:
+        """Write the display RGB values for a named colour into a caller-owned buffer."""
+        colour = _COLOUR_CARD_RGB.get(name, _COLOUR_CARD_RGB[_COLOUR_GREY])
+        result[0] = colour[0]
+        result[1] = colour[1]
+        result[2] = colour[2]
 
 
     @staticmethod
@@ -653,39 +682,84 @@ class SensorTestMgr:
         self.colour_sensor_stats.reset()
 
 
-    def read_colour(self, hexdrive_app, update_ring: bool = True) -> tuple[bool, int, int, str, tuple[int, int, int, int] | None]:
-        """Poll the colour sensor once.  Returns (new_sample, hue, saturation, name, raw).
+    def _store_colour_result(self, result: list | None, new_sample: bool):
+        if result is None:
+            colour = self._last_colour
+            if colour is not None and not isinstance(colour, tuple):
+                if self._last_colour_tuple is None:
+                    self._last_colour_tuple = (colour[0], colour[1], colour[2], colour[3])
+                colour = self._last_colour_tuple
+            return (new_sample, self._last_colour_hue, self._last_colour_saturation, self._last_colour_name, colour)
+        result[0] = new_sample
+        result[1] = self._last_colour_hue
+        result[2] = self._last_colour_saturation
+        result[3] = self._last_colour_name
+        result[4] = self._last_colour
+        return result
+
+
+    def read_colour(self, hexdrive_app, update_ring: bool = True, result: list | None = None) -> tuple[bool, int, int, str, tuple[int, int, int, int] | None] | list:
+        """Poll the colour sensor once. Returns (new_sample, hue, saturation, name, raw).
+        When result is provided, the reading is written into that caller-owned buffer.
         When a new reading is available the internal last-colour state and sample stats are
         updated, and (when update_ring) the app ring colour is set to match the detected colour."""
         colour_sensor = getattr(hexdrive_app, "colour_sensor", None) if hexdrive_app is not None else None
         if colour_sensor is None:
-            return (False, self._last_colour_hue, self._last_colour_saturation, self._last_colour_name, self._last_colour)
+            return self._store_colour_result(result, False)
+        status = self._read_colour_checked(colour_sensor)
+        if status <= 0:
+            return self._store_colour_result(result, False)
+        if status == 2 and update_ring and not self._update_colour_ring_checked():
+            return self._store_colour_result(result, False)
+        if not self._count_colour_sample_checked():
+            return self._store_colour_result(result, False)
+        return self._store_colour_result(result, True)
+
+    def _count_colour_sample_checked(self):
         try:
-            s = colour_sensor.sequence
-        except Exception as e:          # pylint: disable=broad-except
-            print(f"B:Error reading colour sensor: {e}")
-            return (False, self._last_colour_hue, self._last_colour_saturation, self._last_colour_name, self._last_colour)
-        if s == self._last_colour_sequence:
-            # No new reading available
-            return (False, self._last_colour_hue, self._last_colour_saturation, self._last_colour_name, self._last_colour)
+            self.colour_sensor_stats.new_sample(self._last_colour_sequence)
+            return True
+        except Exception:  # pylint: disable=broad-exception-caught
+            _report_colour_read_error()
+            return False
+
+    def _read_colour_checked(self, colour_sensor):
         try:
-            self._last_colour_sequence = s
-            self._last_colour = colour_sensor.colour
-            self._last_colour_hue = colour_sensor.colour_hue
-            self._last_colour_saturation = getattr(colour_sensor, "colour_saturation", 0) # saturation may not be available on all colour sensors
-            colour_name = colour_sensor.colour_name
-            if colour_name != self._last_colour_name:
-                self._last_colour_name = colour_name
-                if update_ring:
-                    if 20 < self._last_colour_saturation:
-                        self._app.set_ring_colour(self.colour_card_rgb(colour_name))
-                    else:
-                        self._app.set_ring_colour((0,0,0))  # low saturation, so set ring to black
-            self.colour_sensor_stats.new_sample(s)
-            return (True, self._last_colour_hue, self._last_colour_saturation, self._last_colour_name, self._last_colour)
-        except Exception as e:          # pylint: disable=broad-except
-            print(f"B:Error reading colour sensor: {e}")
-            return (False, self._last_colour_hue, self._last_colour_saturation, self._last_colour_name, self._last_colour)
+            return self._poll_colour(colour_sensor)
+        except Exception:  # pylint: disable=broad-exception-caught
+            _report_colour_read_error()
+            return -1
+
+    def _poll_colour(self, colour_sensor):
+        sequence = colour_sensor.sequence
+        if sequence == self._last_colour_sequence:
+            return 0
+        self._last_colour_sequence = sequence
+        self._last_colour = colour_sensor.colour_into(self._colour_raw_buffer)
+        self._last_colour_tuple = None
+        self._last_colour_hue = colour_sensor.colour_hue
+        self._last_colour_saturation = getattr(colour_sensor, "colour_saturation", 0)
+        colour_name = colour_sensor.colour_name
+        if colour_name != self._last_colour_name:
+            self._last_colour_name = colour_name
+            return 2
+        return 1
+
+    def _update_colour_ring_checked(self):
+        try:
+            self._update_colour_ring()
+            return True
+        except Exception:  # pylint: disable=broad-exception-caught
+            _report_colour_read_error()
+            return False
+
+    def _update_colour_ring(self):
+        if self._last_colour_saturation > 20:
+            rgb = self._ring_rgb_buffer
+            self.colour_card_rgb(self._last_colour_name, rgb)
+            self._app.set_ring_colour(rgb[0], rgb[1], rgb[2])
+        else:
+            self._app.set_ring_colour(0.0, 0.0, 0.0)
 
 
     def _capture_white_reference(self) -> bool:
@@ -1015,8 +1089,6 @@ class SensorTestMgr:
             pass  # Don't enable the range sensor if the selected sensor is not a range sensor or if the hexdrive_app does not support range sensors
         else:
             if self.enable_range_sensor(hexdrive_app, events=self._use_events):
-
-
                 print("B:Range Enabled")
                 num_sensors_enabled += 1
                 if self._use_events:
