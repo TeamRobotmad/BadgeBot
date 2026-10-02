@@ -164,6 +164,8 @@ class AutoDriveMgr:
         self._range_log_ms: int = 0
         self._range_samples: int = 0
         self._gyro_delta_ms: int = 0
+        self._plot_angle: float = 0.0
+        self._plot_score: float = 0.0
 
         if self._logging:
             print("A:AutoDriveMgr initialised")
@@ -399,93 +401,108 @@ class AutoDriveMgr:
     def background_update(self, delta: int) -> tuple[int, int] | None:
         """Poll range sensor and return motor outputs while active."""
         if _imu:
-            self._gyro_delta_ms += delta
-            try:
-                raw = _imu.gyro_read()
-                self.gyro_dps = -float(raw[_AUTO_GYRO_AXIS])    # IMU Gyro axis 2 is yaw, negative clockwise, but BadgeBot uses positive clockwise convention
-                if abs(self.gyro_dps) > _AUTO_GYRO_DEADBAND_DPS:
-                    delta_deg = self.gyro_dps * (self._gyro_delta_ms / 1000.0)
-                    self.yaw_deg = (self.yaw_deg + delta_deg) % 360.0
-                    self.turn_progress_deg += delta_deg
-                self._gyro_delta_ms = 0
-            except Exception as e:  # pylint: disable=broad-except
-                print(f"A:Gyro read failed: {e}")
+            self._update_gyro(delta)
 
         if self._active and self._sensor_mgr is not None and self._range_hexdrive is not None:
-            self._range_age_ms += delta
-            self._range_log_ms += delta
+            self._update_range_sensor(delta)
 
-            # Defensive explicit read mirrors line follower behavior.
-            range_sensor = getattr(self._range_hexdrive, "range_sensor", None)
-            if range_sensor is not None:
-                _ = range_sensor.read()
-
-            new_sample, range_mm = self._sensor_mgr.read_range(self._range_hexdrive)
-            if new_sample:
-                if range_mm is None or range_mm <= 0:
-                    self.distance = None
-                else:
-                    self.distance = range_mm
-
-                self._range_age_ms = 0
-                self._range_samples += 1
-
-                if self._logging and self._range_log_ms >= _AUTO_LOG_INTERVAL_MS:
-                    self._range_log_ms = 0
-                    shown = self.distance if self.distance is not None else "---"
-                    print(f"A:Range sample={shown}mm count={self._range_samples}")
-
-                if self.sub_state == _AUTO_SUB_SCAN:
-                    self._scan_record_sample()
-            elif self._logging and self._range_log_ms >= _AUTO_LOG_INTERVAL_MS:
-                self._range_log_ms = 0
-                print(f"A:Waiting for range sample age={self._range_age_ms}ms")
-
-        self._plot_ms += delta
-        if self._plot_ms >= _AUTO_PLOT_INTERVAL_MS and self._app.bluetooth_mgr is not None:
-            self._plot_ms = 0
-
-            if self.sub_state == _AUTO_SUB_TURN:
-                plot_angle = self.turn_deg if self.turn_deg > 0.0 else self.best_angle_deg
-                plot_score = self.turn_deg
-            elif self.sub_state == _AUTO_SUB_SCAN:
-                if self.best_angle_deg > 0.0:
-                    plot_angle = self.best_angle_deg
-                elif self.turn_deg > 0.0:
-                    plot_angle = self.turn_progress_deg
-
-                current_dist = self.distance if self.distance is not None else _AUTO_CLEAR_DIST_MM
-                if current_dist > _AUTO_CLEAR_DIST_MM:
-                    current_dist = _AUTO_CLEAR_DIST_MM
-                if self.scan_data:
-                    last_angle, last_dist = self.scan_data[-1]
-                    prev_dist = self.scan_data[-2][1] if len(self.scan_data) > 1 else last_dist
-                    next_dist = self.scan_data[0][1] if len(self.scan_data) == 1 else current_dist
-                    plot_score = current_dist + (prev_dist * 0.5) + (next_dist * 0.5)
-                else:
-                    plot_score = float(current_dist)
-            else:
-                plot_angle = 0.0
-                plot_score = 0.0
-
-            plot_distance = self.distance if self.distance is not None else 0
-            if plot_distance > 0:
-                plot_distance = max(0, min(360, int(plot_distance / 4)))
-
-            if self.sub_state == _AUTO_SUB_SCAN:
-                plot_score = max(0, min(360, int(plot_score / 4)))
-            else:
-                plot_score = int(plot_score)
-
-            self._app.bluetooth_mgr.send_plotter_data([
-                plot_distance,
-                plot_score,
-                int(plot_angle),
-            ])
+        self._update_plotter(delta)
 
         if not self._active:
             return None
         return self.motor_output
+
+    def _update_range_sensor(self, delta):
+        self._range_age_ms += delta
+        self._range_log_ms += delta
+        range_sensor = getattr(self._range_hexdrive, "range_sensor", None)
+        if range_sensor is not None:
+            range_sensor.read()
+        new_sample, range_mm = self._sensor_mgr.read_range(self._range_hexdrive)
+        if new_sample:
+            self._record_range_sample(range_mm)
+        elif self._logging and self._range_log_ms >= _AUTO_LOG_INTERVAL_MS:
+            self._log_waiting_for_range()
+
+    def _record_range_sample(self, range_mm):
+        self.distance = range_mm if range_mm is not None and range_mm > 0 else None
+        self._range_age_ms = 0
+        self._range_samples += 1
+        if self._logging and self._range_log_ms >= _AUTO_LOG_INTERVAL_MS:
+            self._range_log_ms = 0
+            shown = self.distance if self.distance is not None else "---"
+            print(f"A:Range sample={shown}mm count={self._range_samples}")
+        if self.sub_state == _AUTO_SUB_SCAN:
+            self._scan_record_sample()
+
+    def _log_waiting_for_range(self):
+        self._range_log_ms = 0
+        print(f"A:Waiting for range sample age={self._range_age_ms}ms")
+
+    def _update_plotter(self, delta):
+        self._plot_ms += delta
+        if self._plot_ms >= _AUTO_PLOT_INTERVAL_MS and self._app.bluetooth_mgr is not None:
+            self._plot_ms = 0
+            self._send_plotter_data()
+
+    def _send_plotter_data(self):
+        self._set_plot_heading_score()
+        plot_distance = self.distance if self.distance is not None else 0
+        if plot_distance > 0:
+            plot_distance = max(0, min(360, int(plot_distance / 4)))
+        if self.sub_state == _AUTO_SUB_SCAN:
+            plot_score = max(0, min(360, int(self._plot_score / 4)))
+        else:
+            plot_score = int(self._plot_score)
+        self._app.bluetooth_mgr.send_plotter_data([
+            plot_distance,
+            plot_score,
+            int(self._plot_angle),
+        ])
+
+    def _set_plot_heading_score(self):
+        if self.sub_state == _AUTO_SUB_TURN:
+            self._plot_angle = self.turn_deg if self.turn_deg > 0.0 else self.best_angle_deg
+            self._plot_score = self.turn_deg
+        elif self.sub_state == _AUTO_SUB_SCAN:
+            self._set_scan_plot_heading_score()
+        else:
+            self._plot_angle = 0.0
+            self._plot_score = 0.0
+
+    def _set_scan_plot_heading_score(self):
+        if self.best_angle_deg > 0.0:
+            self._plot_angle = self.best_angle_deg
+        elif self.turn_deg > 0.0:
+            self._plot_angle = self.turn_progress_deg
+        current_dist = self.distance if self.distance is not None else _AUTO_CLEAR_DIST_MM
+        if current_dist > _AUTO_CLEAR_DIST_MM:
+            current_dist = _AUTO_CLEAR_DIST_MM
+        self._plot_score = self._scan_plot_score(current_dist)
+
+    def _scan_plot_score(self, current_dist):
+        if not self.scan_data:
+            return float(current_dist)
+        last_dist = self.scan_data[-1][1]
+        prev_dist = self.scan_data[-2][1] if len(self.scan_data) > 1 else last_dist
+        next_dist = self.scan_data[0][1] if len(self.scan_data) == 1 else current_dist
+        return current_dist + (prev_dist * 0.5) + (next_dist * 0.5)
+
+    def _update_gyro(self, delta):
+        self._gyro_delta_ms += delta
+        try:
+            self._apply_gyro_sample()
+            self._gyro_delta_ms = 0
+        except Exception:  # pylint: disable=broad-except
+            print("A:Gyro read failed")
+
+    def _apply_gyro_sample(self):
+        raw = _imu.gyro_read()
+        self.gyro_dps = -float(raw[_AUTO_GYRO_AXIS])
+        if abs(self.gyro_dps) > _AUTO_GYRO_DEADBAND_DPS:
+            delta_deg = self.gyro_dps * (self._gyro_delta_ms / 1000.0)
+            self.yaw_deg = (self.yaw_deg + delta_deg) % 360.0
+            self.turn_progress_deg += delta_deg
 
 
     def stop(self):
@@ -510,20 +527,25 @@ class AutoDriveMgr:
 
 
     def _apply_output_ramp(self, delta: int):
+        max_power = int(self._app.max_power)
+        step = self._output_ramp_step(delta)
+        self.motor_output = (
+            self._ramp_motor_output(0, max_power, step),
+            self._ramp_motor_output(1, max_power, step),
+        )
+
+    def _output_ramp_step(self, delta):
         accel = max(1, int(self._app.acceleration))
         ticks = max(1, delta // _TICK_MS)
-        step = accel * ticks
-        max_power = int(self._app.max_power)
+        return accel * ticks
 
-        target_l = max(-max_power, min(max_power, int(self.target_output[0])))
-        target_r = max(-max_power, min(max_power, int(self.target_output[1])))
-        cur_l = int(self.motor_output[0])
-        cur_r = int(self.motor_output[1])
+    def _ramp_motor_output(self, index, max_power, step):
+        target = self._clamp_motor_target(index, max_power)
+        current = int(self.motor_output[index])
+        return self._slew(current, target, step)
 
-        self.motor_output = (
-            self._slew(cur_l, target_l, step),
-            self._slew(cur_r, target_r, step),
-        )
+    def _clamp_motor_target(self, index, max_power):
+        return max(-max_power, min(max_power, int(self.target_output[index])))
 
 
     def _drive_speed(self) -> int:
@@ -766,6 +788,10 @@ class AutoDriveMgr:
         timed_out = self.turn_timer >= self.turn_timeout_ms
         if not (full_turn or timed_out):
             return
+
+        self._finish_scan(full_turn)
+
+    def _finish_scan(self, full_turn):
 
         if self._logging:
             reason = "360" if full_turn else "timeout"

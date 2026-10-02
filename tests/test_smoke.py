@@ -200,6 +200,17 @@ def test_line_follow_obstacle_stop_preserves_reusable_output():
     ("line_follow.py", "update background_update _obstacle_detected _follow_colour compute_differential_output _steering_correction _differential_output draw draw_tracker _draw_tracker_box _draw_selected_field _draw_tracker_bands _draw_tracker_band_range _draw_tracker_band _tracker_band_hue _draw_tracker_band_line _draw_tracker_reading _draw_tracker_labels _draw_tracker_heading _draw_tracker_gains _draw_tracker_deviation _draw_idle_button_labels _draw_active_button_labels _draw_sensor_rate"),
     ("sensor_test.py", "read_range read_colour _read_range_checked _poll_range _read_colour_checked _poll_colour _count_colour_sample_checked _update_colour_ring_checked _update_colour_ring _store_range_result _store_colour_result"),
     ("vendor/HexDrive2/hexdrive2.py", "background_update _poll_range_background _poll_colour_background _update_keep_alive _stop_timed_out_outputs _stop_pwm_checked _stop_pwm set_motors _set_motor_checked _set_motor _disable_motor_channel _set_pwmoutput _write_pwm_checked _write_pwm read read_into poll _job_poll _read_values colour_into colour_name rgbw_to_str _lookup_colour_math_viper _colour_hsv_into _colour_hue _colour_id apply_white_reference _white_channel _scaled_white_value"),
+    ("autodrive.py", "background_update _update_gyro _apply_gyro_sample _update_range_sensor _record_range_sample _log_waiting_for_range _update_plotter _send_plotter_data _set_plot_heading_score _set_scan_plot_heading_score _scan_plot_score _apply_output_ramp _output_ramp_step _ramp_motor_output _clamp_motor_target _update_scan _finish_scan"),
+    ("../../../micropython/extmod/asyncio/core.py", "wait_io_event _process_io_event"),
+    ("../../../modules/system/notification/app.py", "update _update_notification _advance_notification"),
+    ("../../../modules/system/backleds/app.py", "background_update _update_back_led _back_led_colour"),
+    ("../../../modules/system/scheduler/__init__.py", "_draw_app _draw_app_with_probe _begin_app_draw_probe _draw_sampled_app _finish_app_draw_probe _draw_app_safely _handle_app_draw_error _notify_app_draw_crash"),
+    ("../../../modules/app_components/tokens.py", "set_color _try_color_function _set_rgb_color _try_rgb_color"),
+    ("../../../modules/system/espnow/service.py", "_has_listeners _registry_has_listeners _apply_power_management _sync_power_management _configure_power_management _try_configure_power_management _log_power_management_error _update_radio_awake"),
+    ("../../../modules/system/a11y/printer.py", "get_deduped_strings _strings_unchanged _collect_changed_strings _collect_string_entries _should_emit_string _has_transient_strings _string_entry _last_string_text"),
+    ("../../../modules/app_components/background.py", "draw _draw_runner _handle_draw_error"),
+    ("../../../modules/app_components/menu.py", "draw _draw_info _ensure_focused_item_sizes _update_animation_state _draw_focused_item _draw_focused_label _draw_neighboring_items _draw_previous_items _draw_next_items"),
+    ("../../../micropython/lib/micropython-lib/micropython/drivers/led/neopixel/neopixel.py", "set_many _set_many_composed _set_many_string _write_many_segment _write_many_items _ensure_batch_buffer _process_batch _set_many_pixel _correct_batch_pixel _copy_channels _write_many"),
 ])
 def test_line_follow_hot_bytecode_states_fit_stack_cutoff(source, targets, tmp_path):
     import shutil
@@ -217,16 +228,16 @@ def test_line_follow_hot_bytecode_states_fit_stack_cutoff(source, targets, tmp_p
     subprocess.run([compiler, "-march=xtensawin", "-O2", "-o", str(artifact), str(app_root / source)], check=True, capture_output=True)
     dump = subprocess.run([sys.executable, "-X", "utf8", str(inspector), "-d", str(artifact)], check=True, capture_output=True, encoding="utf-8").stdout
     wanted = set(targets.split())
-    measured = {}
+    measured = []
     function = None
     for line in dump.splitlines():
         if line.startswith("simple_name: "):
             function = line.split(": ", 1)[1]
         match = re.match(r"\s+prelude: \((\d+), (\d+),", line)
         if match and function in wanted:
-            measured[function] = 4 * int(match[1]) + 12 * int(match[2])
-    assert measured.keys() == wanted
-    assert all(size <= 44 for size in measured.values()), measured
+            measured.append((function, 4 * int(match[1]) + 12 * int(match[2])))
+    assert {name for name, _ in measured} == wanted
+    assert all(size <= 44 for _, size in measured), measured
 
 
 def test_eeprom_partition_writes_cross_pages_with_byteslike_buffers(monkeypatch):
@@ -444,6 +455,21 @@ def test_neopixel_dim_correction_reuses_output_buffer(monkeypatch):
     assert batch_pixels._batch_buffer is batch_buffer
     assert list(raw_pixels.buf) == [30, 10, 4, 40, 100, 2]
 
+    offset_pixels = object.__new__(neopixel.NeoPixel)
+    offset_pixels.n = 4
+    offset_pixels.bpp = 3
+    offset_pixels.buf = bytearray(12)
+    offset_batch = neopixel.CorrectedNeoPixel(
+        neopixel.ComposedNeoPixel(offset_pixels),
+        [neopixel.DimCorrection(0.5)] * 4,
+    )
+    offset_batch.set_many(
+        2, [(9, 9, 9), (100, 40, 3), (200, 80, 5)], 2, values_start=1
+    )
+    assert list(offset_pixels.buf) == [0, 0, 0, 0, 0, 0, 20, 50, 1, 40, 100, 2]
+    assert offset_batch._batch_buffer[0] == [50, 20, 1]
+    assert offset_batch._batch_buffer[1] == [100, 40, 2]
+
     first_strip = object.__new__(neopixel.NeoPixel)
     first_strip.n = 3
     first_strip.bpp = 3
@@ -457,6 +483,146 @@ def test_neopixel_dim_correction_reuses_output_buffer(monkeypatch):
     composed_strips.set_many(0, [(1, 2, 3), (4, 5, 6), (7, 8, 9)], 3)
     assert list(first_strip.buf) == [2, 1, 3, 5, 4, 6, 8, 7, 9]
     assert list(second_strip.buf) == [5, 4, 6, 8, 7, 9, 0, 0, 0]
+
+    merged_strip = object.__new__(neopixel.NeoPixel)
+    merged_strip.n = 3
+    merged_strip.bpp = 3
+    merged_strip.buf = bytearray(9)
+    merged_pixels = neopixel.MergedNeoPixel(merged_strip, [[0, 2], [1]])
+    merged_pixels.set_many(0, [(9, 9, 9), (1, 2, 3), (4, 5, 6)], 2, values_start=1)
+    assert list(merged_strip.buf) == [2, 1, 3, 5, 4, 6, 2, 1, 3]
+
+
+def test_a11y_dedup_avoids_unchanged_normalization_and_preserves_announcements():
+    from system.a11y.printer import PrintA11y
+
+    printer = PrintA11y()
+    printer.collect_text("steady")
+    assert printer.get_deduped_strings() == []
+    previous_snapshot = printer.last_strings
+
+    printer.reset()
+    printer.collect_text("steady")
+    assert printer.get_deduped_strings() is None
+    assert printer.last_strings is previous_snapshot
+
+    printer.reset()
+    printer.collect_text("changed")
+    assert printer.get_deduped_strings() == ["changed"]
+    printer.collected[0] = "changed again"
+    assert printer.get_deduped_strings() == ["changed again"]
+
+    printer.reset()
+    printer.add_alt(None, "changed again")
+    assert printer.get_deduped_strings() == []
+
+    printer.reset()
+    printer.add_alt(None, "always", always=True)
+    printer.add_alt(None, "transient", transient=True)
+    printer.add_alt(None, "suppressed change")
+    assert printer.get_deduped_strings() == ["always", "transient"]
+
+
+def test_a11y_finalise_frame_is_synchronous(capsys):
+    import inspect
+    from system.a11y.printer import PrintA11y
+
+    printer = PrintA11y()
+    printer.add_alt(None, "steady", always=True)
+    assert not inspect.iscoroutinefunction(printer.finalise_frame)
+    assert printer.finalise_frame() is None
+    assert capsys.readouterr().out == "[Screen reader] steady\n"
+
+
+def test_menu_draw_preserves_focused_neighbor_and_accessibility_labels(monkeypatch):
+    from types import SimpleNamespace
+    import app_components.menu as menu_module
+
+    monkeypatch.setattr(menu_module, "set_color", lambda ctx, color: ctx)
+
+    class DrawContext:
+        CENTER = 1
+        MIDDLE = 2
+
+        def __init__(self):
+            self.labels = []
+            self.positions = []
+            self.font_sizes = []
+            self.a11y = SimpleNamespace(add_alt=lambda app, text: self.labels.append(text))
+
+        @property
+        def font_size(self):
+            return self._font_size
+
+        @font_size.setter
+        def font_size(self, value):
+            self._font_size = value
+            self.font_sizes.append(value)
+
+        def save(self):
+            pass
+
+        def restore(self):
+            pass
+
+        def move_to(self, x, y):
+            self.positions.append((x, y))
+            return self
+
+        def text(self, label):
+            self.labels.append(label)
+
+    menu = object.__new__(menu_module.Menu)
+    menu.show_info = False
+    menu.info_items = []
+    menu.focused_item_font_size_arr = [20, 30, 40]
+    menu.menu_items = ["Alpha", "Beta", "Gamma"]
+    menu.is_animating = "none"
+    menu.position = 1
+    menu.item_font_size = 10
+    menu.focused_item_margin = 20
+    menu.item_line_height = 15
+    menu._menu_draw_y_offset = 0
+    context = DrawContext()
+
+    menu.draw(context)
+
+    assert context.labels == ["Beta", "Beta", "Alpha", "Gamma"]
+    assert context.positions == [(0, 0), (0, -35), (0, 35)]
+    assert context.font_sizes[0] is menu.focused_item_font_size_arr[1]
+
+
+def test_background_draw_failure_restores_context_and_disables_runner(monkeypatch):
+    from types import SimpleNamespace
+    import app_components.background as background_module
+
+    class DrawContext:
+        def __init__(self):
+            self.save_count = 0
+            self.restore_count = 0
+
+        def save(self):
+            self.save_count += 1
+
+        def restore(self):
+            self.restore_count += 1
+
+    manager = object.__new__(background_module._Background)
+
+    def fail_draw(ctx):
+        raise RuntimeError("background failed")
+
+    manager.runner = SimpleNamespace(draw=fail_draw)
+    manager.selection = ("test", None)
+    emitted_events = []
+    monkeypatch.setattr(background_module.eventbus, "emit", emitted_events.append)
+    context = DrawContext()
+
+    manager.draw(context)
+
+    assert manager.runner is None
+    assert context.save_count == context.restore_count == 1
+    assert len(emitted_events) == 2
 
 
 @pytest.mark.parametrize("mirror_pattern", [False, True])
