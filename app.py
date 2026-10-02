@@ -81,7 +81,8 @@ _QR_CODE = [
 ]
 
 _BRIGHTNESS = const(1.0)
-_GC_DIAGNOSTICS = False
+_GC_DIAGNOSTICS = True
+_GC_DIAGNOSTICS_INTERVAL_MS = const(60000)
 _GC_CHURN_TEST_DISABLE_PATTERN = False
 
 # Screen positioning constant for scroll mode display
@@ -243,6 +244,17 @@ def _clamp(value: int, lo: int, hi: int) -> int:
     if value > hi:
         return hi
     return value
+
+
+@micropython.viper
+def _scale_motor_output(output: int, motor_min: int) -> int:
+    factor: int = 65536 - motor_min
+    factor_high: int = factor >> 8
+    factor_low: int = factor & 255
+    whole: int = (output * factor_high) >> 8
+    remainder: int = (output * factor_high) & 255
+    fractional: int = (output * factor_low + (remainder << 8)) >> 16
+    return whole + fractional
 
 
 def _hue_to_rgb_into(hue: int, colour: list[int]) -> None:
@@ -872,17 +884,17 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             return False
         self._line_follow_mgr.logging = self._logging  # sync logging with current app setting
         if self._line_follow_mgr.start():
-            keep_empty_heaps = getattr(gc, "keep_empty_heaps", None)
-            if keep_empty_heaps is not None:
-                keep_empty_heaps(True)
-            elif not _IS_SIMULATOR:
-                print("B:GC split-heap retention unavailable; rebuild firmware")
-            probe_size = _preallocate_gc_heap_for_line_follow()
+            #keep_empty_heaps = getattr(gc, "keep_empty_heaps", None)
+            #if keep_empty_heaps is not None:
+            #    keep_empty_heaps(True)
+            #elif not _IS_SIMULATOR:
+            #    print("B:GC split-heap retention unavailable; rebuild firmware")
+            #probe_size = _preallocate_gc_heap_for_line_follow()
             gc.collect()
-            if probe_size:
-                print("B:Line follower GC heap probe succeeded at %d KiB" % (probe_size // 1024))
-            else:
-                print("B:Line follower GC heap probe failed down to 100 KiB")
+            #if probe_size:
+            #    print("B:Line follower GC heap probe succeeded at %d KiB" % (probe_size // 1024))
+            #else:
+            #    print("B:Line follower GC heap probe failed down to 100 KiB")
             self.current_state = STATE_FOLLOWER
             return True
         return False
@@ -1056,9 +1068,13 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             diagnostics_output(1, 0)
             if gc_mem_free is not None:
                 current_free = gc_mem_free()
+                report_due = gc_elapsed_ms >= _GC_DIAGNOSTICS_INTERVAL_MS
+                if report_due:
+                    gc.collect()
+                    current_free = gc_mem_free()
                 if current_free < minimum_free:
                     minimum_free = current_free
-                if current_free > previous_free:
+                if report_due or current_free > previous_free:
                     recovered = current_free - minimum_free
                     allocated = gc_mem_alloc() if gc_mem_alloc is not None else -1
                     threshold = gc_threshold() if gc_threshold is not None else -1
@@ -1699,16 +1715,16 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         else:
             # Otherwise apply the motor offset to ensure that the motors start moving when a non-zero output is sent. This compensates for any mechanical resistance or friction in the motor system.
             if output1 > 0:
-                output1 = self._motor1_min + ((output1 * (65536 - self._motor1_min)) // 65536)
+                output1 = self._motor1_min + _scale_motor_output(output1, self._motor1_min)
             else:
-                output1 = -self._motor1_min - ((-output1 * (65536 - self._motor1_min)) // 65536)
+                output1 = -self._motor1_min - _scale_motor_output(-output1, self._motor1_min)
         if abs(output2) < self._motor_deadband:
             output2 = 0
         else:
             if output2 > 0:
-                output2 = self._motor2_min + ((output2 * (65536 - self._motor2_min)) // 65536)
+                output2 = self._motor2_min + _scale_motor_output(output2, self._motor2_min)
             else:
-                output2 = -self._motor2_min - ((-output2 * (65536 - self._motor2_min)) // 65536)
+                output2 = -self._motor2_min - _scale_motor_output(-output2, self._motor2_min)
 
         # limit rate of change of motor output to maximum acceleration
         max_delta = self.acceleration # maximum change in motor output per update

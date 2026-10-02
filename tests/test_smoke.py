@@ -61,6 +61,25 @@ def test_import_badgebot_app_and_app_export():
     from sim.apps.BadgeBot import BadgeBotApp
     assert BadgeBot.__app_export__ == BadgeBotApp
 
+
+def test_button_state_get_preserves_direct_and_parent_matching():
+    from events.input import Button, Buttons
+
+    parent = Button("DIRECTION", "System")
+    up = Button("UP", "System", parent)
+    equal_up = Button("UP", "System")
+    button_states = Buttons.__new__(Buttons)
+    button_states.buttons = {up: False}
+    button_states._already_pressed = set()
+
+    assert hash(up) == hash(equal_up)
+    assert button_states.get(equal_up) is False
+    assert button_states.get(parent) is False
+
+    button_states.buttons[up] = True
+    assert button_states.get(equal_up) is True
+    assert button_states.get(parent) is True
+
 def test_import_hexdrive_app_and_app_export():
     import sim.apps.BadgeBot.vendor.HexDrive.hexdrive as HexDrive
     from sim.apps.BadgeBot.vendor.HexDrive.hexdrive import HexDriveApp
@@ -74,6 +93,37 @@ def test_hexdrive_instance_exposes_version():
 def test_badgebot_app_init():
     from sim.apps.BadgeBot import BadgeBotApp
     BadgeBotApp()
+
+
+def test_motor_controller_send_output_uses_calibration_buffer():
+    from sim.apps.BadgeBot.motor_controller import MotorController
+
+    class HexDrive:
+        def set_motors(self, outputs):
+            self.outputs = outputs
+
+        def set_power(self, enabled):
+            self.power_enabled = enabled
+
+    hexdrive = HexDrive()
+    controller = MotorController.__new__(MotorController)
+    controller._hexdrive = hexdrive
+    controller.motor_output = (0, 0)
+    controller._calibrated_output_buffer = [0, 0]
+    controller._logging = False
+    controller._busy = True
+
+    def calibrate(output, output_buffer):
+        output_buffer[0] = output[0]
+        output_buffer[1] = output[1]
+
+    controller._apply_motor_directions_callback = calibrate
+    controller.stop()
+
+    assert hexdrive.outputs is controller._calibrated_output_buffer
+    assert hexdrive.outputs == [0, 0]
+    assert hexdrive.power_enabled is False
+    assert controller._busy is False
 
 
 def test_line_follow_gc_heap_probe_retries_in_100_kib_steps(monkeypatch):
@@ -109,6 +159,56 @@ def test_line_follow_calibration_reminder_is_shown_once():
     assert len(messages) == 1
     assert messages[0][0][0][0] == "Line Follower:"
     assert messages[0][1] == {"return_state": STATE_FOLLOWER, "timeout": 4000}
+
+
+@pytest.mark.parametrize("output", [0, 1, 127, 512, 32768, 55000, 65535])
+@pytest.mark.parametrize("motor_min", [0, 1, 512, 32768, 65535])
+def test_motor_output_scaling_matches_16_bit_integer_formula(output, motor_min):
+    from sim.apps.BadgeBot.app import _scale_motor_output
+
+    assert _scale_motor_output(output, motor_min) == output * (65536 - motor_min) // 65536
+
+
+def test_sensor_stats_counts_missed_samples_across_small_int_sequence_wrap():
+    from sim.apps.BadgeBot.sensor_test import SensorStats, _SEQUENCE_MASK
+
+    stats = SensorStats("colour")
+    stats.new_sample(_SEQUENCE_MASK - 1)
+    stats.new_sample(_SEQUENCE_MASK)
+    stats.new_sample(0)
+    assert stats.missed == 0
+
+    stats.new_sample(2)
+    assert stats.missed == 1
+
+
+def test_sensor_stats_caches_rate_string_until_rate_changes():
+    from sim.apps.BadgeBot.sensor_test import SensorStats
+
+    stats = SensorStats("colour", sample_period_ms=1000)
+    initial_rate_str = stats.rate_str
+    assert stats.rate_str is initial_rate_str
+
+    for _ in range(12):
+        stats.new_sample()
+    assert stats.update(1000) is True
+    twelve_hz = stats.rate_str
+    assert twelve_hz == "12.0Hz"
+
+    for _ in range(12):
+        stats.new_sample()
+    assert stats.update(1000) is True
+    assert stats.rate_str is twelve_hz
+
+    for _ in range(13):
+        stats.new_sample()
+    assert stats.update(1000) is True
+    assert stats.rate_str == "13.0Hz"
+    assert stats.rate_str is not twelve_hz
+
+    stats.reset()
+    assert stats.rate_str == "0.0Hz"
+    assert stats.rate_str is initial_rate_str
 
 
 @pytest.mark.parametrize("error", [-1800, -90, 0, 90, 1800])
@@ -397,6 +497,17 @@ def test_neopixel_dim_correction_reuses_output_buffer(monkeypatch):
     neopixel = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(neopixel)
 
+    sim_stub = types.ModuleType("_sim")
+    sim_stub._sim = types.SimpleNamespace(leds_update=lambda: None)
+    monkeypatch.setitem(__import__("sys").modules, "_sim", sim_stub)
+    monkeypatch.setitem(__import__("sys").modules, "leds", types.ModuleType("leds"))
+    fake_neopixel_path = repo_root / "sim" / "fakes" / "neopixel.py"
+    fake_spec = importlib.util.spec_from_file_location(
+        "_test_neopixel_fake", fake_neopixel_path
+    )
+    fake_neopixel = importlib.util.module_from_spec(fake_spec)
+    fake_spec.loader.exec_module(fake_neopixel)
+
     class PixelSink:
         n = 1
 
@@ -408,8 +519,33 @@ def test_neopixel_dim_correction_reuses_output_buffer(monkeypatch):
 
     sink = PixelSink()
     correction = neopixel.DimCorrection(0.5)
+    fake_correction = fake_neopixel.DimCorrection(0.5)
     pixels = neopixel.CorrectedNeoPixel(sink, [correction])
 
+    source = tuple(range(256))
+    result = [0] * len(source)
+    for percentage in range(101):
+        correction.amount = percentage / 100
+        pixels._apply_into[0](correction, source, result)
+        assert correction._amount_percent == percentage
+        assert result == [channel * percentage // 100 for channel in source]
+        assert correction(source) == result
+        fake_correction.amount = percentage / 100
+        assert fake_correction(source) == result
+
+    correction.amount = 0.256
+    assert correction._amount_percent == 26
+    correction.amount = -0.5
+    assert correction._amount_percent == 0
+    correction.amount = 1.5
+    assert correction._amount_percent == 100
+    fake_correction.amount = 0.256
+    assert fake_correction._amount_percent == 26
+    fake_correction.amount = -0.5
+    assert fake_correction._amount_percent == 0
+    fake_correction.amount = 1.5
+    assert fake_correction._amount_percent == 100
+    correction.amount = 0.5
     pixels[0] = (100, 40, 3)
     buffer = pixels._correction_buffer
     assert sink.value == (50, 20, 1)
@@ -523,6 +659,39 @@ def test_a11y_dedup_avoids_unchanged_normalization_and_preserves_announcements()
     assert printer.get_deduped_strings() == ["always", "transient"]
 
 
+def test_a11y_reset_reuses_frame_lists_and_all_strings_is_a_snapshot():
+    from system.a11y.printer import PrintA11y
+
+    printer = PrintA11y()
+    printer.collect_text("collected")
+    snapshot = printer.get_all_strings()
+    collected = printer.collected
+    alts = printer.alts
+
+    printer.reset()
+
+    assert printer.collected is collected
+    assert printer.alts is alts
+    assert not printer.collected
+    assert not printer.alts
+    assert snapshot == ["collected"]
+
+
+def test_a11y_reuses_unchanged_alt_entry_across_frames():
+    from system.a11y.printer import PrintA11y
+
+    printer = PrintA11y()
+    label = "Menu item"
+    printer.add_alt(None, label)
+    cached_entry = printer.alts[0]
+
+    printer.reset()
+    printer.add_alt(None, label)
+
+    assert printer.alts[0] is cached_entry
+    assert printer.get_deduped_strings() == []
+
+
 def test_a11y_finalise_frame_is_synchronous(capsys):
     import inspect
     from system.a11y.printer import PrintA11y
@@ -532,6 +701,39 @@ def test_a11y_finalise_frame_is_synchronous(capsys):
     assert not inspect.iscoroutinefunction(printer.finalise_frame)
     assert printer.finalise_frame() is None
     assert capsys.readouterr().out == "[Screen reader] steady\n"
+
+
+def test_set_color_dispatches_rgb_tuples_and_callable_gradients(monkeypatch):
+    import app_components.tokens as tokens
+
+    calls = []
+
+    class RGB(tuple):
+        def __iter__(self):
+            raise AssertionError("RGB tuple should be indexed, not expanded")
+
+    def gradient(ctx):
+        calls.append(("gradient", ctx))
+
+    class DrawContext:
+        def rgb(self, *color):
+            calls.append(("rgb", color))
+            return self
+
+    context = DrawContext()
+    monkeypatch.setattr(tokens, "colors", {})
+    monkeypatch.setattr(
+        tokens,
+        "ui_colors",
+        {"rgb": RGB((0.1, 0.2, 0.3)), "gradient": gradient},
+    )
+
+    assert tokens.set_color(context, "rgb") is context
+    assert tokens.set_color(context, "gradient") is context
+    assert calls == [
+        ("rgb", (0.1, 0.2, 0.3)),
+        ("gradient", context),
+    ]
 
 
 def test_menu_draw_preserves_focused_neighbor_and_accessibility_labels(monkeypatch):
@@ -582,6 +784,7 @@ def test_menu_draw_preserves_focused_neighbor_and_accessibility_labels(monkeypat
     menu.item_font_size = 10
     menu.focused_item_margin = 20
     menu.item_line_height = 15
+    menu._idle_next_item_y = (35, 50)
     menu._menu_draw_y_offset = 0
     context = DrawContext()
 

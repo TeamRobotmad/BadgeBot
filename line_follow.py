@@ -356,14 +356,16 @@ class LineFollowMgr:
                 self._new_sample = False
                 if app.sensor_test_mgr.colour_sensor_stats.update(self._display_refresh_time):
                     #if self._logging:
-                    print(f"B:LF:CS={app.sensor_test_mgr.colour_sensor_stats.rate_str}")
+                    rate = app.sensor_test_mgr.colour_sensor_stats.rate
+                    print("B:LF:CS=", rate // 10, ".", rate % 10, "Hz", sep="")
                     # push the sensor sample frequency to the display with one non-performance update cycle
                     app.performance_mode = False
                     app.performance_mode = True
                 if app.sensor_test_mgr.range_sensor_stats.update(self._display_refresh_time):
                     #if self._logging:
-                    #print(f"B:LF:RS={app.sensor_test_mgr.range_sensor_stats.rate_str}")
-                    pass                
+                    #    rate = app.sensor_test_mgr.range_sensor_stats.rate
+                    #    print("B:LF:RS=", rate // 10, ".", rate % 10, "Hz", sep="")                
+                    pass
                 self._display_refresh_time = 0
                 app.refresh = True
                 if app.bluetooth_mgr is not None and app.bluetooth_mgr.is_connected and self._last_range_mm >= 0:

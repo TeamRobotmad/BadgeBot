@@ -72,9 +72,9 @@ class MotorController:
         the badge.  The accelerometer X/Y axes are rotated by this
         amount so that the forward acceleration is measured correctly
         regardless of how the motors are mounted.
-    apply_motor_directions_callback : Callable[[MotorOutputTuple], MotorOutputTuple] | None
-        Callback that applies per-motor direction settings to an output
-        tuple before values are sent to HexDrive. If ``None``, outputs
+    apply_motor_directions_callback : Callable[[MotorOutputTuple, list[int]], None] | None
+        Callback that applies per-motor direction settings into a reusable
+        output buffer before values are sent to HexDrive. If ``None``, outputs
         are sent unchanged.
     gyro_axis : int
         Index into ``imu.gyro_read()`` for the yaw axis (default 2).
@@ -124,6 +124,7 @@ class MotorController:
         self._logging: bool = logging
         self._front_face_setting: MySetting | None = front_face_setting
         self._apply_motor_directions_callback = apply_motor_directions_callback
+        self._calibrated_output_buffer = [0, 0]
         self._gyro_axis: int = gyro_axis
         self._gyro_deadband: float = gyro_deadband
         self._accel_axis: int = accel_axis
@@ -558,11 +559,10 @@ class MotorController:
         if self._hexdrive is not None:
             output = self.motor_output
             if self._apply_motor_directions_callback is not None:
-                mapped = self._apply_motor_directions_callback(output)
-                if isinstance(mapped, tuple) and len(mapped) == len(output):
-                    output = mapped
-                elif self._logging:
-                    print("[MC] apply_motor_directions_callback ignored invalid output")
+                self._apply_motor_directions_callback(
+                    output, self._calibrated_output_buffer
+                )
+                output = self._calibrated_output_buffer
             self._hexdrive.set_motors(output)
 
 

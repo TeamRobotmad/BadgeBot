@@ -54,6 +54,7 @@ except ImportError:
     const = lambda x: x         #pylint: disable=unnecessary-lambda-assignment
 
 _TIME_SLEEP_MS = getattr(time, "sleep_ms", None)
+_SEQUENCE_MASK = const(0x3FFFFFFF)
 
 def _report_range_read_error():
     print("B:Error reading range sensor")
@@ -324,7 +325,8 @@ class SensorTestMgr:
         """Handle Sensor Test states."""
         if self._draw_stats.update(delta):
             if self._logging:
-                print(f"B:Draw stats updated: {self._draw_stats.rate_str}")
+                rate = self._draw_stats.rate
+                print("B:Draw stats updated: ", rate // 10, ".", rate % 10, "Hz", sep="")
             self._app.refresh = True
         if self._sub_state == _SUB_SELECT_PORT:
             self._update_select_port(delta)
@@ -333,7 +335,7 @@ class SensorTestMgr:
         # diagnostics if the sub-state changes
         if self._sub_state != self._last_sub_state:
             if self._logging and self._last_sub_state is not None:
-                print(f"B:Sub-state changed from {self._last_sub_state} to {self._sub_state}")
+                print("B:Sub-state changed from ", self._last_sub_state, " to ", self._sub_state, sep="")
             self._last_sub_state = self._sub_state
 
 
@@ -898,7 +900,9 @@ class SensorTestMgr:
         # perform update call on all sensor stats
         for sensor in self._sensor_list:
             if sensor.stats.update(delta):
-                print(f"B:Sensor '{sensor.name}' stats updated: {sensor.stats.rate_str}")
+                if self._logging:
+                    rate = sensor.stats.rate
+                    print("B:Sensor '", sensor.name, "' stats updated: ", rate // 10, ".", rate % 10, "Hz", sep="")
                 app.refresh = True
 
         # if the page shows any of the sensor readings, update the display values at a limited rate
@@ -1188,7 +1192,7 @@ _SYSTEM_BASE      = const(0x600C0000)
 _GPIO_BASE        = const(0x60004000)
 _PCNT_BASE        = const(0x60017000)
 
-_PCNT_NUM_UNITS   = 4   # ESP32-S3 has 4 PCNT units
+_PCNT_NUM_UNITS   = const(4)   # ESP32-S3 has 4 PCNT units
 
 _PCNT_CLK_BIT     = const(1 << 10)  # SYSTEM_PCNT_CLK_EN / SYSTEM_PCNT_RST (bit 10)
 
@@ -1216,7 +1220,7 @@ _CONF0_FILTER_THRES_M  = const(0x3FF)   # bits [9:0]
 _CONF0_FILTER_EN       = const(1 << 10)
 
 # GPIO signal index base for PCNT: Unit N, CH0 pulse = 33 + N*4, CH0 ctrl = 35 + N*4
-_PCNT_SIG_BASE    = 33
+_PCNT_SIG_BASE    = const(33)
 
 # APB clock frequency for filter calculation (Hz)
 _APB_CLK_HZ       = const(80_000_000)
@@ -1697,7 +1701,7 @@ class Encoder(_PCNTUnitBase):
 # it is initialised with a name of the sensor for which it is providing stats
 class SensorStats():
     """A class to track sensor statistics, including sample rate and count."""
-    __slots__ = ("_name", "_sample_period_ms", "_sample_count", "_sample_timer", "_sample_rate", "_missed_samples", "_last_sequence_number")
+    __slots__ = ("_name", "_sample_period_ms", "_sample_count", "_sample_timer", "_sample_rate", "_rate_str", "_missed_samples", "_last_sequence_number")
 
     def __init__(self, name: str, sample_period_ms: int=10000):
         self._name: str = name
@@ -1705,6 +1709,7 @@ class SensorStats():
         self._sample_count: int = 0
         self._sample_timer: int = 0
         self._sample_rate: int = 0
+        self._rate_str: str = "0.0Hz"
         self._missed_samples: int = 0
         self._last_sequence_number: int = -1
 
@@ -1730,7 +1735,10 @@ class SensorStats():
         self._sample_timer += delta
         if self._sample_timer >= self._sample_period_ms:
             # Calculate the sample rate in units of 0.1Hz
-            self._sample_rate = (10000 * self._sample_count) // self._sample_timer
+            sample_rate = (10000 * self._sample_count) // self._sample_timer
+            if sample_rate != self._sample_rate:
+                self._sample_rate = sample_rate
+                self._rate_str = f"{sample_rate // 10}.{sample_rate % 10}Hz"
             # Reset the counters for the next period
             self._sample_count = 0
             self._sample_timer = 0
@@ -1742,8 +1750,15 @@ class SensorStats():
         """Increment the sample count when a new sensor reading is available."""
         self._sample_count += 1
         if sequence_number is not None:
-            if self._last_sequence_number != -1 and sequence_number != self._last_sequence_number + 1:
-                self._missed_samples += sequence_number - self._last_sequence_number - 1
+            last_sequence_number = self._last_sequence_number
+            if last_sequence_number != -1:
+                expected_sequence_number = (
+                    0 if last_sequence_number == _SEQUENCE_MASK else last_sequence_number + 1
+                )
+                if sequence_number != expected_sequence_number:
+                    self._missed_samples += (
+                        sequence_number - expected_sequence_number
+                    ) & _SEQUENCE_MASK
             self._last_sequence_number = sequence_number
 
 
@@ -1752,6 +1767,7 @@ class SensorStats():
         self._sample_count = 0
         self._sample_timer = 0
         self._sample_rate = 0
+        self._rate_str = "0.0Hz"
         self._missed_samples = 0
         self._last_sequence_number = -1
 
@@ -1765,4 +1781,4 @@ class SensorStats():
     @property
     def rate_str(self) -> str:
         """Return the current sample rate as a string in Hz."""
-        return f"{self._sample_rate // 10}.{self._sample_rate % 10}Hz"
+        return self._rate_str
