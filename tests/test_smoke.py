@@ -702,14 +702,19 @@ def test_a11y_reuses_unchanged_alt_entry_across_frames():
     assert printer.get_deduped_strings() == []
 
 
-def test_a11y_finalise_frame_is_synchronous(capsys):
+def test_a11y_finalise_frame_is_async(capsys):
+    import asyncio
     import inspect
     from system.a11y.printer import PrintA11y
 
     printer = PrintA11y()
     printer.add_alt(None, "steady", always=True)
-    assert not inspect.iscoroutinefunction(printer.finalise_frame)
-    assert printer.finalise_frame() is None
+    assert inspect.iscoroutinefunction(printer.finalise_frame)
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(printer.finalise_frame())
+    finally:
+        loop.close()
     assert capsys.readouterr().out == "[Screen reader] steady\n"
 
 
@@ -1172,3 +1177,81 @@ def test_legacy_sensor_registry_is_disabled():
     """HexDrive2 owns sensor polling; the old app-level registry stays empty."""
     from sim.apps.BadgeBot.sensors import ALL_SENSOR_CLASSES
     assert ALL_SENSOR_CLASSES == []
+
+
+def test_scheduler_awaits_async_a11y_and_skips_none(monkeypatch):
+    import asyncio
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+    import system.scheduler as scheduler_module
+
+    class StopAfterRender(Exception):
+        pass
+
+    class AsyncHandler:
+        def __init__(self):
+            self.finalised = False
+            self.reset_called = False
+
+        async def finalise_frame(self):
+            await asyncio.sleep(0)
+            self.finalised = True
+
+        def reset(self):
+            self.reset_called = True
+
+    context = SimpleNamespace()
+    monkeypatch.setattr(scheduler_module.display, "get_ctx", lambda: context)
+    monkeypatch.setattr(scheduler_module.display, "end_frame", lambda _ctx: None)
+    monkeypatch.setattr(scheduler_module, "_RENDER_PERF_TIMER", nullcontext())
+
+    async def stop_after_render(_delay):
+        raise StopAfterRender
+
+    monkeypatch.setattr(scheduler_module, "sleep_ms", stop_after_render)
+
+    async def render_once(handler):
+        scheduler = scheduler_module._Scheduler.__new__(scheduler_module._Scheduler)
+        scheduler.render_needed = asyncio.Event()
+        scheduler.render_needed.set()
+        scheduler.foreground_stack = []
+        scheduler.on_top_stack = []
+        scheduler.a11y_handler = handler
+        await scheduler._render_task()
+
+    handler = AsyncHandler()
+    loop = asyncio.new_event_loop()
+    try:
+        with pytest.raises(StopAfterRender):
+            loop.run_until_complete(render_once(handler))
+        assert handler.finalised is True
+        assert handler.reset_called is True
+
+        with pytest.raises(StopAfterRender):
+            loop.run_until_complete(render_once(None))
+        assert context.a11y is None
+    finally:
+        loop.close()
+
+
+def test_badgebot_a11y_suppression_restores_previous_handler(monkeypatch):
+    import sim.apps.BadgeBot.app as badgebot
+
+    app = badgebot.BadgeBotApp.__new__(badgebot.BadgeBotApp)
+    app._a11y_restore_factory = badgebot._A11yHandlerFactory()
+    app._a11y_handler_suppressed = False
+    previous_handler = object()
+    emitted_events = []
+
+    monkeypatch.setattr(badgebot.scheduler, "a11y_handler", previous_handler)
+    monkeypatch.setattr(badgebot.eventbus, "emit", emitted_events.append)
+
+    app._suppress_a11y()
+    assert emitted_events[0].klass() is None
+    app._suppress_a11y()
+    assert len(emitted_events) == 1
+
+    app._restore_a11y()
+    assert emitted_events[1].klass() is previous_handler
+    app._restore_a11y()
+    assert len(emitted_events) == 2
