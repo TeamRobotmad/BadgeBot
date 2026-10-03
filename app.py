@@ -1,6 +1,5 @@
 """ Main Application File for BadgeBot."""
 import asyncio
-import gc
 import sys
 import time
 from math import cos, pi
@@ -18,7 +17,6 @@ from system.hexpansion.config import HexpansionConfig
 from system.hexpansion.util import get_slots_by_vid_pid, get_app_by_slot
 from system.patterndisplay.events import PatternDisable, PatternEnable
 from system.scheduler import scheduler
-from system import gc_alloc_probe
 from system.scheduler.events import (RequestForegroundPopEvent,
                                      RequestForegroundPushEvent,
                                      RequestStopAppEvent)
@@ -81,9 +79,6 @@ _QR_CODE = [
 ]
 
 _BRIGHTNESS = const(1.0)
-_GC_DIAGNOSTICS = True
-_GC_DIAGNOSTICS_INTERVAL_MS = const(60000)
-_GC_CHURN_TEST_DISABLE_PATTERN = False
 
 # Screen positioning constant for scroll mode display
 H_START = const(-63)
@@ -291,19 +286,6 @@ class _A11yHandlerFactory:
         return self.handler
 
 
-def _preallocate_gc_heap_for_line_follow() -> int:
-    size = 1000 * 1024
-    while size >= 100 * 1024:
-        try:
-            probe = bytearray(size)
-        except MemoryError:
-            size -= 100 * 1024
-        else:
-            del probe
-            return size
-    return 0
-
-
 class BadgeBotApp(app.App):         # pylint: disable=no-member
     """Main application class for BadgeBot.  Manages overall state, user input, and delegates to functional area managers for specific features."""
     __slots__ = (
@@ -374,8 +356,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         "_performance_mode",
         "_a11y_restore_factory",
         "_a11y_handler_suppressed",
-        "_gc_churn_pattern_app",
-        "_gc_churn_pattern_was_enabled",
         "_notification_end_time",
         "_motor_enable_mask",
         "_motor_output_buffer",
@@ -411,8 +391,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self.rpm: int = 5                    # logo rotation speed in RPM
         self.animation_counter: int = 0
         self.pattern_status: bool = True     # Badge Controlled LED pattern: True = Pattern Enabled, False = Pattern Disabled
-        self._gc_churn_pattern_app = None
-        self._gc_churn_pattern_was_enabled = False
         self.qr_code = _QR_CODE
         self.app_version: str = APP_VERSION
         # strings shown on the Logo screen
@@ -884,17 +862,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             return False
         self._line_follow_mgr.logging = self._logging  # sync logging with current app setting
         if self._line_follow_mgr.start():
-            #keep_empty_heaps = getattr(gc, "keep_empty_heaps", None)
-            #if keep_empty_heaps is not None:
-            #    keep_empty_heaps(True)
-            #elif not _IS_SIMULATOR:
-            #    print("B:GC split-heap retention unavailable; rebuild firmware")
-            #probe_size = _preallocate_gc_heap_for_line_follow()
-            gc.collect()
-            #if probe_size:
-            #    print("B:Line follower GC heap probe succeeded at %d KiB" % (probe_size // 1024))
-            #else:
-            #    print("B:Line follower GC heap probe failed down to 100 KiB")
             self.current_state = STATE_FOLLOWER
             return True
         return False
@@ -931,28 +898,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         self._a11y_handler_suppressed = False
 
 
-    def _disable_pattern_for_gc_churn_test(self):
-        if not _GC_CHURN_TEST_DISABLE_PATTERN or self._gc_churn_pattern_app is not None:
-            return
-        for running_app in scheduler.apps:
-            if type(running_app).__name__ == "PatternDisplay":
-                self._gc_churn_pattern_app = running_app
-                self._gc_churn_pattern_was_enabled = running_app.enabled
-                running_app.enabled = False
-                print("B:GC test disabled PatternDisplay (was enabled=%s)" % self._gc_churn_pattern_was_enabled)
-                return
-        print("B:GC test could not find PatternDisplay")
-
-
-    def _restore_pattern_after_gc_churn_test(self):
-        pattern_app = self._gc_churn_pattern_app
-        if pattern_app is None:
-            return
-        pattern_app.enabled = self._gc_churn_pattern_was_enabled
-        self._gc_churn_pattern_app = None
-        print("B:GC test restored PatternDisplay (enabled=%s)" % self._gc_churn_pattern_was_enabled)
-
-
     async def _handle_stop_app(self, event: RequestStopAppEvent):
         """ Handle the RequestStopAppEvent so that we can release resources """
         if event.app == self:
@@ -964,7 +909,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             if not self.pattern_status:
                 eventbus.emit(PatternEnable())
                 self.pattern_status = True
-            self._restore_pattern_after_gc_churn_test()
             if self._hexpansion_mgr is not None:
                 self._hexpansion_mgr.unregister_events()
             if self.scroll_mode_enabled:
@@ -977,7 +921,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     async def _gain_focus(self, event: RequestForegroundPushEvent):
         if event.app is self:
             self._suppress_a11y()
-            self._disable_pattern_for_gc_churn_test()
             if self.logging:
                 print(f"B:BadgeBot gained focus in state {self.current_state}")
             # if Bluetooth is connected - enable motors while we have the focus
@@ -1002,7 +945,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
             if not self.pattern_status:
                 eventbus.emit(PatternEnable())
                 self.pattern_status = True
-            self._restore_pattern_after_gc_churn_test()
             if self.scroll_mode_enabled:
                 eventbus.remove(ButtonUpEvent, self._handle_button_up, self)
             eventbus.remove(ShowNotificationEvent, self._handle_notification, self)
@@ -1027,65 +969,14 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     async def background_task(self):
         """Background task loop for handling time-based updates. This runs independently of the main update/draw loop
            and is suitable for tasks that need to run at a consistent interval regardless of the current state or drawing performance."""
-        gc_mem_free = getattr(gc, "mem_free", None) if _GC_DIAGNOSTICS else None
-        gc_mem_alloc = getattr(gc, "mem_alloc", None) if _GC_DIAGNOSTICS else None
-        gc_threshold = getattr(gc, "threshold", None) if _GC_DIAGNOSTICS else None
-        if _GC_DIAGNOSTICS:
-            gc_alloc_probe.enable()
-        gc_elapsed_ms = 0
-        gc_max_gap_ms = 0
-        gc_max_update_ms = 0
-        previous_free = gc_mem_free() if gc_mem_free is not None else 0
-        minimum_free = previous_free
-
         last_time = time.ticks_ms()
 
         while True:
             cur_time = time.ticks_ms()
             delta_ticks = time.ticks_diff(cur_time, last_time)
-            if gc_mem_free is not None:
-                gc_elapsed_ms += delta_ticks
-                if delta_ticks > gc_max_gap_ms:
-                    gc_max_gap_ms = delta_ticks
             diagnostics_output(1, 1)
-            update_start = time.ticks_ms()
-            probe = None
-            if gc_alloc_probe._enabled:
-                site = gc_alloc_probe.BADGEBOT_BACKGROUND
-                gc_alloc_probe._calls[site] += 1
-                gc_alloc_probe._remaining[site] -= 1
-                if gc_alloc_probe._remaining[site] <= 0:
-                    gc_alloc_probe._remaining[site] = gc_alloc_probe._SAMPLE_EVERY[site]
-                    probe_collections = gc_alloc_probe._collection_count() if gc_alloc_probe._collection_count is not None else 0
-                    probe = gc_alloc_probe._mem_alloc()
             self.background_update(delta_ticks)
-            if probe is not None:
-                collections_after = gc_alloc_probe._collection_count() if gc_alloc_probe._collection_count is not None else 0
-                gc_alloc_probe.record(gc_alloc_probe.BADGEBOT_BACKGROUND, probe, gc_alloc_probe._mem_alloc(), probe_collections, collections_after)
-            update_elapsed_ms = time.ticks_diff(time.ticks_ms(), update_start)
-            if gc_mem_free is not None and update_elapsed_ms > gc_max_update_ms:
-                gc_max_update_ms = update_elapsed_ms
             diagnostics_output(1, 0)
-            if gc_mem_free is not None:
-                current_free = gc_mem_free()
-                report_due = gc_elapsed_ms >= _GC_DIAGNOSTICS_INTERVAL_MS
-                if report_due:
-                    gc.collect()
-                    current_free = gc_mem_free()
-                if current_free < minimum_free:
-                    minimum_free = current_free
-                if report_due or current_free > previous_free:
-                    recovered = current_free - minimum_free
-                    allocated = gc_mem_alloc() if gc_mem_alloc is not None else -1
-                    threshold = gc_threshold() if gc_threshold is not None else -1
-                    print(f"B:GC interval={gc_elapsed_ms}ms max_gap={gc_max_gap_ms}ms max_update={gc_max_update_ms}ms recovered~={recovered}B free={current_free} alloc={allocated} threshold={threshold}")
-                    micropython.mem_info()
-                    gc_alloc_probe.report_and_reset()
-                    gc_elapsed_ms = 0
-                    gc_max_gap_ms = 0
-                    gc_max_update_ms = 0
-                    minimum_free = current_free
-                previous_free = current_free
             await asyncio.sleep_ms(max (1, self._update_period - (time.ticks_ms() - cur_time)))  # sleep for the remainder of the update period, accounting for time taken by background_update
             last_time = cur_time
 
@@ -1095,29 +986,11 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     def background_update(self, delta: int):
         """Background update function that is called at a regular interval from the background task loop.
            It dispatches to the appropriate manager based on the current state, and if motor outputs are returned, it sends them to the HexDrive app."""
-        output = self._update_state_background(delta)
+        bg_fn = self._state_background_dispatch.get(self.current_state)
+        output = bg_fn(delta) if bg_fn is not None else None
         if self._bluetooth_mgr and self._bluetooth_mgr.is_active:
             self._bluetooth_mgr.background_update(delta)
         self._send_motor_output(output)
-
-    def _record_state_background(self, before, collections):
-        gc_alloc_probe.record(gc_alloc_probe.BADGEBOT_STATE_BACKGROUND, before, gc_alloc_probe._mem_alloc(), collections, gc_alloc_probe._collection_count() if gc_alloc_probe._collection_count is not None else 0)
-
-    def _update_state_background(self, delta):
-        bg_fn = self._state_background_dispatch.get(self.current_state)
-        state_probe = None
-        if gc_alloc_probe._enabled:
-            site = gc_alloc_probe.BADGEBOT_STATE_BACKGROUND
-            gc_alloc_probe._calls[site] += 1
-            gc_alloc_probe._remaining[site] -= 1
-            if gc_alloc_probe._remaining[site] <= 0:
-                gc_alloc_probe._remaining[site] = gc_alloc_probe._SAMPLE_EVERY[site]
-                state_probe_collections = gc_alloc_probe._collection_count() if gc_alloc_probe._collection_count is not None else 0
-                state_probe = gc_alloc_probe._mem_alloc()
-        output = bg_fn(delta) if bg_fn is not None else None
-        if state_probe is not None:
-            self._record_state_background(state_probe, state_probe_collections)
-        return output
 
     def _send_motor_output(self, output):
         if len(self.hexdrive_apps) > 0:
@@ -1296,18 +1169,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
     def update(self, delta: int) -> bool:
         """Main update function called from the main loop. Handles state transitions, user input, and delegates to functional area managers."""
         self.diagnostics_output(2, 1)
-        self._update_notifications(delta)
-        self._update_background_managers(delta)
-        self._update_state_foreground(delta)
-        self._update_state_transition()
-        if self.current_state in _LED_CONTROL_STATES and self.current_state != STATE_FOLLOWER:
-            self._update_state_leds()
-        self.diagnostics_output(2, 0)
-        if 2 == self._performance_mode:
-            return False
-        return self.refresh
-
-    def _update_notifications(self, delta):
         if self.notification:
             self.notification.update(delta)
             try:
@@ -1333,9 +1194,6 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
                 if self._logging:
                     print(f"B:Notification active (remaining {self._notification_end_time} ms)")
                 self.refresh = True
-
-    def _update_background_managers(self, delta):
-        # Update Hexpansion management if something 'hexpansion' related has changed
         if self.hexpansion_update_required:
             if self.current_state != STATE_HEXPANSION and self._hexpansion_mgr is not None:
                 # Trigger an update cycle for hexpansion_mgr even though it is not currently active
@@ -1356,24 +1214,14 @@ class BadgeBotApp(app.App):         # pylint: disable=no-member
         # Action any remote-control commands queued by comms transports (BLE now,
         # others in future).  State changes happen here, in the app, not in the transport.
         self._process_remote_commands()
-
-    def _record_main_update(self, before, collections):
-        gc_alloc_probe.record(gc_alloc_probe.BADGEBOT_MAIN_UPDATE, before, gc_alloc_probe._mem_alloc(), collections, gc_alloc_probe._collection_count() if gc_alloc_probe._collection_count is not None else 0)
-
-    def _update_state_foreground(self, delta):
-        # Update the main application state (menus, countdowns, and delegating to functional area managers)
-        main_update_probe = None
-        if gc_alloc_probe._enabled:
-            site = gc_alloc_probe.BADGEBOT_MAIN_UPDATE
-            gc_alloc_probe._calls[site] += 1
-            gc_alloc_probe._remaining[site] -= 1
-            if gc_alloc_probe._remaining[site] <= 0:
-                gc_alloc_probe._remaining[site] = gc_alloc_probe._SAMPLE_EVERY[site]
-                main_update_collections = gc_alloc_probe._collection_count() if gc_alloc_probe._collection_count is not None else 0
-                main_update_probe = gc_alloc_probe._mem_alloc()
         self._update_main_application(delta)
-        if main_update_probe is not None:
-            self._record_main_update(main_update_probe, main_update_collections)
+        self._update_state_transition()
+        if self.current_state in _LED_CONTROL_STATES and self.current_state != STATE_FOLLOWER:
+            self._update_state_leds()
+        self.diagnostics_output(2, 0)
+        if 2 == self._performance_mode:
+            return False
+        return self.refresh
 
     def _update_state_transition(self):
         if self.current_state != self.previous_state:

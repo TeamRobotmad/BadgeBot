@@ -126,23 +126,6 @@ def test_motor_controller_send_output_uses_calibration_buffer():
     assert controller._busy is False
 
 
-def test_line_follow_gc_heap_probe_retries_in_100_kib_steps(monkeypatch):
-    import sim.apps.BadgeBot.app as BadgeBot
-
-    requested_sizes = []
-
-    def allocate(size):
-        requested_sizes.append(size)
-        if size > 300 * 1024:
-            raise MemoryError
-        return object()
-
-    monkeypatch.setattr(BadgeBot, "bytearray", allocate, raising=False)
-
-    assert BadgeBot._preallocate_gc_heap_for_line_follow() == 300 * 1024
-    assert requested_sizes == [size * 1024 for size in range(1000, 200, -100)]
-
-
 def test_line_follow_calibration_reminder_is_shown_once():
     from types import SimpleNamespace
     from sim.apps.BadgeBot.line_follow import LineFollowMgr, STATE_FOLLOWER
@@ -296,7 +279,7 @@ def test_line_follow_obstacle_stop_preserves_reusable_output():
 
 
 @pytest.mark.parametrize("source, targets", [
-    ("app.py", "update background_update _update_notifications _update_background_managers _record_main_update _update_state_foreground _update_main_application _update_state_transition _record_state_background _update_state_background _update_state_leds _scale_state_leds _scale_state_led _write_state_leds _log_state_led_error _send_motor_output apply_motor_calibration draw _draw_state_ring"),
+    ("app.py", "update background_update _update_main_application _update_state_transition _update_state_leds _scale_state_leds _scale_state_led _write_state_leds _log_state_led_error _send_motor_output apply_motor_calibration draw _draw_state_ring"),
     ("line_follow.py", "update background_update _obstacle_detected _follow_colour compute_differential_output _steering_correction _differential_output draw draw_tracker _draw_tracker_box _draw_selected_field _draw_tracker_bands _draw_tracker_band_range _draw_tracker_band _tracker_band_hue _draw_tracker_band_line _draw_tracker_reading _draw_tracker_labels _draw_tracker_heading _draw_tracker_gains _draw_tracker_deviation _draw_idle_button_labels _draw_active_button_labels _draw_sensor_rate"),
     ("sensor_test.py", "read_range read_colour _read_range_checked _poll_range _read_colour_checked _poll_colour _count_colour_sample_checked _update_colour_ring_checked _update_colour_ring _store_range_result _store_colour_result"),
     ("vendor/HexDrive2/hexdrive2.py", "background_update _poll_range_background _poll_colour_background _update_keep_alive _stop_timed_out_outputs _stop_pwm_checked _stop_pwm set_motors _set_motor_checked _set_motor _disable_motor_channel _set_pwmoutput _write_pwm_checked _write_pwm read read_into poll _job_poll _read_values colour_into colour_name rgbw_to_str _lookup_colour_math_viper _colour_hsv_into _colour_hue _colour_id apply_white_reference _white_channel _scaled_white_value"),
@@ -304,7 +287,7 @@ def test_line_follow_obstacle_stop_preserves_reusable_output():
     ("../../../micropython/extmod/asyncio/core.py", "wait_io_event _process_io_event"),
     ("../../../modules/system/notification/app.py", "update _update_notification _advance_notification"),
     ("../../../modules/system/backleds/app.py", "background_update _update_back_led _back_led_colour"),
-    ("../../../modules/system/scheduler/__init__.py", "_draw_app _draw_app_with_probe _begin_app_draw_probe _draw_sampled_app _finish_app_draw_probe _draw_app_safely _handle_app_draw_error _notify_app_draw_crash"),
+    ("../../../modules/system/scheduler/__init__.py", "_draw_app _draw_app_safely _handle_app_draw_error _notify_app_draw_crash"),
     ("../../../modules/app_components/tokens.py", "set_color _try_color_function _set_rgb_color _try_rgb_color"),
     ("../../../modules/system/espnow/service.py", "_has_listeners _registry_has_listeners _apply_power_management _sync_power_management _configure_power_management _try_configure_power_management _log_power_management_error _update_radio_awake"),
     ("../../../modules/system/a11y/printer.py", "get_deduped_strings _strings_unchanged _collect_changed_strings _collect_string_entries _should_emit_string _has_transient_strings _string_entry _last_string_text"),
@@ -421,56 +404,6 @@ def test_eeprom_programming_identifies_new_mount(monkeypatch):
     monkeypatch.setattr(manager.vfs, "umount", lambda path: pytest.fail("New mounts must not be remounted"), raising=False)
     assert manager._mount_eeprom_for_programming(partition, "/hexpansion_4") is False
     assert calls == [(partition, "/hexpansion_4")]
-
-
-def test_gc_alloc_probe_records_sampled_growth(monkeypatch):
-    from system import gc_alloc_probe
-
-    monkeypatch.setattr(gc_alloc_probe, "_enabled", True)
-    monkeypatch.setattr(gc_alloc_probe, "_calls", [0] * len(gc_alloc_probe._NAMES))
-    monkeypatch.setattr(gc_alloc_probe, "_samples", [0] * len(gc_alloc_probe._NAMES))
-    monkeypatch.setattr(gc_alloc_probe, "_bytes", [0] * len(gc_alloc_probe._NAMES))
-    monkeypatch.setattr(gc_alloc_probe, "_max_bytes", [0] * len(gc_alloc_probe._NAMES))
-    monkeypatch.setattr(gc_alloc_probe, "_gc_overlap", [0] * len(gc_alloc_probe._NAMES))
-
-    gc_alloc_probe._calls[gc_alloc_probe.APP_UPDATE] = 1
-    gc_alloc_probe.record(gc_alloc_probe.APP_UPDATE, 100, 132)
-
-    assert gc_alloc_probe._calls[gc_alloc_probe.APP_UPDATE] == 1
-    assert gc_alloc_probe._samples[gc_alloc_probe.APP_UPDATE] == 1
-    assert gc_alloc_probe._bytes[gc_alloc_probe.APP_UPDATE] == 32
-    assert gc_alloc_probe._max_bytes[gc_alloc_probe.APP_UPDATE] == 32
-
-
-def test_gc_alloc_probe_marks_samples_that_span_collection(monkeypatch):
-    from system import gc_alloc_probe
-
-    monkeypatch.setattr(gc_alloc_probe, "_gc_overlap", [0] * len(gc_alloc_probe._NAMES))
-    gc_alloc_probe.record(gc_alloc_probe.APP_UPDATE, 100, 100, 4, 5)
-
-    assert gc_alloc_probe._gc_overlap[gc_alloc_probe.APP_UPDATE] == 1
-    assert gc_alloc_probe._samples[gc_alloc_probe.APP_UPDATE] == 0
-
-
-@pytest.mark.parametrize("was_enabled", [False, True])
-def test_gc_churn_pattern_test_restores_previous_state(monkeypatch, was_enabled):
-    import types
-    import sim.apps.BadgeBot.app as BadgeBot
-
-    pattern_app_type = type("PatternDisplay", (), {})
-    pattern_app = pattern_app_type()
-    pattern_app.enabled = was_enabled
-    test_app = types.SimpleNamespace(
-        _gc_churn_pattern_app=None,
-        _gc_churn_pattern_was_enabled=False,
-    )
-    monkeypatch.setattr(BadgeBot.scheduler, "apps", [pattern_app])
-
-    BadgeBot.BadgeBotApp._disable_pattern_for_gc_churn_test(test_app)
-    assert pattern_app.enabled is False
-
-    BadgeBot.BadgeBotApp._restore_pattern_after_gc_churn_test(test_app)
-    assert pattern_app.enabled is was_enabled
 
 
 def test_neopixel_dim_correction_reuses_output_buffer(monkeypatch):
@@ -627,6 +560,83 @@ def test_neopixel_dim_correction_reuses_output_buffer(monkeypatch):
     merged_pixels = neopixel.MergedNeoPixel(merged_strip, [[0, 2], [1]])
     merged_pixels.set_many(0, [(9, 9, 9), (1, 2, 3), (4, 5, 6)], 2, values_start=1)
     assert list(merged_strip.buf) == [2, 1, 3, 5, 4, 6, 2, 1, 3]
+
+    fake_values = [(0, 0, 0)] * 4
+    monkeypatch.setattr(
+        fake_neopixel.leds,
+        "get_rgb",
+        lambda index: fake_values[index],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        fake_neopixel.leds,
+        "set_rgb",
+        lambda index, red, green, blue: fake_values.__setitem__(
+            index, (red, green, blue)
+        ),
+        raising=False,
+    )
+    fake_strip = fake_neopixel.NeoPixel(None, 4)
+    fake_composed = fake_neopixel.ComposedNeoPixel(fake_strip, -1)
+    fake_corrected = fake_neopixel.CorrectedNeoPixel(
+        fake_composed, [fake_neopixel.DimCorrection(0.5)] * 4
+    )
+    fake_corrected.set_many(0, [(100, 40, 3), (200, 80, 5)], 2)
+    assert fake_values[1:3] == [(50, 20, 1), (100, 40, 2)]
+
+    fake_result = [0, 0, 0]
+    fake_values[1] = (100, 40, 3)
+    fake_corrected.get_into(0, fake_result)
+    assert fake_result == [50, 20, 1]
+
+    fallback = fake_neopixel.CorrectedNeoPixel(
+        fake_composed, [lambda colour: [channel + 1 for channel in colour]] * 4
+    )
+    fallback.get_into(0, fake_result)
+    assert fake_result == [101, 41, 4]
+
+
+@pytest.mark.parametrize(
+    "battery_mv,input_mv,should_power_off",
+    [
+        (3499, 4499, True),
+        (3500, 4499, False),
+        (3499, 4500, False),
+        (3500, 4500, False),
+    ],
+)
+def test_power_manager_uses_millivolt_thresholds(
+    monkeypatch, battery_mv, input_mv, should_power_off
+):
+    import asyncio
+    import system.power.app as power_app
+
+    power_off_calls = []
+    monkeypatch.setattr(power_app.power, "VbatMilliVolts", lambda: battery_mv)
+    monkeypatch.setattr(power_app.power, "VinMilliVolts", lambda: input_mv)
+    monkeypatch.setattr(
+        power_app.power, "Vbat", lambda: pytest.fail("float battery getter used")
+    )
+    monkeypatch.setattr(
+        power_app.power, "Vin", lambda: pytest.fail("float input getter used")
+    )
+    monkeypatch.setattr(power_app.power, "Off", lambda: power_off_calls.append(True))
+
+    class StopLoop(Exception):
+        pass
+
+    async def stop_after_iteration(_delay):
+        raise StopLoop
+
+    monkeypatch.setattr(power_app.asyncio, "sleep", stop_after_iteration)
+    loop = asyncio.new_event_loop()
+    try:
+        with pytest.raises(StopLoop):
+            loop.run_until_complete(power_app.PowerManager().background_task())
+    finally:
+        loop.close()
+
+    assert bool(power_off_calls) is should_power_off
 
 
 def test_a11y_dedup_avoids_unchanged_normalization_and_preserves_announcements():
